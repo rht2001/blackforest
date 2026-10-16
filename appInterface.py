@@ -15,7 +15,7 @@ class HandApp:
         self.SAVE_FILE = "positions.json"
         self.pixel = 6
         self.positions = {}
-        self.robot.sliders = []
+
 
         self.offsets = {
             "Little": (150, 120),
@@ -98,9 +98,8 @@ class HandApp:
 
     def schließen(self):
         vals = [0, 0, 0, 0, 234, 670]
-        for i in range(6):
-            self.robot.sliders[i].set(vals[i])
-        self.send_angles()
+
+        self.robot.schließen
 
     def step_plus(self):
         for s in self.robot.sliders:
@@ -204,6 +203,3 @@ class HandApp:
                 fill="blue"
             )
 
-    def loop(self):
-        self.draw()
-        self.root.after(120, self.loop)

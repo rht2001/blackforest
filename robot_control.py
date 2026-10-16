@@ -3,6 +3,10 @@ import json
 import time
 from pymodbus.client import ModbusTcpClient
 import numpy as np
+from typing import Literal, Dict
+
+DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
+data_packet: tuple[int, int, int, int, int, int]
 
 class RobotHandController:
     def __init__(self, ip="192.168.123.211", port=6000):
@@ -11,7 +15,17 @@ class RobotHandController:
         self.client = ModbusTcpClient(self.ip, port=self.port)
         self.client.connect()
         self.sliders = []
+        self.send_addresses = {
+            "ANGLES": 1486,
+            "FORCES": 1498,
+            "POSITION": 1474,
+        }
 
+        self.receive_addresses = {
+            "ANGLES": 1546,
+            "FORCES": 1582,
+            "POSITION": 1594,
+        }
         self.sensor_groups = [
             ("Little Tip", 3000, 3, 3, "Little", (8, 10)),
             ("Little Nail", 3018, 12, 8, "Little", (-2, 40)),
@@ -49,7 +63,10 @@ class RobotHandController:
             if not res.isError():
                 values.extend(res.registers)
         return values
+    def schließen(self):
+        vals = [0, 0, 0, 0, 234, 670]
 
+        self.send_angles(vals)
     def calibrate_offsets(self):
         print("Kalibriere Sensoren...")
         time.sleep(1)
@@ -65,11 +82,50 @@ class RobotHandController:
             device_id=1
         )
 
+    def read_error(self):
+            error = self.client.read_holding_registers(address=1606, count=6, device_id=1)
+            return error
+
+    def send_command(self,  type:DataTypes= "ANGLES", value|data_packet= None):
+
+        self.client.write_registers(
+                    address=self.send_addresses[type],
+                    values=value,
+                    device_id=1
+                )
+    #TODO: check if the count works for reading the forces
+    def receive_data(self, type:DataTypes= "ANGLES"):
+        res = self.client.read_holding_registers(address=type, count=6, device_id=1)
+        if not res.isError():
+            return res.registers
+
+        print("Couldnt grab the data")
+        return self.read_error()
+
     def read_current_angles(self):
         res = self.client.read_holding_registers(address=1486, count=6, device_id=1)
         if not res.isError():
             return res.registers
         return None
+
+    def read_tactile_data(self):
+    # Max cells is 112 (Palm: 8 * 14 = 112)
+        data_matrix = np.zeros((1, 17))
+        all_points = np.zeros((112, 17))
+
+        for index, (_, addr, h, w, key, rel) in enumerate(self.sensor_groups):
+            data = self.safe_read(addr, h * w)
+            if not data:
+                continue
+
+            raw = np.array(data)
+            data_matrix[0, index] = np.mean(raw)
+            all_points[0:len(raw), index] = raw
+
+        return data_matrix, all_points
+
+
+
 
 
 
