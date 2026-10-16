@@ -13,6 +13,7 @@ class RobotHandController:
         self.port = port
         self.client = ModbusTcpClient(self.ip, port=self.port)
         self.client.connect()
+        self.sliders = []
 
         self.sensor_groups = [
             ("Little Tip", 3000, 3, 3, "Little", (8, 10)),
@@ -74,6 +75,7 @@ class RobotHandController:
         return None
 
 
+
 class HandApp:
     def __init__(self, root, robot: RobotHandController):
         self.root = root
@@ -82,7 +84,7 @@ class HandApp:
         self.SAVE_FILE = "positions.json"
         self.pixel = 6
         self.positions = {}
-        self.sliders = []
+        self.robot.sliders = []
 
         self.offsets = {
             "Little": (150, 120),
@@ -131,7 +133,7 @@ class HandApp:
             s.pack(side="left")
             s.bind("<ButtonRelease-1>", lambda e: self.send_angles())
 
-            self.sliders.append(s)
+            self.robot.sliders.append(s)
 
         bf = tk.Frame(self.left_frame)
         bf.pack(pady=10)
@@ -150,32 +152,32 @@ class HandApp:
         self.saved_frame.pack(fill="both", expand=True)
 
     def send_angles(self):
-        self.robot.send_angles([s.get() for s in self.sliders])
+        self.robot.send_angles([s.get() for s in self.robot.sliders])
 
     def update_angles_from_robot(self):
         registers = self.robot.read_current_angles()
         if registers:
             for i in range(6):
-                self.sliders[i].set(registers[i])
+                self.robot.sliders[i].set(registers[i])
 
     def öffnen(self):
-        for s in self.sliders:
+        for s in self.robot.sliders:
             s.set(1000)
         self.send_angles()
 
     def schließen(self):
         vals = [0, 0, 0, 0, 234, 670]
         for i in range(6):
-            self.sliders[i].set(vals[i])
+            self.robot.sliders[i].set(vals[i])
         self.send_angles()
 
     def step_plus(self):
-        for s in self.sliders:
+        for s in self.robot.sliders:
             s.set(min(1000, s.get() + 20))
         self.send_angles()
 
     def step_minus(self):
-        for s in self.sliders:
+        for s in self.robot.sliders:
             s.set(max(0, s.get() - 20))
         self.send_angles()
 
@@ -184,7 +186,7 @@ class HandApp:
         if not name:
             return
 
-        values = [s.get() for s in self.sliders]
+        values = [s.get() for s in self.robot.sliders]
         self.positions[name] = values
         self.save_to_file()
         self.create_button(name, values)
@@ -192,7 +194,7 @@ class HandApp:
     def create_button(self, name, values):
         def apply():
             for i in range(6):
-                self.sliders[i].set(values[i])
+                self.robot.sliders[i].set(values[i])
             self.send_angles()
 
         tk.Button(self.saved_frame, text=name, command=apply).pack(fill="x")
