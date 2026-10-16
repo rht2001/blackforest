@@ -24,7 +24,6 @@
 ---
 
 ## Branching Task: Ultra-Lean Dummy Hand API (For UI Testing)
-*(Optional branch to enable parallel UI / dashboard development without blocking the physical hand)*
 - [ ] Mock class adhering to same interface signatures (`read_angles`, `write_angles`, `read_tactile_matrix`)
 - [ ] Interpolate angles toward targets without physics simulation
 - [ ] Return synthetic contact patches when fingers close past arbitrary threshold
@@ -33,7 +32,6 @@
 ---
 
 ## 4. Perspective & Pitch: 3D Pose Estimation & Placement Repeatability (Proposal)
-*(Future extension / final pitch slide proposal — not a hard requirement for initial working prototype)*
 - [ ] **Forward Kinematics**: Project 2D sensor Centers of Pressure (CoP) into 3D hand Cartesian coordinates using finger joint angles.
 - [ ] **Object Pose Fitting**: Fit a cylindrical axis / centroid between opposing contact pads (fingers vs. thumb).
 - [ ] **Repeatable Placement Delta**: Compute $\Delta \mathbf{P} = (\Delta x, \Delta y, \Delta z)$ and $\Delta \mathbf{R}$ relative to a reference target grasp to guide robotic arm placement.
