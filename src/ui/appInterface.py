@@ -5,7 +5,7 @@ from PIL import Image, ImageTk
 import os
 import json
 import time
-from robot_control import RobotHandController
+from interface.robot_control import RobotHandController
 #TODO : provide a simulation environment to run it without the robot being connected
 class HandApp(tk.Tk):
     def __init__(self, robot: RobotHandController):
@@ -41,7 +41,10 @@ class HandApp(tk.Tk):
         self.right_frame = tk.Frame(self)
         self.right_frame.pack(side="right", fill="both", expand=True)
 
-        img = Image.open(os.path.join(os.path.dirname(__file__), "hand.png"))
+        img_path = os.path.join(os.path.dirname(__file__), "hand.png")
+        if not os.path.exists(img_path):
+            img_path = os.path.join(os.getcwd(), "hand.png")
+        img = Image.open(img_path)
         img = img.resize((700, 900))
         self.hand_img = ImageTk.PhotoImage(img)
 
@@ -198,3 +201,8 @@ class HandApp(tk.Tk):
 
     def main(self):
         self.draw()
+        try:
+            self.update_idletasks()
+            self.update()
+        except tk.TclError:
+            pass

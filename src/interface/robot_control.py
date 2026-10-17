@@ -1,4 +1,3 @@
-
 import json
 import time
 from pymodbus.client import ModbusTcpClient
@@ -8,9 +7,12 @@ from typing import Literal, Dict
 DEFAULT_MOVEMENT_SPEED = [400] * 6
 CLOSE_THRESHOLD = 400
 STATES = Literal["starting", "initialised", "moving", "steady_state", "opening"]
+
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 data_packet: tuple[int, int, int, int, int, int]
-from config_parameters import REGISTERS
+from config.config_parameters import REGISTERS
+
+
 class RobotHandController:
     def __init__(self, ip="192.168.123.211", port=6000):
         """ Initialize a RobotHandController instance. Lightweight python wrapper for the Modbus TCP API to control the robot hand with descriptive function names.
@@ -24,16 +26,28 @@ class RobotHandController:
         """
         self.ip = ip
         self.port = port
-        self.client = ModbusTcpClient(self.ip, port=self.port)
-        self.client.connect()
         self.sliders = []
+        self.auto_mode_active = True
+        self.auto_contact_trigerred = False
+        self.is_connected = False
+        self.mock_angles = [1000, 1000, 1000, 1000, 1000, 1000]
+
+        try:
+            self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
+            if self.client.connect():
+                self.is_connected = True
+                print(f"[RobotHandController] Connected to hand at {self.ip}:{self.port}")
+            else:
+                print(f"[RobotHandController] Could not reach {self.ip}:{self.port}. Running in simulation/disconnected mode.")
+        except Exception as e:
+            print(f"[RobotHandController] Connection error ({e}). Running in simulation/disconnected mode.")
+            self.client = None
+
         self.send_addresses = {
             "ANGLES": 1486,
             "FORCES": 1498,
             "POSITION": 1474,
         }
-        self.auto_contact_trigerred = False
-        self.auto_mode_active = True
 
         self.receive_addresses = {
             "ANGLES": 1546,
@@ -65,24 +79,29 @@ class RobotHandController:
             ("Palm", 4900, 8, 14, "Palm", (-15, 0))
         ]
         self.sensor_offsets = {}
-        self.state:STATES = "starting"
-        self.startup()
+        self.state: STATES = "starting"
+        if self.is_connected:
+            self.startup()
+        else:
+            self.state = "initialised"
+            self.sliders = [1000] * 6
 
     def startup(self):
         self.set_default_speed()
-        #With this, we always start at fully open
-        self.send_command(value=[1000]*6)
+        # With this, we always start at fully open
+        self.send_command(value=[1000] * 6)
         print("opened")
         self.state = "initialised"
         self.sliders = [1000] * 6
-        time.sleep(1)
-
 
     def set_default_speed(self):
-
+        if not self.is_connected:
+            return
         self.send_all_commands("DEFAULT_SPEED_SET", value=DEFAULT_MOVEMENT_SPEED)
 
     def safe_read(self, addr, length):
+        if not self.is_connected:
+            return [0] * length
         values = []
         for i in range(0, length, 120):
             res = self.client.read_holding_registers(
@@ -96,9 +115,7 @@ class RobotHandController:
 
     def close(self):
         """ Close the robot hand completely. """
-        # TODO: Is close the hand like this? Close fingers 0-3 to 0 and thumb to kind of randomly 234, 670?
         vals = [0, 0, 0, 0, 234, 670]
-
         self.send_angles(vals)
 
     def calibrate_offsets(self):
@@ -110,62 +127,72 @@ class RobotHandController:
             self.sensor_offsets[name] = np.array(data) if data else np.zeros(h * w)
 
     def send_angles(self, angles):
+        self.send_command(value=angles, type="ANGLES")
 
-        self.client.write_registers(
-            address=1486,
-            values=angles,
-            device_id=1
-        )
     def close_on_contact(self, matrix):
-
         if not self.auto_mode_active:
             return False
 
-        # At least 3 sensor pixels must exceed 100
+        # At least 3 sensor pixels must exceed CLOSE_THRESHOLD
         if np.count_nonzero(matrix > CLOSE_THRESHOLD) >= 3:
             self.auto_mode_active = False  # Prevent further triggers
-            self.send_command(value=[0, 0, 0, 0, 1000, 1000])                   # Execute existing close function
+            self.send_command(value=[0, 0, 0, 0, 1000, 1000])  # Execute existing close function
             self.auto_contact_trigerred = True
-            print(f"Contact detected at")
+            print(f"Contact detected at {matrix[matrix > 0]}")
             return True
 
         return False
+
     def read_error(self):
-            error = self.client.read_holding_registers(address=1606, count=6, device_id=1)
-            return error
-    # Question: Why are there two functions for sending commands? one for a command picked from register and one from "send_addresses" dictionary. Is there a reason for this?
-    # "send_angles" is exactly the same as "send_command" with type="ANGLES". I think we can remove "send_angles" and just use "send_command" with the appropriate type.
-    def send_all_commands(self,register_name, value):
-        self.client.write_registers(
-                address=REGISTERS[register_name],
-                values=value,
-                device_id=1
-            )
-    def send_command(self, value:list[int], type:DataTypes= "ANGLES"):
+        if not self.is_connected:
+            return None
+        return self.client.read_holding_registers(address=1606, count=6, device_id=1)
 
+    def send_all_commands(self, register_name, value):
+        if not self.is_connected:
+            return
         self.client.write_registers(
-                    address=self.send_addresses[type],
-                    values=value,
-                    device_id=1
-                )
+            address=REGISTERS[register_name],
+            values=value,
+            device_id=1
+        )
 
-    #TODO: check if the count works for reading the forces
-    def read_command(self, type:DataTypes= "ANGLES"):
+    def send_command(self, value: list[int], type: DataTypes = "ANGLES"):
+        if type == "ANGLES":
+            self.mock_angles = list(value)
+        if not self.is_connected:
+            return
+        self.client.write_registers(
+            address=self.send_addresses[type],
+            values=value,
+            device_id=1
+        )
+
+    def read_command(self, type: DataTypes = "ANGLES"):
+        if not self.is_connected:
+            if type == "ANGLES":
+                return list(self.mock_angles)
+            return [0] * 6
         res = self.client.read_holding_registers(address=self.receive_addresses[type], count=6, device_id=1)
         if not res.isError():
             return res.registers
-
         print("Couldnt grab the data")
         return self.read_error()
 
+    def receive_data(self, type: DataTypes = "ANGLES"):
+        """Backward compatibility alias for read_command."""
+        return self.read_command(type=type)
+
     def read_current_angles(self):
+        if not self.is_connected:
+            return list(self.mock_angles)
         res = self.client.read_holding_registers(address=1486, count=6, device_id=1)
         if not res.isError():
             return res.registers
         return None
 
     def read_tactile_data(self):
-    # Max cells is 112 (Palm: 8 * 14 = 112)
+        # Max cells is 112 (Palm: 8 * 14 = 112)
         data_matrix = np.zeros((1, 17))
         all_points = np.zeros((112, 17))
 
@@ -181,26 +208,6 @@ class RobotHandController:
         return data_matrix, all_points
 
     def main(self):
-
         _, all_points = self.read_tactile_data()
         auto_contact = self.close_on_contact(all_points)
-
         current_pos = self.read_command()
-        time.sleep(0.05)
-        # if auto_contact:
-        #     time.sleep(0.01)
-        #     current_pos = self.read_command()
-        #     if np.mean(np.array(current_pos) - np.array(self.sliders)) > 2:
-        #         self.state = "moving"
-        #     else:
-        #         self.state = "steady_state"
-        # else:
-        #     self.sliders = current_pos
-        #     pass
-        # if self.state == "steady_state":
-        #     "moving_thumb"
-
-
-
-
-
