@@ -247,12 +247,12 @@ class RobotHandController:
             data = self.safe_read(addr, h * w)
             self.sensor_offsets[name] = np.array(data) if data else np.zeros(h * w)
 
-    def close_on_contact(self, matrix: np.ndarray) -> bool:
+    def close_on_contact(self) -> bool:
         """Triggers grip closure if tactile pressure exceeds contact threshold with impulse rejection."""
         if not self.auto_mode_active:
             return False
 
-        contact_present = np.count_nonzero(matrix > CLOSE_THRESHOLD) >= 10
+        contact_present = np.count_nonzero(self.all_points > CLOSE_THRESHOLD) >= 10
 
         # Step 1: Contact detected for the first time -> start debounce timer
         if contact_present and not self.auto_contact_trigerred:
@@ -306,15 +306,17 @@ class RobotHandController:
         self.last_all_points = all_points
         return data_matrix, all_points
 
-    def build_result_data(self, mean_matrix: np.ndarray, all_points: np.ndarray) -> DataDict:
+    def build_result_data(self):
         """Packages polled kinematics, telemetry, and tactile data into DataDict."""
+
         self.results = {
             "angles": np.array(self.read_command("ANGLES")),
             "forces": np.array(self.read_command("FORCES")),
             "position": np.array(self.read_command("POSITION")),
-            "tactile_matrix": all_points,
-            "tactile_mean_matrix": mean_matrix,
-            "state": self.state
+            "tactile_matrix": self.all_points,
+            "tactile_mean_matrix": self.mean_matrix,
+            "state": self.state,
+            "state_change": self.state_change
         }
 
 
@@ -344,8 +346,10 @@ class RobotHandController:
         return False, "Stable grip not confirmed"
 
     def main(self)-> DataDict:
-        mean_matrix, all_points = self.read_tactile_data()
-        auto_contact = self.close_on_contact(all_points)
+        self.state_change = False
+        current_state = self.state
+        self.mean_matrix, self.all_points = self.read_tactile_data()
+        auto_contact = self.close_on_contact()
         current_pos = np.array(self.read_command())
 
         if auto_contact:
@@ -365,5 +369,7 @@ class RobotHandController:
                 #self.confirm_grip(valid_positions, valid_tactile, mean_matrix=mean_matrix)
 
         self.angle_array = current_pos
+        self.state_change = True if self.state == current_state else False
+        self.build_result_data()
         return self.results
 
