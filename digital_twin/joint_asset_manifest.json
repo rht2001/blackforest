@@ -1,0 +1,254 @@
+{
+  "usage": "Local comparison only. No repository-wide mesh redistribution license found; do not publish bundled upstream assets without permission.",
+  "assets": [
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/FTP_left_hand.urdf",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "ab1c4261eedbfaa721cbba67d8e7e3b233a0c6a2",
+      "sha256": "450db8342fa5f7063666b30a1d45c5d3415439633abc50d1ed0a4d8336ad6ca3",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/FTP_left_hand.urdf"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_base_link.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "9e0adba588fb557350a14289c45232436c9dad89",
+      "sha256": "20eb4092a92fc26a14863f5dda257a1db618e6f6d617ea6736a95a819ae10f3f",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_base_link.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_palm_force_sensor.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "f4ca00730cb58063d6d3a2e852684cf2234605ca",
+      "sha256": "bcf9ab7e06e43decd44fd91f8af1af458c28c5b6ad05a10359e2f6c773c39044",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_palm_force_sensor.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_thumb_1.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "806d8da4823a6b1972afeb2c5d9318af2d66a16f",
+      "sha256": "34b3dd9780b36c30d3f4511c329c19d3fd795aeb1c5f1858edfc5550fc8bc5b9",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_thumb_1.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_thumb_2.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "4f9a8ad6c9411269e4ed0d3fd15bcb9b2c6e12d5",
+      "sha256": "9b92a6db621b47b906ae876e8d76466e9e2d401e59b2ceeb4e8cf9133d943ce1",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_thumb_2.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_thumb_force_sensor_1.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "7215b15f46174a9b79ec870d051db6bf77c4cbee",
+      "sha256": "adcb86ba50155a232c986a8bd18b11ca97614183bc26bc2a8e60e2c36241c5d6",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_thumb_force_sensor_1.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_thumb_3.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "8062151fe1d2e4409fa426f317d858a93cab6c77",
+      "sha256": "c09118bdf1945a2ca8db0e8d5778a867d043c9e8800b4a580960f837fd41bd8c",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_thumb_3.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_thumb_force_sensor_2.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "2906475f20e315cb8b766e46dd311b71d2380d7a",
+      "sha256": "978f8801b8cee0723cc6dcbbe0e1c9e72c1333cf2aa241245e20154e08672485",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_thumb_force_sensor_2.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_thumb_4.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "ab244393bc5812ada80a7a8572bcb5140284df37",
+      "sha256": "cb1622e47f88e995e3e9b5547b12ecffe8a8f63507b3e7e21b5c68bbd72d0422",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_thumb_4.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_thumb_force_sensor_3.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "d9e2c848bc5717048f3b55102542c750a39ffe7a",
+      "sha256": "131944a43da1114c6541c10b0122febd222001f32015e6fb9156b5354cf1d1c0",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_thumb_force_sensor_3.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_thumb_force_sensor_4.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "35bf67da185bc23cd5556b2a21849ea26d79b639",
+      "sha256": "6b71f0c45400bb664a4a54bed38a52123654fcdc422fa3dbe70f30dfafb33bf3",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_thumb_force_sensor_4.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_index_1.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "a11e98a0c2e644f1ef114faac4329c93dab9133f",
+      "sha256": "8f11238f7d12dea2f3ee0b249aaf6f5349e6381878cca959f1c5943c73122b05",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_index_1.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_index_force_sensor_1.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "599a1f46b758bd45472f7986ca55812300b86e08",
+      "sha256": "8771bf1b28dfbdc11c2e3ac48a1653b3d76ffc2aa97be3b5dde6552bce3ee034",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_index_force_sensor_1.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_index_2.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "25c9d24d9e15753069217c5d31161a182de098d9",
+      "sha256": "c6a0d4cfea01491e04c1207d107785f93e41b5403fd088017897ef8c1dd1d741",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_index_2.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_index_force_sensor_2.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "3a85c86755f9e0806e91b4bb88aa4fc588ecb96e",
+      "sha256": "b37265fad94c155f1d633e2a47e8036a767ff0cb453b8d7fd575da37fb9a3f13",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_index_force_sensor_2.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_index_force_sensor_3.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "e14da6f97df9be6c236047777edf62b7107e5356",
+      "sha256": "67703ccc1d033e894707e8f4c618db3a5e32767908001bbc7cf1c3b7ac45bf10",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_index_force_sensor_3.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_middle_1.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "ff6c1ca0379a3f5fd6cbd4704b6e63de4e77c2cc",
+      "sha256": "4b61f8b50c369d3a6b5ae54bb6be22460be5b95a961c2b0e2746a0d1cd0dc46e",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_middle_1.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_middle_force_sensor_1.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "cd5a181910bbc288ff90e9395ff3f41b6b11eebb",
+      "sha256": "689c9cba977b219e4ba7fe414a2be29d0916abaf4a37c9612ce2d4e573e57956",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_middle_force_sensor_1.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_middle_2.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "385e89a3d963cb4e897d442f6f2ae4d23efd4474",
+      "sha256": "60a19106d3f426ff7db0daea1e50d868585675997baf2d59256cde05415a9fd3",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_middle_2.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_middle_force_sensor_2.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "bdb4c5e25ac34fc2f579ff8ef84d32890e548c4f",
+      "sha256": "07d636760ce15adbf2d3ade22f12967bd7180af1ee0ecf8ed482d550de8b880e",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_middle_force_sensor_2.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_middle_force_sensor_3.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "7f4e13b93413b054e8032f775ffc4d27f4489a13",
+      "sha256": "6ac1da64c4c315d42e1c512534bba93fa99dfd47b9bc664bea1d1ab04c59c72a",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_middle_force_sensor_3.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_ring_1.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "6d3fdcd8fe4b9962167ea018919f1663a8845e03",
+      "sha256": "e3c37d91db2c6303a5a8d4de6818fcb623977fb31b6d36e0dcd71f6aa12804a0",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_ring_1.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_ring_force_sensor_1.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "79b1abf9f21d0bbf91c6f8f6f141ff5329936acc",
+      "sha256": "39eb919b60ca7b3a302ea98b38acd772decc4d366e9e538cd6fbfef7d8ae0c2d",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_ring_force_sensor_1.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_ring_2.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "614e920f27a9085fcc0275d8cf732a4f087d9cf0",
+      "sha256": "8fc9afd0506ec9d08d4f2cf9d9b0ed2244d42dc9480a6069e90ac296795a475b",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_ring_2.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_ring_force_sensor_2.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "2408f77b83bbf2218d8ebaad00298cf302216c42",
+      "sha256": "fe53355bcf543c4b9aa8014e53f41de4a79a077f703e078bc23211b434ee285a",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_ring_force_sensor_2.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_ring_force_sensor_3.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "92eaeed50ca42b87e89e7943fa2a838ffe7b19de",
+      "sha256": "cb4e12318b8312f3b3b7715b7a25a121f39a7ecf09567e13565a2f5578f3be95",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_ring_force_sensor_3.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_little_1.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "7558b591820082b76931bd21b69e017d199bd843",
+      "sha256": "5497c5650e8a7747140b2ac29bcd360348825ec63adaae487e102d6a30f5f790",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_little_1.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_little_force_sensor_1.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "53aa6bda0516be3287a48ac43254440a2489a813",
+      "sha256": "b7f94925ce536ab550d8de4a8ba178ac83f5ff59ada18e6accacf05b4ef8e39e",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_little_force_sensor_1.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_little_2.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "d6d0afddb2e4a95ea78e171e2217c7ea9aa0d66b",
+      "sha256": "54e8c05a4c7ff4c29234cebe5e15b7008199f8c64ffcbac97827d909d5d457c5",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_little_2.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_little_force_sensor_2.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "72f4b95ccf1c9fb164ad74f542c368862e22009e",
+      "sha256": "8d2946118292bb77251101ebc6a44235134e5c040a59186eca98e8261efef660",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_little_force_sensor_2.STL"
+    },
+    {
+      "profile": "rh56_tactile_toolkit_left",
+      "path": "urdf/inspire_hand/meshes/left_little_force_sensor_3.STL",
+      "commit": "679dcdd50a26a376eddd066926c81d94e98a9767",
+      "blob_sha": "5893145df11e51bf499992dfdfd0bba5e526caec",
+      "sha256": "a1e66e5d7f8e4626645571b62d35501a68a75b958365f7ecb6487f7673f1166b",
+      "url": "https://raw.githubusercontent.com/AlexArutiunian/tactile-rh56dftp/679dcdd50a26a376eddd066926c81d94e98a9767/urdf/inspire_hand/meshes/left_little_force_sensor_3.STL"
+    }
+  ],
+  "active_profile": "rh56_tactile_toolkit_left"
+}

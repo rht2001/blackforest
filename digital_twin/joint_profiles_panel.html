@@ -1,0 +1,15 @@
+<div id="profileControls">
+ <p class="kicker">Live hand · Pressure</p>
+ <p class="muted">1,062 sensing points · 17 fields. Blue dots mark pressure-weighted contact centres.</p>
+ <div class="pressure-legend"><span style="--swatch:#00aa00">0–799</span><span style="--swatch:#cccc00">800–1,999</span><span style="--swatch:#ff8800">2,000–3,199</span><span style="--swatch:#ff0000">3,200+</span><span style="--swatch:#536171">No data</span></div>
+ <p class="muted">Calibrated sensor counts</p><p id="pressureStatus" class="muted" role="status">Waiting for pressure data</p>
+ <label>Activation threshold <input id="activationThreshold" type="number" min="0" max="4095" value="200" step="1"></label>
+ <label><input id="showContactCentres" type="checkbox" checked> Show contact centres</label>
+ <p id="contactSummary" class="muted" role="status"></p>
+ <button id="exportContactCloud" class="small-button">Export activated points</button>
+ <p class="muted">Point positions are mesh-based approximations pending physical calibration.</p>
+ <details><summary>Pressure readings</summary><div id="pressureRegions" class="pressure-readings"></div></details>
+</div>
+<section id="profileWorkspace" class="single" aria-label="Live hand and pressure visualization">
+ <article id="profileCard0" class="profile-card"><div class="profile-caption"><h2>Hand twin</h2><p id="profileStatus0" class="profile-status">Connecting to telemetry…</p></div><div id="profileScene0" class="profile-scene"></div><pre id="profileAngles0" class="profile-angles"></pre></article>
+</section>

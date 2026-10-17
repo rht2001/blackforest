@@ -1,0 +1,17 @@
+/* Taxels in sensor-link frames; contacts exported in left_base_link, in metres. */
+(function(root){
+'use strict';
+const K=root.JointKinematics;
+function direction(m,n){const v=[0,1,2].map(r=>m[4*r]*n[0]+m[4*r+1]*n[1]+m[4*r+2]*n[2]),length=Math.hypot(...v);return v.map(x=>x/length)}
+function inverseRigid(m){const t=K.identity();for(let r=0;r<3;r++)for(let c=0;c<3;c++)t[4*r+c]=m[4*c+r];for(let r=0;r<3;r++)t[4*r+3]=-[0,1,2].reduce((sum,k)=>sum+t[4*r+k]*m[4*k+3],0);return t}
+function threshold(value){const n=Number(value);return Number.isFinite(n)?Math.max(0,Math.min(4095,n)):200}
+function cells(geometry,solution,samples,cutoff=200){cutoff=threshold(cutoff);const result=[];for(const region of geometry.regions){const frame=solution.frames[region.link],sample=samples[region.key];for(const cell of region.cells){const value=sample?.values?.[cell.wire_index]??null;result.push({id:region.key+':'+cell.wire_index,region:region.key,link:region.link,wire_index:cell.wire_index,row:cell.row,col:cell.col,value,active:value!==null&&value>cutoff,position_world_m:K.point(frame,cell.point_m),normal_world:direction(frame,cell.normal)})}}return result}
+function synchronized(packet,now){if(!K.freshActual(packet,now))return false;const t=packet?.field_received_at?.tactile_regions;return typeof t==='number'&&Number.isFinite(t)&&now-t>=-1&&now-t<=4&&Math.abs(t-packet.field_received_at.angles_act)<=.5}
+function cloud(geometry,solution,samples,packet,enabled,cutoff=200,calibration=null,now=Date.now()/1000){
+ const fromWorld=inverseRigid(solution.frames.left_base_link),all=cells(geometry,solution,samples,cutoff),points=[],valid=!!enabled&&synchronized(packet,now)&&all.some(c=>c.value!==null);
+ if(valid)for(const cell of all.filter(c=>c.active))points.push({id:cell.id,region:cell.region,link:cell.link,wire_index:cell.wire_index,row:cell.row,col:cell.col,value:cell.value,position_m:K.point(fromWorld,cell.position_world_m),normal:direction(fromWorld,cell.normal_world)});
+ const centroids=[];for(const region of geometry.regions){const active=points.filter(p=>p.region===region.key);if(!active.length)continue;const sum=active.reduce((n,p)=>n+p.value,0),n=[0,1,2].map(k=>active.reduce((s,p)=>s+p.normal[k]*p.value,0)/sum),length=Math.hypot(...n)||1;centroids.push({region:region.key,count:active.length,normal:n.map(v=>v/length),position_m:[0,1,2].map(k=>active.reduce((n,p)=>n+p.position_m[k]*p.value,0)/sum)})}
+ return {schema_version:1,profile:geometry.profile,frame:'left_base_link',units:'metres',geometry_status:geometry.geometry_status,geometry_sha256:geometry.geometry_sha256,reference_sha256:geometry.reference_sha256,valid,status:valid?'fresh_pose_and_tactile':'requires_fresh_pose_and_tactile_within_500ms',timestamp_basis:'bridge_reception_not_hardware_capture',max_pose_tactile_skew_seconds:.5,simulated:!!packet?.simulated,packet_seq:packet?.seq??null,received_at:packet?.received_at??null,field_received_at:{...packet?.field_received_at},threshold:threshold(cutoff),total_cells:all.length,valid_cells:valid?all.filter(c=>c.value!==null).length:0,angles_act:valid?packet.angles_act.slice():null,joint_angles_rad:valid?{...solution.q}:null,kinematics_calibration:calibration?K.clone(calibration):null,points,centroids};
+}
+root.TactilePoints={direction,inverseRigid,threshold,cells,synchronized,cloud};if(typeof module!=='undefined')module.exports=root.TactilePoints;
+})(typeof globalThis!=='undefined'?globalThis:this);

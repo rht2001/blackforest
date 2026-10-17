@@ -1,136 +1,151 @@
-# RH56DFTP Hand Simulation
+# RH56DFTP digital twin and tactile contacts
 
-Version: 17 October 2026. A lightweight package containing the standalone hand viewer with corrected thumb geometry, a 3D sensor editor, and telemetry displays.
+The read-only 3D viewer uses the left Tactile Toolkit hand, its own URDF hierarchy,
+and **1,062 individually colored sensing points across 17 sensor fields**.
+It follows actual angle feedback and the tactile matrices already acquired by
+Blackforest. The physical controller, register polling, pressure offsets, grasp
+logic, publisher and localhost bridge are unchanged.
 
-## Goal
+## Run
 
-The application makes the hand's pose and tactile measurements visible. You can explore the virtual hand without hardware, test the visualization using artificial data, or display measurements from an existing hand-control application.
-
-The 3D view shows hand motion and sensor locations. The 2D view makes the 17 tactile sensor regions and their 1,062 sensing cells easier to inspect.
-
-## Quick start: no installation required
-
-1. Extract the entire ZIP archive.
-2. Open `hand_twin_6dof.html` in a browser supporting WebGL2, such as Edge, Chrome, or Firefox.
-3. Select “Motion demo”, “Open”, “Close”, or move the six sliders.
-
-This mode works offline. The model and viewer are embedded in the HTML file. Drag to rotate the view and use the mouse wheel to zoom.
-
-Select “Edit sensors” to adjust sensor surfaces. Export the layout as JSON to share it with another person or computer; layouts saved only in your browser are local to that browser.
-
-For the 2D sensor view, open `tactile_2d.html` and select “Simulation”. The interface, status messages, and included scripts are in English.
-
-## Architecture and the bridge server
-
-There are three separate parts in streamed operation:
-
-```text
-Existing hand-control application      OR      Demo data generator
-(reads measurements from the hand)            (creates artificial measurements)
-                    |                                      |
-                    +------------------+-------------------+
-                                       |
-                              Local bridge server
-                                       |
-                              Browser visualization
-                               /                                         3D hand          2D sensor map
-```
-
-The **data producer** supplies the hand's current state: joint readings, forces, and tactile measurements. With real hardware, the existing control application remains responsible for communicating with the hand. For a demonstration, the demo generator takes the producer's place.
-
-The **bridge server** is the local meeting point between that producer and the browser. It receives state updates over HTTP, checks their format and allowed ranges, keeps the latest state in memory, and attaches reception timestamps. The browser repeatedly requests that state and updates the visualization. The server also serves the two viewer pages, so both can be opened through a local browser address.
-
-Its purpose is to let an existing acquisition process feed a separate visualization without making the browser communicate directly with the hand. The included background sender keeps the visualization's network requests out of the acquisition application's main workflow and retains the newest pending update.
-
-The bridge listens only on this computer at `127.0.0.1`, using port `18765` by default. It is a current-state relay, not a recording database: it does not save measurement history, and its state is lost when the server stops. It does not read hand sensors, establish a Modbus connection, or issue motor commands. Browser sliders move the virtual model only.
-
-Reception timestamps let the viewer distinguish recent updates from old data. After four seconds without fresh data, the viewer marks the relevant data as stale. A reachable bridge confirms that the local server is running; it does not establish that a physical hand is connected.
-
-**When is it needed?** Use the bridge when displaying data from Python, whether artificial or measured. Opening either HTML file for its built-in offline demonstration does not require the bridge or Python.
-
-## Try the streamed demo without hardware
-
-Requirements: Python 3.10 or newer and a browser. No pip packages or build step are required. Run the following commands from the extracted folder.
-
-In terminal 1:
+From the repository environment:
 
 ```powershell
-python bridge_server.py
+uv run python digital_twin/bridge_server.py
 ```
 
-Open http://127.0.0.1:18765/ and select “Live from Python”.
+Open [the 3D viewer](http://127.0.0.1:18765/). Keep the existing Blackforest hand
+application running (`uv run python src/main.py`) for actual telemetry. Publishing
+is enabled by default on this branch. The viewer starts in live mode. Manual
+sliders and Motion demo affect the virtual hand only; the demo clearly labels
+its artificial motion and localized pressure patterns.
 
-In terminal 2:
+The HTML is self-contained and can also be opened offline in a WebGL2 browser.
+Drag to rotate, scroll to zoom, and use Reset view to restore the camera.
+The existing [2D tactile view](http://127.0.0.1:18765/tactile) remains available.
+
+The bridge accepts `POST /api/state` from the existing publisher and exposes
+`GET /api/state` to the browser. It listens on localhost only, retains the newest
+state in memory, and never opens a Modbus session or commands the hand. The
+browser retains its single 300 ms polling loop.
+
+## Sensor fields and wiring
+
+| Region | Cells | Toolkit sensor link suffix |
+| --- | ---: | --- |
+| Each of four fingers: tip | 3 × 3 = 9 | `force_sensor_3` |
+| Each of four fingers: nail/contact face | 12 × 8 = 96 | `force_sensor_2` |
+| Each of four fingers: proximal pad | 10 × 8 = 80 | `force_sensor_1` |
+| Thumb tip | 3 × 3 = 9 | `force_sensor_4` |
+| Thumb nail/contact face | 12 × 8 = 96 | `force_sensor_3` |
+| Thumb intermediate | 3 × 3 = 9 | `force_sensor_2` |
+| Thumb pad | 12 × 8 = 96 | `force_sensor_1` |
+| Palm | 8 × 14 = 112 | `palm_force_sensor` |
+
+Four fingers contribute 740 points; the thumb 210; the palm 112. Every cell has
+a stable `region:wire_index` ID. The transport matrices preserve acquisition order.
+Fingers/thumb use ordinary row-major order. Palm acquisition runs bottom-to-top
+within successive columns: wire 0 → row 7/column 0, wire 7 → row 0/column 0,
+wire 8 → row 7/column 1, wire 111 → row 0/column 13 (all zero-based). The viewer
+reads values by **wire index**, independently of their physical row/column.
+
+Each point has its own GUI pressure color: green below 800, yellow from 800,
+orange from 2000, red from 3200. Values are calibrated counts from
+`max(0, raw - sensor_offset)`, not physical pressure units. Zero is green;
+missing, invalid, disconnected or stale readings are gray. Force readouts in
+grams remain separate. All cells remain visible even when no contact is active.
+
+## Contacts and export
+
+Activation threshold defaults to 200 counts. A cell is active when its value is
+**strictly above** the threshold. Blue markers show the pressure-weighted centre
+of the active points in each field. Changing the threshold changes selection
+and centres without altering source readings or motor behavior.
+
+**Export activated points** downloads `hand_contact_cloud.json`. The same
+snapshot is available through `window.getContactCloud()`;
+`window.getContactPoints()` returns its activated-point array.
+
+The export includes:
+
+* Point ID, sensor region/link, wire index, physical row/column, calibrated count,
+  3D `position_m`, and unit `normal`.
+* Common frame **`left_base_link`**, units **metres**, joint/actuator pose,
+  bridge packet sequence and field reception timestamps, and simulation flag.
+* Reference/geometry SHA-256 hashes, applied kinematic settings, and the explicit
+  `APPROXIMATE_UNCALIBRATED` geometry status.
+* Pressure-weighted field centres and their normals.
+
+Contacts require fresh actual-angle and tactile fields, at most four seconds old,
+whose bridge reception timestamps differ by no more than 500 ms. Stale, missing,
+disconnected or skewed streams produce an invalid snapshot with no contact points.
+These timestamps measure **bridge reception**, not hardware capture synchronization.
+Missing individual regions omit only their contacts. Target angles never substitute
+for actual feedback. A held pose can still show fresh cell pressure, but its
+contacts are withheld when timing requirements fail.
+
+This is a foundation for saving contact clouds and fitting object-shape hypotheses.
+It does not infer an object or perform collision detection. Sparse contacts do not
+describe uncontacted surfaces; mesh/point calibration and uncertainty estimates
+are required before trusting shape or collision estimates.
+
+## Geometry, frames and remaining physical validation
+
+Each sensor field uses a regular grid within its own matching sensor STL XY bounds,
+inset by 12%. Positive-local-Z ray intersections put all 1,062 centres on the mesh
+surface, with no projection misses. Surface normals come from those triangles.
+Row/column orientation follows the existing reference-view convention. This estimates
+electrode locations from sensor-body geometry; it is not measured electrode calibration.
+
+Full Toolkit FK composes parent-relative URDF origin translations, RPY rotations
+(`Rz Ry Rx`) and local-axis joint rotations, in metres/radians. Cascaded thumb
+mimics retain their actual drivers. Sensor points follow their own sensor-link
+frames through the same FK. DEX and MuJoCo numeric frames are not applied.
+The immutable original input reference remains for provenance; only Toolkit is active.
+
+Display uses a separate `Ry(-pi/2)` presentation rotation, open-pose camera centering,
+and conversion to renderer millimetres. Exports exclude camera transformations and
+the 0.35 mm rendering lift used to avoid depth overlap. They transform the actual
+approximate mesh-surface points into `left_base_link`. World/base alignment does not
+change the exported base-frame coordinates. Previously saved valid Toolkit settings
+can still load from browser storage; there is no geometry editor in the user flow.
+
+Validate on the real hand: activate one taxel at a time to confirm field identity,
+wire ordering and mirroring; measure electrode centres/active-area bounds; check
+joint origins, angle endpoints, thumb coupling, and dynamic timing. Source angle
+mapping remains an unmeasured candidate until checked experimentally.
+
+Source assets come from AlexArutiunian/tactile-rh56dftp at the commit and blob hashes
+recorded in `digital_twin/joint_asset_manifest.json`. The pinned Toolkit URDF is
+retained under `digital_twin/profile_sources/`. The manifest retains the unresolved
+upstream mesh redistribution-permission note; verify permission before publicly
+redistributing the source meshes or their embedded geometry.
+
+## Build and tests
+
+Runtime needs only the self-contained HTML and a WebGL2 browser. Editable sources
+are `toolkit_controls.js`, `joint_kinematics.js`, `joint_pressure.js`,
+`tactile_points.js`, `joint_profiles_ui.js`, CSS and panel HTML. The canonical
+reference JSON and asset manifest retain source provenance.
 
 ```powershell
-python demo_sender.py --seconds 60
+uv run python digital_twin/rebuild_joint_viewer.py
+uv run python -m unittest discover -s tests -v
+node tests/test_joint_kinematics.js
+node tests/test_joint_pressure.js
+node tests/test_tactile_points.js
+node tests/test_live_pressure_browser.js
 ```
 
-The demo sends artificial joint readings, forces, and tactile contacts, identified as simulation data. For the same stream in the 2D view, open http://127.0.0.1:18765/tactile and select “Live bridge”. Stop the server with Ctrl+C.
+The rebuild derives `tactile_geometry.json` deterministically from the embedded
+source meshes and refuses changed reference hashes. NumPy is an existing project
+dependency. Browser tests additionally require Playwright and an installed browser;
+set `PLAYWRIGHT_PACKAGE` to its package directory if it is outside Node's normal
+resolution path, and `TEST_BROWSER_CHANNEL` to select another installed channel.
+Screenshots go to the OS temporary directory or `HAND_VIEWER_ARTIFACT_DIR`, so test
+outputs do not pollute the repository.
 
-On Windows, you can alternatively start the combined demo from PowerShell:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\start_demo.ps1
-```
-
-The launcher opens the browser and sends demo data for up to one hour. Select “Live from Python” in the viewer. Press Ctrl+C in the terminal to stop the demo and its bridge process.
-
-If `python` is unavailable, install Python or use `py` instead of `python` in the two manual commands. If the port is occupied, start both the bridge and demo with `--port 18766`, then open http://127.0.0.1:18766/.
-
-## Connect an existing acquisition application
-
-Start the bridge and have the existing application forward its already-acquired measurements through the included background sender. `twin_sender.py`, `blackforest_adapter.py`, and `tactile_layout.py` must be available to that application. The adapter supports the existing blackforest DataDict format.
-
-Keep a single acquisition path to the physical hand: the viewer should consume the same measurements already collected by the control application. This package contains the visualization connection, not the hardware-control application or a hardware launcher.
-
-The six channels are ordered as follows: little finger, ring finger, middle finger, index finger, thumb bending, and thumb rotation. Joint readings use the 0–1000 register scale, not degrees. The long fingers are open at 1000 and closed at 0. Tactile readings use the 0–4095 raw-value range. The adapter preserves the palm's acquisition order; the viewer handles its spatial arrangement.
-
-## Included files
-
-| File | Purpose |
-| --- | --- |
-| `hand_twin_6dof.html` | Complete 3D viewer, embedded model, and sensor editor. |
-| `tactile_2d.html` | Complete 2D tactile sensor view. |
-| `bridge_server.py` | Local state relay and viewer hosting. |
-| `tactile_layout.py` | Shared sensor-region definitions and layout helpers. |
-| `demo_sender.py` | Artificial streamed data for testing without hardware. |
-| `start_demo.ps1` | Windows launcher for the bridge, browser, and demo. |
-| `twin_sender.py` | Background connection from an existing Python application. |
-| `blackforest_adapter.py` | Converts existing blackforest measurements for visualization. |
-| `README.md` | Setup, architecture, and usage guide. |
-
-## Model limitations and verification
-
-This is a geometric digital twin with partly estimated joint relationships and sensor placements. It does not simulate physical forces or collisions. Calibration against the real hand is needed when spatial accuracy matters.
-
-This package contains the files needed to use the application. CAD sources, build tools, hardware control, databases, older versions, and test files are omitted.
-
-Before handover, the bridge/sender tests, adapter tests, and JavaScript tests for all six degrees of freedom passed. The isolated package was also checked for delivery of both viewer pages, demo streaming, all 17 sensor regions, and simulation labeling. Real hardware was not tested.
-
-The English package also passed the sensor-editor and 2D-view behavioral checks. Embedded model and sensor geometry were compared with the original version and are unchanged.
-
-
-## Live pressure and force display
-
-The twin is a read-only telemetry viewer. `robot.poll()` reads motor force
-registers and the tactile cache; `TwinPublisher` posts to the localhost bridge,
-and the browser polls every 300 ms. The hardware controller keeps its own
-force limits and contact-triggered grasp logic. The twin does not apply forces
-or simulate contact dynamics.
-
-Pressure now matches `HandApp.draw`: `max(0, raw - sensor_offsets)` per cell.
-Both twin views use the GUI colors: green below 800, yellow from 800, orange
-from 2000, red from 3200 (4000-count reference scale). These are sensor counts,
-not calibrated pressure units. The 3D viewer also has a selectable live grid
-with per-cell readings, min/mean/max, and picking on the hand. Missing/stale
-live cells are gray; force readings remain separate in grams. Sensor mounting
-and pose remain approximate. Optional baseline capture in the 2D view applies
-an additional local correction; leave it off to match the GUI.
-
-Start `uv run python digital_twin/bridge_server.py`, then
-`uv run python src/main.py`; open http://127.0.0.1:18765/ and select
-**Live from Python**. Restart existing Python/bridge processes and reload the
-browser after updating. No hardware connection is required for unit tests.
-
-On `check_digital_twin`, publishing is already enabled by default in `src/main.py`; no `--twin` flag is needed.
+Tests cover the HTTP publisher path, XML-vs-JavaScript FK, all sensor surfaces,
+deterministic geometry hashes, exact point counts/wiring, individual-cell colors,
+moving frames/normals, base-frame invariance, weighted centres, exports, thresholds,
+stale/skewed data, disconnects and demos. No test connects to physical hardware.
