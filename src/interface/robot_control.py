@@ -31,6 +31,9 @@ class RobotHandController:
         self.mock_angles = [1000] * 6
         self.last_sensor_data: dict[str, np.ndarray] = {}
         self.last_all_points = np.zeros((112, 17))
+        self.mean_matrix = np.zeros((1, 17))
+        self.all_points = self.last_all_points
+        self.state_change = False
         self.offsets = {
                 "Little": (150, 120),
                 "Ring":   (230, 110),
@@ -257,12 +260,13 @@ class RobotHandController:
             data = self.safe_read(addr, h * w)
             self.sensor_offsets[name] = np.array(data) if data else np.zeros(h * w)
 
-    def close_on_contact(self, matrix: np.ndarray) -> bool:
+    def close_on_contact(self, matrix: np.ndarray | None = None) -> bool:
         """Triggers grip closure if tactile pressure exceeds contact threshold with impulse rejection."""
         if not self.auto_mode_active:
             return False
 
-        contact_present = np.count_nonzero(matrix > CLOSE_THRESHOLD) >= 10
+        contact_present = np.count_nonzero(
+            (self.all_points if matrix is None else matrix) > CLOSE_THRESHOLD) >= 10
 
         # Step 1: Contact detected for the first time -> start debounce timer
         if contact_present and not self.auto_contact_trigerred:
@@ -319,15 +323,19 @@ class RobotHandController:
         self.last_all_points = all_points
         return data_matrix, all_points
 
-    def build_result_data(self, mean_matrix: np.ndarray, all_points: np.ndarray) -> DataDict:
+    def build_result_data(self, mean_matrix=None, all_points=None, telemetry=None) -> DataDict:
         """Packages polled kinematics, telemetry, and tactile data into DataDict."""
+        angles, forces, position = telemetry if telemetry is not None else (
+            self.read_command("ANGLES"), self.read_command("FORCES"),
+            self.read_command("POSITION"))
         self.results = {
-            "angles": np.array(self.read_command("ANGLES")),
-            "forces": np.array(self.read_command("FORCES")),
-            "position": np.array(self.read_command("POSITION")),
-            "tactile_matrix": all_points,
-            "tactile_mean_matrix": mean_matrix,
-            "state": self.state
+            "angles": np.array(angles),
+            "forces": np.array(forces),
+            "position": np.array(position),
+            "tactile_matrix": self.all_points if all_points is None else all_points,
+            "tactile_mean_matrix": self.mean_matrix if mean_matrix is None else mean_matrix,
+            "state": self.state,
+            "state_change": self.state_change,
         }
         return self.results
 
@@ -346,6 +354,8 @@ class RobotHandController:
             "positions": results["position"].tolist(),
             "tactile": tactile,
             "tactile_valid": list(self.last_tactile_valid),
+            "state": results["state"],
+            "state_change": results["state_change"],
         }
 
 
@@ -376,7 +386,9 @@ class RobotHandController:
 
     def main(self)-> DataDict:
         self.last_timestamp_ns = time.time_ns()
+        previous_state = self.state
         mean_matrix, all_points = self.read_tactile_data()
+        self.mean_matrix, self.all_points = mean_matrix, all_points
         auto_contact = self.close_on_contact(all_points)
         angles = self.read_command("ANGLES")
         forces = self.read_command("FORCES")
@@ -404,12 +416,5 @@ class RobotHandController:
                 #self.confirm_grip(valid_positions, valid_tactile, mean_matrix=mean_matrix)
 
         self.angle_array = current_pos
-        self.results = {
-            "angles": np.array(angles) if angles is not None else np.array(None),
-            "forces": np.array(forces) if forces is not None else np.array(None),
-            "position": np.array(position) if position is not None else np.array(None),
-            "tactile_matrix": all_points,
-            "tactile_mean_matrix": mean_matrix,
-            "state": self.state,
-        }
-        return self.results
+        self.state_change = self.state != previous_state
+        return self.build_result_data(telemetry=(angles, forces, position))

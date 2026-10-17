@@ -131,6 +131,24 @@ class IntegrationTests(unittest.TestCase):
             address=1486, values=[1000]*6, device_id=1)
         self.assertEqual(outputs["angles"], [0]*6)
 
+    def test_state_transition_is_reported_once_and_logged(self):
+        robot = self.robot()
+        robot.state = "moving"
+        robot.angle_array = controller.np.array([500]*6)
+        robot.safe_read = Mock(side_effect=([[0, 0], [500]*6, [0]*6, [0]*6] * 2))
+        app, dataset, events = Mock(), Mock(), Mock()
+        loop = gui.AcquisitionLoop(app, robot, dataset, state_dataset=events)
+        loop.tick()
+        self.assertEqual(robot.results["state"], "steady_state")
+        self.assertTrue(robot.results["state_change"])
+        events.loop.assert_called_once_with(dataset.loop.call_args.args[0])
+        loop.tick()
+        self.assertFalse(robot.results["state_change"])
+        events.loop.assert_called_once()
+        self.assertEqual(dataset.loop.call_count, 2)
+        loop.on_close()
+        events.close.assert_called_once()
+
     def test_save_failure_keeps_window_for_retry(self):
         app, robot, dataset = Mock(), Mock(), Mock()
         loop = gui.AcquisitionLoop(app, robot, dataset)

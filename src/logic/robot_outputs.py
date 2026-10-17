@@ -10,4 +10,6 @@ class robot_outputs(TypedDict):
     positions: list[int] | None
     tactile: list[list[int | None]]
     tactile_valid: list[bool]
+    state: str
+    state_change: bool
 

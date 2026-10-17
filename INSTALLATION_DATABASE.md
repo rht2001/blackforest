@@ -5,12 +5,19 @@ Greifzustände und `DataDict` bleiben erhalten. `main()` liefert den aktuellen
 `DataDict`; `capture_telemetry()` bildet denselben Erfassungszyklus auf das
 CSV-/Twin-Schema ab, ohne Sensoren erneut zu lesen. Die Rohdaten für CSV und
 Twin sind von den offsetbereinigten Matrizen der Greifsteuerung getrennt.
-`database_publish`, `fixing_dataset` und `environment-setup` sind in diesem
-main-Stand bereits enthalten. Aus `fixing` kommen Fehlerdiagnose und Roadmap-
+`database_publish` und `environment-setup` sind in diesem main-Stand bereits
+enthalten. Die zusätzlich am 17.10. abgerufenen Stände von `fixing` (85303c8)
+und `fixing_dataset` (256bd71) sind ebenfalls integriert. Aus `fixing` kommen Fehlerdiagnose und Roadmap-
 Aufteilung hinzu. Bei den überlappenden Steuerungsänderungen hat der neuere
 main-Stand Vorrang (Greifbestätigung und Standard-IP); die CSV wird beim
 Schließen weiterhin vollständig geschrieben. Beim Zurücksetzen wird die
 automatische Kontakterkennung erneut aktiviert.
+`state` und `state_change` stehen auch im CSV-Snapshot. `state_change` ist nur
+bei einem tatsächlichen Zustandswechsel wahr. Übergänge nach `steady_state`
+werden zusätzlich in `state_changes.csv` neben der Haupt-CSV gespeichert;
+`--state-changes` überschreibt diesen Pfad. Beide Puffer werden beim Schließen
+geschrieben. Der neue Upstream-Logger unter `interface/robot_dataset.py` bleibt
+weiterhin nutzbar; die Anwendung nutzt die abgesicherte `RobotDataset`-Persistenz.
 Die Dateien dieses Pakets werden relativ zum Repository-Hauptverzeichnis übernommen.
 Nicht nach documents entpacken. Die vorhandenen README, Dokumente und Mock-Funktionen
 bleiben erhalten. Tests importieren die Module direkt aus src; kein manuelles
