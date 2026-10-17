@@ -4,7 +4,9 @@ import time
 from pymodbus.client import ModbusTcpClient
 import numpy as np
 from typing import Literal, Dict
+
 DEFAULT_MOVEMENT_SPEED = [100, 100, 100, 100, 100, 100]
+CLOSE_THRESHOLD = 100
 
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 data_packet: tuple[int, int, int, int, int, int]
@@ -21,6 +23,8 @@ class RobotHandController:
             "FORCES": 1498,
             "POSITION": 1474,
         }
+
+        self.auto_mode_active = True
 
         self.receive_addresses = {
             "ANGLES": 1546,
@@ -67,10 +71,11 @@ class RobotHandController:
             if not res.isError():
                 values.extend(res.registers)
         return values
-    def schließen(self):
+    def close(self):
         vals = [0, 0, 0, 0, 234, 670]
 
         self.send_angles(vals)
+
     def calibrate_offsets(self):
         print("Kalibriere Sensoren...")
         time.sleep(1)
@@ -85,7 +90,20 @@ class RobotHandController:
             values=angles,
             device_id=1
         )
+    def close_on_contact(self, matrix):
 
+        if not self.auto_mode_active:
+            return False
+
+        # At least 3 sensor pixels must exceed 100
+        if np.count_nonzero(matrix > CLOSE_THRESHOLD) >= 3:
+            self.auto_mode_active = False  # Prevent further triggers
+            self.send_command(value=[0, 0, 0, 0, 1000, 1000])                   # Execute existing close function
+
+            print(f"Contact detected at")
+            return True
+
+        return False
     def read_error(self):
             error = self.client.read_holding_registers(address=1606, count=6, device_id=1)
             return error
@@ -95,7 +113,7 @@ class RobotHandController:
                 values=value,
                 device_id=1
             )
-    def send_command(self,  type:DataTypes= "ANGLES", value:data_packet= None):
+    def send_command(self, value:list[int], type:DataTypes= "ANGLES"):
 
         self.client.write_registers(
                     address=self.send_addresses[type],
@@ -104,7 +122,7 @@ class RobotHandController:
                 )
     #TODO: check if the count works for reading the forces
     def receive_data(self, type:DataTypes= "ANGLES"):
-        res = self.client.read_holding_registers(address=type, count=6, device_id=1)
+        res = self.client.read_holding_registers(address=self.receive_addresses[type], count=6, device_id=1)
         if not res.isError():
             return res.registers
 
@@ -134,7 +152,9 @@ class RobotHandController:
         return data_matrix, all_points
 
     def main(self):
-        pass
+        _, all_points = self.read_tactile_data()
+        self.close_on_contact(all_points)
+
 
 
 

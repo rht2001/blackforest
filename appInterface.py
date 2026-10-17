@@ -67,7 +67,7 @@ class HandApp(tk.Tk):
         bf.pack(pady=10)
 
         tk.Button(bf, text="Öffnen", command=self.öffnen).pack(side="left")
-        tk.Button(bf, text="Schließen", command=self.schließen).pack(side="left")
+        tk.Button(bf, text="Schließen", command=self.robot.close).pack(side="left")
         tk.Button(bf, text="Step +", command=self.step_plus).pack(side="left")
         tk.Button(bf, text="Step -", command=self.step_minus).pack(side="left")
 
@@ -93,10 +93,6 @@ class HandApp(tk.Tk):
             s.set(1000)
         self.send_angles()
 
-    def schließen(self):
-        vals = [0, 0, 0, 0, 234, 670]
-
-        self.robot.schließen
 
     def step_plus(self):
         for s in self.robot.sliders:
