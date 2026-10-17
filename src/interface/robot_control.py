@@ -388,6 +388,7 @@ class RobotHandController:
             self.state = "resetting"
             print("nothing detected: opening the hand")
             self.write_data("ANGLES", [1000] * 6)
+            self.auto_mode_active = True
             time.sleep(1)
 
         if auto_contact:
@@ -412,4 +413,3 @@ class RobotHandController:
             "state": self.state,
         }
         return self.results
-

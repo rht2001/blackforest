@@ -5,6 +5,12 @@ Greifzustände und `DataDict` bleiben erhalten. `main()` liefert den aktuellen
 `DataDict`; `capture_telemetry()` bildet denselben Erfassungszyklus auf das
 CSV-/Twin-Schema ab, ohne Sensoren erneut zu lesen. Die Rohdaten für CSV und
 Twin sind von den offsetbereinigten Matrizen der Greifsteuerung getrennt.
+`database_publish`, `fixing_dataset` und `environment-setup` sind in diesem
+main-Stand bereits enthalten. Aus `fixing` kommen Fehlerdiagnose und Roadmap-
+Aufteilung hinzu. Bei den überlappenden Steuerungsänderungen hat der neuere
+main-Stand Vorrang (Greifbestätigung und Standard-IP); die CSV wird beim
+Schließen weiterhin vollständig geschrieben. Beim Zurücksetzen wird die
+automatische Kontakterkennung erneut aktiviert.
 Die Dateien dieses Pakets werden relativ zum Repository-Hauptverzeichnis übernommen.
 Nicht nach documents entpacken. Die vorhandenen README, Dokumente und Mock-Funktionen
 bleiben erhalten. Tests importieren die Module direkt aus src; kein manuelles

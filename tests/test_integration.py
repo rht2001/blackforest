@@ -120,6 +120,17 @@ class IntegrationTests(unittest.TestCase):
             startup.assert_called_once()
             robot.disconnect()
 
+    def test_reset_rearms_contact_detection_from_fixing(self):
+        robot = self.robot()
+        robot.safe_read = Mock(side_effect=[[0, 0], [0]*6, [0]*6, [0]*6])
+        with patch.object(controller.time, "sleep"):
+            outputs = robot.capture_telemetry()
+        self.assertTrue(robot.auto_mode_active)
+        self.assertEqual(robot.state, "resetting")
+        robot.client.write_registers.assert_called_once_with(
+            address=1486, values=[1000]*6, device_id=1)
+        self.assertEqual(outputs["angles"], [0]*6)
+
     def test_save_failure_keeps_window_for_retry(self):
         app, robot, dataset = Mock(), Mock(), Mock()
         loop = gui.AcquisitionLoop(app, robot, dataset)
