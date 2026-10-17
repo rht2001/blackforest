@@ -14,34 +14,19 @@ from config.config_parameters import REGISTERS
 
 
 class RobotHandController:
-    def __init__(self, ip="192.168.123.211", port=6000):
-        """ Initialize a RobotHandController instance. Lightweight python wrapper for the Modbus TCP API to control the robot hand with descriptive function names.
-
-        Parameters
-        ----------
-        ip : str, optional
-            The IP address of the robot hand, by default "192.168.123.211"
-        port : int, optional
-            The port of the robot hand, by default 6000
+    def __init__(self, ip: str = "192.168.123.211", port: int = 6000, mock: bool = False):
+        """
+        Lightweight Python wrapper for Modbus TCP control of the RH56DFTP dexterous hand.
         """
         self.ip = ip
         self.port = port
-        self.sliders = []
+        self.client: ModbusTcpClient | None = None
         self.auto_mode_active = True
         self.auto_contact_trigerred = False
         self.is_connected = False
-        self.mock_angles = [1000, 1000, 1000, 1000, 1000, 1000]
-
-        try:
-            self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
-            if self.client.connect():
-                self.is_connected = True
-                print(f"[RobotHandController] Connected to hand at {self.ip}:{self.port}")
-            else:
-                print(f"[RobotHandController] Could not reach {self.ip}:{self.port}. Running in simulation/disconnected mode.")
-        except Exception as e:
-            print(f"[RobotHandController] Connection error ({e}). Running in simulation/disconnected mode.")
-            self.client = None
+        self.current_angles = [1000] * 6
+        self.last_sensor_data: dict[str, np.ndarray] = {}
+        self.last_all_points = np.zeros((112, 17))
 
         self.send_addresses = {
             "ANGLES": 1486,
@@ -54,6 +39,7 @@ class RobotHandController:
             "FORCES": 1582,
             "POSITION": 1594,
         }
+
         self.sensor_groups = [
             ("Little Tip", 3000, 3, 3, "Little", (8, 10)),
             ("Little Nail", 3018, 12, 8, "Little", (-2, 40)),
@@ -80,28 +66,85 @@ class RobotHandController:
         ]
         self.sensor_offsets = {}
         self.state: STATES = "starting"
+
+        if not mock:
+            try:
+                self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
+                if self.client.connect():
+                    self.is_connected = True
+                    print(f"[RobotHandController] Connected to hand at {self.ip}:{self.port}")
+                else:
+                    print(f"[RobotHandController] Could not reach {self.ip}:{self.port}. Running in simulation/disconnected mode.")
+            except Exception as e:
+                print(f"[RobotHandController] Connection error ({e}). Running in simulation/disconnected mode.")
+                self.client = None
+        else:
+            self.client = None
+            print("[RobotHandController] Explicitly initialized in mock mode.")
+
         if self.is_connected:
             self.startup()
         else:
             self.state = "initialised"
-            self.sliders = [1000] * 6
 
-    def startup(self):
-        self.set_default_speed()
-        # With this, we always start at fully open
-        self.send_command(value=[1000] * 6)
-        print("opened")
-        self.state = "initialised"
-        self.sliders = [1000] * 6
+    # ==========================================
+    # Unified Hardware Access Points
+    # ==========================================
 
-    def set_default_speed(self):
-        if not self.is_connected:
-            return
-        self.send_all_commands("DEFAULT_SPEED_SET", value=DEFAULT_MOVEMENT_SPEED)
+    def write_data(self, target: DataTypes | str, values: list[int]) -> bool:
+        """
+        Unified write access point for commands and register settings.
+        Target can be a standard data category ('ANGLES', 'FORCES', 'POSITION')
+        or a specific register key from REGISTERS.
+        """
+        if target in self.send_addresses:
+            address = self.send_addresses[target]
+        elif target in REGISTERS:
+            address = REGISTERS[target]
+        else:
+            raise ValueError(f"Unknown write target: {target}")
 
-    def safe_read(self, addr, length):
-        if not self.is_connected:
+        if target in ("ANGLES", "ANGLE_SET"):
+            self.current_angles = list(values)
+
+        if not self.is_connected or self.client is None:
+            return True
+
+        res = self.client.write_registers(address=address, values=values, device_id=1)
+        return not res.isError()
+
+    def read_data(self, target: DataTypes | str, count: int = 6) -> list[int] | None:
+        """
+        Unified read access point for actuator telemetry and register inspection.
+        Target can be a standard data category ('ANGLES', 'FORCES', 'POSITION')
+        or a specific register key from REGISTERS.
+        """
+        if target in self.receive_addresses:
+            address = self.receive_addresses[target]
+        elif target in REGISTERS:
+            address = REGISTERS[target]
+        else:
+            raise ValueError(f"Unknown read target: {target}")
+
+        if not self.is_connected or self.client is None:
+            if target in ("ANGLES", "ANGLE_ACT"):
+                return list(self.current_angles)
+            return [0] * count
+
+        res = self.client.read_holding_registers(address=address, count=count, device_id=1)
+        if not res.isError():
+            if target in ("ANGLES", "ANGLE_ACT"):
+                self.current_angles = list(res.registers)
+            return res.registers
+
+        print(f"[RobotHandController] Failed to read {target} from address {address}")
+        return None
+
+    def safe_read(self, addr: int, length: int) -> list[int]:
+        """Reads arbitrary holding registers in safe chunks of up to 120 registers."""
+        if not self.is_connected or self.client is None:
             return [0] * length
+
         values = []
         for i in range(0, length, 120):
             res = self.client.read_holding_registers(
@@ -113,90 +156,82 @@ class RobotHandController:
                 values.extend(res.registers)
         return values
 
-    def close(self):
-        """ Close the robot hand completely. """
-        vals = [0, 0, 0, 0, 234, 670]
-        self.send_angles(vals)
+    # ==========================================
+    # High-Level Domain Helpers
+    # ==========================================
+
+    def startup(self):
+        """Initializes speed and opens hand on startup."""
+        self.set_default_speed()
+        self.open_hand()
+        print("[RobotHandController] Hand opened and ready.")
+        self.state = "initialised"
+
+    def set_default_speed(self):
+        """Sets the default speed for all 6 DOFs."""
+        self.write_data("DEFAULT_SPEED_SET", DEFAULT_MOVEMENT_SPEED)
+
+    def set_angles(self, angles: list[int]) -> bool:
+        """Sets target angles for all 6 DOFs (0=closed, 1000=open)."""
+        return self.write_data("ANGLES", angles)
+
+    def get_angles(self) -> list[int]:
+        """Reads actual joint angles for all 6 DOFs."""
+        res = self.read_data("ANGLES", count=6)
+        return res if res is not None else list(self.current_angles)
+
+    def set_forces(self, forces: list[int]) -> bool:
+        """Sets the force control threshold for all 6 DOFs (0-3000g)."""
+        return self.write_data("FORCES", forces)
+
+    def get_forces(self) -> list[int]:
+        """Reads actual force values for all 6 DOFs."""
+        res = self.read_data("FORCES", count=6)
+        return res if res is not None else [0] * 6
+
+    def open_hand(self):
+        """Opens all fingers fully (angle 1000)."""
+        self.set_angles([1000] * 6)
+
+    def close_hand(self):
+        """Closes hand to standard grasp position."""
+        self.set_angles([0, 0, 0, 0, 234, 670])
 
     def calibrate_offsets(self):
+        """Calibrates baseline tactile sensor readings."""
         print("Calibrating sensor offsets...")
         time.sleep(1)
-
         for name, addr, h, w, key, rel in self.sensor_groups:
             data = self.safe_read(addr, h * w)
             self.sensor_offsets[name] = np.array(data) if data else np.zeros(h * w)
 
-    def send_angles(self, angles):
-        self.send_command(value=angles, type="ANGLES")
-
-    def close_on_contact(self, matrix):
+    def close_on_contact(self, matrix: np.ndarray) -> bool:
+        """Triggers grip closure if tactile pressure exceeds contact threshold."""
         if not self.auto_mode_active:
             return False
 
-        # At least 3 sensor pixels must exceed CLOSE_THRESHOLD
         if np.count_nonzero(matrix > CLOSE_THRESHOLD) >= 3:
-            self.auto_mode_active = False  # Prevent further triggers
-            self.send_command(value=[0, 0, 0, 0, 1000, 1000])  # Execute existing close function
+            self.auto_mode_active = False
+            self.write_data("ANGLES", [0, 0, 0, 0, 1000, 1000])
             self.auto_contact_trigerred = True
-            print(f"Contact detected at {matrix[matrix > 0]}")
+            print(f"Contact detected at {max(matrix[matrix > 0])}")
             return True
 
         return False
 
     def read_error(self):
-        if not self.is_connected:
+        """Reads error code bitfields from actuators."""
+        if not self.is_connected or self.client is None:
             return None
         return self.client.read_holding_registers(address=1606, count=6, device_id=1)
 
-    def send_all_commands(self, register_name, value):
-        if not self.is_connected:
-            return
-        self.client.write_registers(
-            address=REGISTERS[register_name],
-            values=value,
-            device_id=1
-        )
-
-    def send_command(self, value: list[int], type: DataTypes = "ANGLES"):
-        if type == "ANGLES":
-            self.mock_angles = list(value)
-        if not self.is_connected:
-            return
-        self.client.write_registers(
-            address=self.send_addresses[type],
-            values=value,
-            device_id=1
-        )
-
-    def read_command(self, type: DataTypes = "ANGLES"):
-        if not self.is_connected:
-            if type == "ANGLES":
-                return list(self.mock_angles)
-            return [0] * 6
-        res = self.client.read_holding_registers(address=self.receive_addresses[type], count=6, device_id=1)
-        if not res.isError():
-            return res.registers
-        print("Couldnt grab the data")
-        return self.read_error()
-
-    def receive_data(self, type: DataTypes = "ANGLES"):
-        """Backward compatibility alias for read_command."""
-        return self.read_command(type=type)
-
-    def read_current_angles(self):
-        if not self.is_connected:
-            return list(self.mock_angles)
-        res = self.client.read_holding_registers(address=1486, count=6, device_id=1)
-        if not res.isError():
-            return res.registers
-        return None
-
-    def read_tactile_data(self):
-        # Max cells is 112 (Palm: 8 * 14 = 112)
+    def read_tactile_data(self) -> tuple[np.ndarray, np.ndarray]:
+        """Reads tactile matrix data across all 17 sensor groups and caches results."""
         data_matrix = np.zeros((1, 17))
         all_points = np.zeros((112, 17))
+        raw_cache = {}
 
-        for index, (_, addr, h, w, key, rel) in enumerate(self.sensor_groups):
+        for index, (name, addr, h, w, key, rel) in enumerate(self.sensor_groups):
             data = self.safe_read(addr, h * w)
             if not data:
                 continue
@@ -204,10 +239,39 @@ class RobotHandController:
             raw = np.array(data)
             data_matrix[0, index] = np.mean(raw)
             all_points[0:len(raw), index] = raw
+            raw_cache[name] = raw
 
+        self.last_sensor_data = raw_cache
+        self.last_all_points = all_points
         return data_matrix, all_points
 
     def main(self):
+        """Periodic control step."""
         _, all_points = self.read_tactile_data()
-        auto_contact = self.close_on_contact(all_points)
-        current_pos = self.read_command()
+        self.close_on_contact(all_points)
+        self.read_data("ANGLES")
+
+    # ==========================================
+    # Backward Compatibility Aliases
+    # ==========================================
+    def close(self):
+        self.close_hand()
+
+    def send_angles(self, angles: list[int]):
+        return self.set_angles(angles)
+
+    def send_command(self, value: list[int], type: DataTypes = "ANGLES"):
+        return self.write_data(type, value)
+
+    def send_all_commands(self, register_name: str, value: list[int]):
+        return self.write_data(register_name, value)
+
+    def read_command(self, type: DataTypes = "ANGLES") -> list[int]:
+        res = self.read_data(type)
+        return res if res is not None else [0] * 6
+
+    def receive_data(self, type: DataTypes = "ANGLES") -> list[int]:
+        return self.read_command(type=type)
+
+    def read_current_angles(self) -> list[int] | None:
+        return self.read_data("ANGLES", count=6)
