@@ -12,7 +12,7 @@ import main as gui
 
 class IntegrationTests(unittest.TestCase):
     def robot(self):
-        robot = controller.RobotHandController.__new__(controller.RobotHandController)
+        robot = controller.RobotHandController(mock=True)
         robot.client = Mock()
         robot.is_connected = True
         robot.receive_addresses = {"ANGLES": 1546, "FORCES": 1582, "POSITION": 1534}
@@ -26,7 +26,7 @@ class IntegrationTests(unittest.TestCase):
             client.assert_not_called()
             robot.send_angles([12] * 6)
             self.assertEqual(robot.receive_data(), [12] * 6)
-            outputs = robot.main()
+            outputs = robot.capture_telemetry()
             self.assertTrue(outputs["simulated"])
             self.assertEqual(outputs["angles"], [12] * 6)
             self.assertEqual(outputs["tactile_valid"], [True] * 17)
@@ -37,7 +37,7 @@ class IntegrationTests(unittest.TestCase):
             client.return_value.connect.return_value = False
             robot = controller.RobotHandController()
             client.return_value.write_registers.assert_not_called()
-            self.assertTrue(robot.main()["simulated"])
+            self.assertTrue(robot.capture_telemetry()["simulated"])
             robot.disconnect()
             client.return_value.close.assert_called_once()
 
@@ -63,8 +63,8 @@ class IntegrationTests(unittest.TestCase):
 
     def test_one_acquisition_and_validity(self):
         robot = self.robot()
-        robot.safe_read = Mock(side_effect=[None, [1]*6, [65535]*6, [3]*6])
-        outputs = robot.main()
+        robot.safe_read = Mock(side_effect=[None, [500]*6, [65535]*6, [3]*6])
+        outputs = robot.capture_telemetry()
         self.assertEqual(outputs["tactile_valid"], [False])
         self.assertIsNone(outputs["tactile"][0][0])
         self.assertEqual(outputs["forces"], [-1]*6)
@@ -75,17 +75,20 @@ class IntegrationTests(unittest.TestCase):
     def test_tactile_padding(self):
         robot = self.robot()
         robot.safe_read = Mock(return_value=[4, 5])
-        matrix, valid = robot.read_tactile_data()
-        self.assertEqual(valid, [True])
-        self.assertEqual(matrix[:3], [[4], [5], [None]])
+        robot.read_tactile_data()
+        self.assertEqual(robot.last_tactile_valid, [True])
+        self.assertEqual(robot.last_sensor_data["test"].tolist(), [4, 5])
+        robot.safe_read = Mock(side_effect=[[4, 5], [500]*6, [0]*6, [0]*6])
+        outputs = robot.capture_telemetry()
+        self.assertEqual(outputs["tactile"][:3], [[4], [5], [None]])
 
     def test_gui_passes_same_snapshot_and_flushes_before_destroy(self):
         app, robot, dataset = Mock(), Mock(), Mock()
         loop = gui.AcquisitionLoop(app, robot, dataset)
         loop.tick()
-        robot.main.assert_called_once_with()
-        dataset.loop.assert_called_once_with(robot.main.return_value)
-        app.main.assert_called_once_with(robot.main.return_value)
+        robot.capture_telemetry.assert_called_once_with()
+        dataset.loop.assert_called_once_with(robot.capture_telemetry.return_value)
+        app.main.assert_called_once_with(robot.capture_telemetry.return_value)
         order = Mock()
         order.attach_mock(dataset.close, "flush")
         order.attach_mock(app.destroy, "destroy")
@@ -93,7 +96,29 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual([call[0] for call in order.mock_calls], ["flush", "destroy"])
         app.after_cancel.assert_called_once()
         loop.tick()
-        robot.main.assert_called_once()
+        robot.capture_telemetry.assert_called_once()
+
+    def test_upstream_datadict_is_populated_without_duplicate_reads(self):
+        robot = self.robot()
+        robot.safe_read = Mock(side_effect=[[4, 5], [500]*6, [65535]*6, [3]*6])
+        robot.sensor_offsets = {"test": controller.np.array([1, 2])}
+        outputs = robot.capture_telemetry()
+        self.assertEqual(set(robot.results), set(controller.DataDict.__annotations__))
+        self.assertEqual(robot.results["angles"].tolist(), outputs["angles"])
+        self.assertEqual(robot.results["position"].tolist(), outputs["positions"])
+        self.assertEqual(robot.results["tactile_matrix"][:2, 0].tolist(), [3, 3])
+        self.assertEqual(outputs["tactile"][:2], [[4], [5]])
+        self.assertEqual(robot.safe_read.call_count, 4)
+
+    def test_real_connection_is_created_only_once(self):
+        with patch.object(controller, "ModbusTcpClient") as client:
+            client.return_value.connect.return_value = True
+            with patch.object(controller.RobotHandController, "startup") as startup:
+                robot = controller.RobotHandController()
+            client.assert_called_once()
+            client.return_value.connect.assert_called_once()
+            startup.assert_called_once()
+            robot.disconnect()
 
     def test_save_failure_keeps_window_for_retry(self):
         app, robot, dataset = Mock(), Mock(), Mock()

@@ -34,7 +34,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=2.5.4" },
-    { name = "pandas", specifier = ">=2.2" },
+    { name = "pandas", specifier = ">=3.0.6" },
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "pymodbus", specifier = ">=3.16.1" },
     { name = "pyproject-toml", specifier = ">=0.1.0" },

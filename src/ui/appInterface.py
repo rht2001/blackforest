@@ -1,12 +1,12 @@
 import tkinter as tk
-from pymodbus.client import ModbusTcpClient
 import numpy as np
 from PIL import Image, ImageTk
 import os
 import json
 import time
 from interface.robot_control import RobotHandController
-#TODO : provide a simulation environment to run it without the robot being connected
+
+
 class HandApp(tk.Tk):
     def __init__(self, robot: RobotHandController):
         super().__init__()
@@ -15,7 +15,7 @@ class HandApp(tk.Tk):
         self.SAVE_FILE = "positions.json"
         self.pixel = 6
         self.positions = {}
-        self.sliders = []
+        self.sliders: list[tk.Scale] = []
 
         self.offsets = {
             "Little": (150, 120),
@@ -31,8 +31,7 @@ class HandApp(tk.Tk):
         self.load_positions()
 
     def setup_window(self):
-        # 'self' is now the Tk window
-        self.title("Greifhand – mit Positionsspeicher")
+        self.title("Dexterous Hand Controller & Tactile Visualizer")
         self.geometry("1200x900")
 
         self.left_frame = tk.Frame(self)
@@ -52,7 +51,7 @@ class HandApp(tk.Tk):
         self.canvas.pack()
 
     def setup_ui(self):
-        names = ["Kleiner Finger", "Ringfinger", "Mittelfinger", "Zeigefinger", "Daumen B", "Daumen R"]
+        names = ["Little Finger", "Ring Finger", "Middle Finger", "Index Finger", "Thumb Bend", "Thumb Rot"]
 
         for i in range(6):
             f = tk.Frame(self.left_frame)
@@ -61,43 +60,48 @@ class HandApp(tk.Tk):
             tk.Label(f, text=names[i], width=15).pack(side="left")
 
             s = tk.Scale(f, from_=0, to=1000, orient="horizontal", length=250)
+            s.set(1000)
             s.pack(side="left")
             s.bind("<ButtonRelease-1>", lambda e: self.send_angles())
 
-            s.set(self.robot.mock_angles[i])
             self.sliders.append(s)
 
         bf = tk.Frame(self.left_frame)
         bf.pack(pady=10)
 
-        tk.Button(bf, text="Öffnen", command=self.öffnen).pack(side="left")
-        tk.Button(bf, text="Schließen", command=self.robot.close).pack(side="left")
-        tk.Button(bf, text="Step +", command=self.step_plus).pack(side="left")
-        tk.Button(bf, text="Step -", command=self.step_minus).pack(side="left")
+        tk.Button(bf, text="Open", command=self.open_hand).pack(side="left", padx=2)
+        tk.Button(bf, text="Close", command=self.close_hand).pack(side="left", padx=2)
+        tk.Button(bf, text="Step +", command=self.step_plus).pack(side="left", padx=2)
+        tk.Button(bf, text="Step -", command=self.step_minus).pack(side="left", padx=2)
 
         self.entry = tk.Entry(self.left_frame)
         self.entry.pack(fill="x", pady=5)
 
-        tk.Button(self.left_frame, text="Position speichern", command=self.save_position).pack(fill="x")
+        tk.Button(self.left_frame, text="Save Position", command=self.save_position).pack(fill="x")
 
         self.saved_frame = tk.Frame(self.left_frame)
         self.saved_frame.pack(fill="both", expand=True)
 
     def send_angles(self):
-        self.robot.send_angles([s.get() for s in self.sliders])
+        angles = [s.get() for s in self.sliders]
+        self.robot.set_angles(angles)
 
     def update_angles_from_robot(self):
-        registers = self.robot.read_current_angles()
+        registers = self.robot.get_angles()
         if registers:
-            for i in range(6):
+            for i in range(min(6, len(registers))):
                 self.sliders[i].set(registers[i])
 
-    def öffnen(self):
+    def open_hand(self):
         for s in self.sliders:
             s.set(1000)
-        self.send_angles()
+        self.robot.open_hand()
 
-
+    def close_hand(self):
+        vals = [0, 0, 0, 0, 234, 670]
+        for i in range(6):
+            self.sliders[i].set(vals[i])
+        self.robot.close_hand()
     def step_plus(self):
         for s in self.sliders:
             s.set(min(1000, s.get() + 20))
@@ -141,18 +145,21 @@ class HandApp(tk.Tk):
             self.positions[name] = values
             self.create_button(name, values)
 
-    def draw(self, outputs):
+    def draw(self, outputs=None):
         self.canvas.delete("all")
         self.canvas.create_image(350, 450, image=self.hand_img)
 
         for column, (name, addr, h, w, key, rel) in enumerate(self.robot.sensor_groups):
-            if not outputs["tactile_valid"][column]:
+            if outputs is not None:
+                if not outputs["tactile_valid"][column]:
+                    continue
+                raw = np.array([outputs["tactile"][row][column] for row in range(h * w)])
+            elif name in self.robot.last_sensor_data:
+                raw = self.robot.last_sensor_data[name]
+            else:
                 continue
-            data = [outputs["tactile"][row][column] for row in range(h * w)]
 
-            raw = np.array(data)
             offset = self.robot.sensor_offsets.get(name, np.zeros(len(raw)))
-
             matrix = (raw - offset).reshape(h, w)
             matrix[matrix < 0] = 0
 
@@ -185,10 +192,8 @@ class HandApp(tk.Tk):
                 continue
 
             y_idx, x_idx = np.where(active)
-
             cx = int(np.mean(x_idx))
             cy = int(np.mean(y_idx))
-
             force = np.mean(matrix[active])
             size = int(3 + force / 200)
 
@@ -200,6 +205,5 @@ class HandApp(tk.Tk):
                 fill="blue"
             )
 
-    def main(self, outputs):
-        # Tk's mainloop processes events; never call update() recursively here.
+    def main(self, outputs=None):
         self.draw(outputs)

@@ -1,6 +1,10 @@
 # CSV-Integration für Branch karl
 
-Angepasst an Commit 2ea43c4 und die vorhandene src-Struktur.
+Mit `main` (24b501c) am 17.10.2026 abgeglichen. Die aktuelle Command-API,
+Greifzustände und `DataDict` bleiben erhalten. `main()` liefert den aktuellen
+`DataDict`; `capture_telemetry()` bildet denselben Erfassungszyklus auf das
+CSV-/Twin-Schema ab, ohne Sensoren erneut zu lesen. Die Rohdaten für CSV und
+Twin sind von den offsetbereinigten Matrizen der Greifsteuerung getrennt.
 Die Dateien dieses Pakets werden relativ zum Repository-Hauptverzeichnis übernommen.
 Nicht nach documents entpacken. Die vorhandenen README, Dokumente und Mock-Funktionen
 bleiben erhalten. Tests importieren die Module direkt aus src; kein manuelles
