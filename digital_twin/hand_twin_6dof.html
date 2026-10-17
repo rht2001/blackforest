@@ -7,7 +7,7 @@
 .switches{display:flex;gap:7px;align-items:center;margin:12px 0}.mode{border:1px solid #3a5671;background:#182d42;color:#c7d8e8;border-radius:8px;padding:8px 12px;cursor:pointer;font-size:12px;flex:1}.mode.active{border-color:#58bdef;color:white;background:#125075}button{font:inherit}.connection{display:flex;align-items:center;gap:7px;font-size:11px;color:#bbccdd}.dot{width:8px;height:8px;background:#66788a;border-radius:50%;display:inline-block}.dot.good{background:#48d3a4}.dot.bad{background:#eaba6c}
 .controls{display:grid;gap:7px;margin-top:12px}.channel{padding:10px 10px 8px;background:#112438;border:1px solid #25425c;border-radius:10px}.channel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;gap:8px}.channel-name{font-size:12px;font-weight:650}.channel-info{font-size:10px;color:#9fbacc;font-variant-numeric:tabular-nums}.channel-main{display:flex;align-items:center;gap:8px}
 .channel input[type=range]{flex:1;min-width:40px;accent-color:#46c7f4;cursor:pointer}.channel input[type=number]{background:#1b354e;color:#edfaff;border:1px solid #45617a;border-radius:6px;padding:6px 5px;width:68px;font-size:13px;font-variant-numeric:tabular-nums;text-align:center}
-input:disabled{opacity:.53;cursor:not-allowed!important}.tactile{height:4px;background:#344658;border-radius:4px;margin-top:5px;overflow:hidden}.tactile > span{display:block;height:100%;width:0%;background:linear-gradient(90deg,#36bcba,#edd063,#ff6873)}
+input:disabled{opacity:.53;cursor:not-allowed!important}.tactile{height:4px;background:#344658;border-radius:4px;margin-top:5px;overflow:hidden}.pressure-grid{display:grid;gap:2px;margin:9px 0}.pressure-cell{min-height:22px;padding:2px;font-size:9px;color:#fff;text-shadow:0 1px 2px #000;text-align:center}.tactile > span{display:block;height:100%;width:0%;background:linear-gradient(90deg,#36bcba,#edd063,#ff6873)}
 .metrics{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}.metric{flex:1;min-width:90px;background:#112639;border-radius:7px;padding:9px;font-size:11px}.metric b{display:block;font-size:14px;margin-top:4px}.label{font-size:11px;color:#a7c0d2}
 hr{border:none;border-top:1px solid #2e4961;margin:14px 0}details{border-top:1px solid #2d465c;padding-top:9px;margin-top:10px}summary{font-size:12px;cursor:pointer;font-weight:650;color:#cbe9f7}details .muted{margin-top:8px}
 .small-button{border:1px solid #3f607b;background:#1a3449;color:#c8e9fc;border-radius:7px;padding:7px 10px;cursor:pointer;font-size:11px}.small-button:hover{background:#285671}
@@ -38,10 +38,18 @@ hr{border:none;border-top:1px solid #2e4961;margin:14px 0}details{border-top:1px
 <p id="sensorEditorMessage" class="muted">Changes are virtual. Active areas are approximate, not a certified electrode map.</p></div></section>
 <div class="controls" id="controls"></div>
 <p class="muted" id="palmInfo" style="margin:10px 0 0">Palm · Tactile max: –</p>
+
+<details open><summary>Live pressure · GUI colors</summary>
+<p class="muted">Calibrated signal: max(0, raw − GUI offset), in sensor counts.</p>
+<p class="muted"><span style="color:#00aa00">■ &lt;800</span> · <span style="color:#cccc00">■ 800–1999</span> · <span style="color:#ff8800">■ 2000–3199</span> · <span style="color:#ff0000">■ ≥3200</span> · Gray: missing/stale</p>
+<select id="pressureRegion" aria-label="Live pressure region"></select>
+<div id="pressureGrid" class="pressure-grid" aria-label="Calibrated pressure cells"></div>
+<p id="pressureSummary" class="muted"></p><p id="pressureCell" class="muted">Select a cell on the hand or grid to inspect its value.</p>
+</details>
 <details open><summary>Sensor surfaces & contact shape (experimental)</summary>
 <label class="label"><input id="showSensors" type="checkbox" checked> Show sensing cells on CAD</label>
-<p class="muted">17 regions / 1,062 taxels from the manual. Grids on CAD surfaces; palm ordered by column, bottom to top. Palm starts at 40 × 25 mm. Region colors indicate no measurements; pressure colors show readings. Active areas remain approximate.</p>
-<label class="label">Contact threshold (raw value) <input id="contactThreshold" type="number" min="0" max="4095" value="200"></label>
+<p class="muted">17 regions / 1,062 taxels from the manual. Grids on CAD surfaces; palm ordered by column, bottom to top. Palm starts at 40 × 25 mm. GUI pressure colors show calibrated readings. Gray means missing or stale data; manual preview uses region colors. Active areas remain approximate.</p>
+<label class="label">Contact threshold (calibrated counts) <input id="contactThreshold" type="number" min="0" max="4095" value="200"></label>
 <p class="muted" id="contactInfo">No fresh sensor matrices</p>
 <button class="small-button" id="exportContacts">Export contact points as JSON</button></details>
 <div class="metrics"><div class="metric"><span class="label">Index finger α (model)</span><b id="indexAlpha">176°</b></div><div class="metric"><span class="label">Thumb bending (model)</span><b id="thumbBend">−13°</b></div><div class="metric"><span class="label">Thumb rotation (model)</span><b id="thumbRot">165°</b></div></div>
@@ -56,6 +64,7 @@ hr{border:none;border-top:1px solid #2e4961;margin:14px 0}details{border-top:1px
 </details></aside><div id="toast">Drag: rotate 3D · Scroll: zoom · Sensor regions based on the manual</div><div id="handScene" class="plotly-graph-div"></div><script>/* Offline WebGL2 renderer: persistent mesh buffers, one draw per part.
  * Small compatibility surface for the existing hand kinematics; no network access.
  */
+function pressureColor(value){return value<800?'#00aa00':value<2000?'#cccc00':value<3200?'#ff8800':'#ff0000'}
 const HandRenderer=(()=>{
  'use strict';
  const multiply=(a,b)=>{const out=new Float32Array(16);for(let c=0;c<4;c++)for(let r=0;r<4;r++)for(let k=0;k<4;k++)out[c*4+r]+=a[k*4+r]*b[c*4+k];return out};
@@ -63,9 +72,7 @@ const HandRenderer=(()=>{
  const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
  const dot=(a,b)=>a.reduce((n,x,i)=>n+x*b[i],0);
  const color=c=>{if(typeof c!=='string')return [.65,.72,.8];return [1,3,5].map(i=>parseInt(c.slice(i,i+2),16)/255)};
- const heat=value=>{const t=Math.max(0,Math.min(1,value/4095));
-  const stops=[[.12,.25,.36],[.05,.7,.78],[.8,.85,.25],[1,.45,.1],[.9,.08,.22]];
-  const s=t*4,i=Math.min(3,Math.floor(s)),f=s-i;return stops[i].map((v,k)=>v+(stops[i+1][k]-v)*f)};
+ const heat=value=>color(pressureColor(value));
  function program(gl){
   const vs=`#version 300 es
   precision highp float;
@@ -254,14 +261,18 @@ async function poll(){if(!live||requestedLive)return;requestedLive=true;
   if(arr&&age<=4){arr.forEach((v,i)=>{if(Number.isFinite(Number(v)))setPos(i,v)});}
   const force=fresh(msg,'force_act')&&Array.isArray(msg.force_act)?msg.force_act:[];const touch=fresh(msg,'tactile')?msg.tactile||{}:{};
   for(let i=0;i<6;i++){const t=touch[i===5?'thumb':keysForFinger[i]];
-   const raw=typeof t==='number'?t:t?.max,val=raw==null?NaN:Number(raw);document.getElementById('touch'+i).style.width=(Number.isFinite(val)?clamp(val/4095*100,0,100):0)+'%';
+   const raw=typeof t==='number'?t:t?.max,val=raw==null?NaN:Number(raw);document.getElementById('touch'+i).style.width=(Number.isFinite(val)?clamp(val/4000*100,0,100):0)+'%';document.getElementById('touch'+i).style.background=Number.isFinite(val)?pressureColor(val):'#293541';
    const forceText=force[i]==null?'–':Number(force[i]).toFixed(0)+' g';
    document.getElementById('sensorInfo'+i).textContent='Force: '+forceText+' · Tactile max: '+(Number.isFinite(val)?val.toFixed(0):'–');
   }
   document.getElementById('palmInfo').textContent='Palm · Tactile max: '+(touch.palm?.max ?? touch.palm ?? '–');
   document.getElementById('lastPacket').textContent='Last data received: '+(msg.received_at?new Date(msg.received_at*1000).toLocaleTimeString('en-GB'):'none yet')+' · '+(msg.seq??0)+' packets';
- }catch(e){sensorPacket=null;schedule();dot.className='dot bad';status.textContent='No connection: '+e.message;document.getElementById('dataSource').textContent='Data source: Connection lost';document.getElementById('actuatorPosition').textContent='Actuator positions: –';document.getElementById('fieldMeans').textContent='Region means: –';}
+ }catch(e){sensorPacket=null;clearPressureReadouts();schedule();dot.className='dot bad';status.textContent='No connection: '+e.message;document.getElementById('dataSource').textContent='Data source: Connection lost';document.getElementById('actuatorPosition').textContent='Actuator positions: –';document.getElementById('fieldMeans').textContent='Region means: –';}
  finally{requestedLive=false;}
+}
+function clearPressureReadouts(){
+ for(let i=0;i<6;i++){document.getElementById('sensorInfo'+i).textContent='Force: – · Tactile max: –';document.getElementById('touch'+i).style.width='0%';}
+ document.getElementById('palmInfo').textContent='Palm · Tactile max: –';
 }
 const keysForFinger=['little','ring','middle','index','thumb'];
 document.getElementById('modeManual').onclick=()=>setLive(false);document.getElementById('modeLive').onclick=()=>setLive(true);
@@ -403,7 +414,7 @@ const storageKey='rh56dftp.sensor-layout.v1.'+sensorModelId;
 document.getElementById('sensorSave').onclick=()=>{try{localStorage.setItem(storageKey,JSON.stringify(sensorLayoutDocument()));editorMessage('Saved locally; the layout will load next time you open this viewer.')}catch(e){editorMessage('Local saving unavailable. Export JSON: '+e.message,true)}};
 document.getElementById('sensorExport').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(sensorLayoutDocument(),null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='rh56dftp_sensor_layout.json';a.click();URL.revokeObjectURL(url);editorMessage('Layout JSON exported.')};
 document.getElementById('sensorImport').onchange=async e=>{try{const file=e.target.files?.[0];if(!file)return;if(file.size>250000)throw Error('Layout file too large');applySensorDocument(JSON.parse(await file.text()));editorMessage('Layout imported. Save locally to load it next time.')}catch(error){editorMessage('Import rejected: '+error.message,true)}finally{e.target.value=''}};
-if(plot._renderer?.setPickHandler)plot._renderer.setPickHandler((trace,index)=>{if(!editingSensors||trace!==sensorTrace)return;const point=lastSensorWorld[index];if(point)selectSensor(point.id,point.wire_index)});
+if(plot._renderer?.setPickHandler)plot._renderer.setPickHandler((trace,index)=>{if(trace!==sensorTrace)return;const point=lastSensorWorld[index];if(point)selectSensor(point.id,point.wire_index)});
 window.handSensorEditor={getLayout:()=>sensorLayoutDocument(),applyLayout:doc=>applySensorDocument(doc),setEditing:setSensorEditing,select:selectSensor,
  setField:(id,patch)=>applySensorDocument(sensorLayoutDocument(sensorFields.map(f=>f.id===id?{...clone(f),...clone(patch)}:f))),
  getRestPoints:id=>clone(generateSensorField(sourceRegions.get(id),fieldById(id)).points),
@@ -412,11 +423,32 @@ window.handSensorEditor={getLayout:()=>sensorLayoutDocument(),applyLayout:doc=>a
 syncSensorForm();
 try{const stored=localStorage.getItem(storageKey);if(stored){applySensorDocument(JSON.parse(stored),false);editorMessage('Saved local layout restored.')}}catch(e){editorMessage('Saved layout could not be loaded: '+e.message,true)}
 
+const pressureRegion=document.getElementById('pressureRegion');
+for(const r of sensorLayout){const option=document.createElement('option');option.value=r.key;option.textContent=r.key+' · '+r.rows+'×'+r.cols;pressureRegion.appendChild(option)}
+pressureRegion.value=selectedSensor;
+pressureRegion.onchange=()=>selectSensor(pressureRegion.value);
+function updatePressureGrid(){
+ const r=sourceRegions.get(selectedSensor),grid=document.getElementById('pressureGrid');
+ pressureRegion.value=r.key;grid.style.gridTemplateColumns='repeat('+r.cols+',1fr)';
+ const matrix=live&&sensorPacket&&fresh(sensorPacket,'tactile_regions')?sensorPacket.tactile_regions?.[r.key]:null;
+ const values=matrix?.flat();grid.replaceChildren();
+ for(let i=0;i<r.rows*r.cols;i++){
+  const [row,col]=r.physical_cells[i],v=values?.[i],cell=document.createElement('button');
+  cell.className='pressure-cell';cell.style.gridRow=row+1;cell.style.gridColumn=col+1;
+  cell.style.background=Number.isFinite(v)?pressureColor(v):'#293541';cell.textContent=Number.isFinite(v)?Math.round(v):'–';
+  cell.title=r.key+' · wire '+i+' · '+(v??'no data');cell.setAttribute('aria-label',cell.title);
+  if(i===selectedTaxel)cell.style.outline='2px solid white';
+  cell.onclick=()=>selectSensor(r.key,i);grid.appendChild(cell);
+ }
+ document.getElementById('pressureSummary').textContent=values?'Min '+Math.min(...values).toFixed(0)+' · Mean '+(values.reduce((a,b)=>a+b,0)/values.length).toFixed(1)+' · Max '+Math.max(...values).toFixed(0):'No fresh pressure data · start the hand app and select Live from Python.';
+ document.getElementById('pressureCell').textContent=selectedTaxel===null?'Select a cell on the hand or grid to inspect its value.':r.key+' · wire '+selectedTaxel+' · '+(values?.[selectedTaxel]??'no data')+' counts';
+}
 function fresh(msg,key){
  const stamp=msg.field_received_at?.[key];
  return !!stamp && Date.now()/1000-stamp<=4;
 }
 function renderSensors(angles,ta){
+ updatePressureGrid();
  const x=[],y=[],z=[],color=[],labels=[],rgb=[];contactPoints=[];lastSensorWorld=[];
  const outline={x:[],y:[],z:[],rgb:[],visible:editingSensors||document.getElementById('sensorBorders').checked};
  const enabled=editingSensors||document.getElementById('showSensors').checked;
@@ -432,7 +464,7 @@ function renderSensors(angles,ta){
    const p=sensorParentPose(generated.points[i],field.parent,angles,ta);
    const v=values?.[Math.floor(i/region.cols)]?.[i%region.cols];
    x.push(p[0]);y.push(p[1]);z.push(p[2]);color.push(v??0);
-   rgb.push(generated.misses.includes(i)?[1,.25,.12]:editingSensors?(region.key===selectedSensor?highlight:baseColor):Number.isFinite(v)?null:baseColor);
+   rgb.push(editingSensors?(generated.misses.includes(i)?[1,.25,.12]:region.key===selectedSensor?highlight:baseColor):Number.isFinite(v)?asRGB(pressureColor(v)):live?[.16,.21,.25]:baseColor);
    lastSensorWorld.push({id:region.key,wire_index:i,x:p[0],y:p[1],z:p[2]});
    const [row,col]=region.physical_cells?.[i]||[Math.floor(i/region.cols),i%region.cols];
    labels.push(region.key+' ['+row+','+col+'] · '+(v??'no data'));

@@ -109,3 +109,28 @@ This package contains the files needed to use the application. CAD sources, buil
 Before handover, the bridge/sender tests, adapter tests, and JavaScript tests for all six degrees of freedom passed. The isolated package was also checked for delivery of both viewer pages, demo streaming, all 17 sensor regions, and simulation labeling. Real hardware was not tested.
 
 The English package also passed the sensor-editor and 2D-view behavioral checks. Embedded model and sensor geometry were compared with the original version and are unchanged.
+
+
+## Live pressure and force display
+
+The twin is a read-only telemetry viewer. `robot.poll()` reads motor force
+registers and the tactile cache; `TwinPublisher` posts to the localhost bridge,
+and the browser polls every 300 ms. The hardware controller keeps its own
+force limits and contact-triggered grasp logic. The twin does not apply forces
+or simulate contact dynamics.
+
+Pressure now matches `HandApp.draw`: `max(0, raw - sensor_offsets)` per cell.
+Both twin views use the GUI colors: green below 800, yellow from 800, orange
+from 2000, red from 3200 (4000-count reference scale). These are sensor counts,
+not calibrated pressure units. The 3D viewer also has a selectable live grid
+with per-cell readings, min/mean/max, and picking on the hand. Missing/stale
+live cells are gray; force readings remain separate in grams. Sensor mounting
+and pose remain approximate. Optional baseline capture in the 2D view applies
+an additional local correction; leave it off to match the GUI.
+
+Start `uv run python digital_twin/bridge_server.py`, then
+`uv run python src/main.py`; open http://127.0.0.1:18765/ and select
+**Live from Python**. Restart existing Python/bridge processes and reload the
+browser after updating. No hardware connection is required for unit tests.
+
+On `check_digital_twin`, publishing is already enabled by default in `src/main.py`; no `--twin` flag is needed.
