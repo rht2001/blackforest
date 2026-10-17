@@ -7,7 +7,7 @@ from typing import Literal, Dict
 
 DEFAULT_MOVEMENT_SPEED = [100, 100, 100, 100, 100, 100]
 CLOSE_THRESHOLD = 100
-
+STATES = Literal["starting", "initialised", "moving", "steady_state", "opening"]
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 data_packet: tuple[int, int, int, int, int, int]
 from config_parameters import REGISTERS
@@ -23,7 +23,7 @@ class RobotHandController:
             "FORCES": 1498,
             "POSITION": 1474,
         }
-
+        self.auto_contact_trigerred = False
         self.auto_mode_active = True
 
         self.receive_addresses = {
@@ -56,10 +56,18 @@ class RobotHandController:
             ("Palm", 4900, 8, 14, "Palm", (-15, 0))
         ]
         self.sensor_offsets = {}
+        self.state:STATES = "starting"
+
+    def startup(self):
         self.set_default_speed()
+        #With this, we always start at fully open
+        self.send_command(value=[1000]*6)
+        self.state = "initialised"
+        self.sliders = [1000] * 6
+
     def set_default_speed(self):
         self.send_all_commands("DEFAULT_SPEED_SET", value=DEFAULT_MOVEMENT_SPEED)
-        pass
+
     def safe_read(self, addr, length):
         values = []
         for i in range(0, length, 120):
@@ -99,7 +107,7 @@ class RobotHandController:
         if np.count_nonzero(matrix > CLOSE_THRESHOLD) >= 3:
             self.auto_mode_active = False  # Prevent further triggers
             self.send_command(value=[0, 0, 0, 0, 1000, 1000])                   # Execute existing close function
-
+            self.auto_contact_trigerred = True
             print(f"Contact detected at")
             return True
 
@@ -121,7 +129,7 @@ class RobotHandController:
                     device_id=1
                 )
     #TODO: check if the count works for reading the forces
-    def receive_data(self, type:DataTypes= "ANGLES"):
+    def read_command(self, type:DataTypes= "ANGLES"):
         res = self.client.read_holding_registers(address=self.receive_addresses[type], count=6, device_id=1)
         if not res.isError():
             return res.registers
@@ -152,9 +160,24 @@ class RobotHandController:
         return data_matrix, all_points
 
     def main(self):
-        _, all_points = self.read_tactile_data()
-        self.close_on_contact(all_points)
 
+        _, all_points = self.read_tactile_data()
+        detected = self.close_on_contact(all_points)
+
+        current_pos = self.read_command()
+        time.sleep(0.05)
+        if detected:
+            time.sleep(0.01)
+            if np.mean(np.array(current_pos) - np.array(self.sliders)) > 2:
+                self.state = "moving"
+            else:
+                if self.auto_contact_trigerred:
+                    self.state = "steady_state"
+        else:
+            self.sliders = current_pos
+            pass
+        # if self.state == "steady_state":
+        #     "moving_thumb"
 
 
 
