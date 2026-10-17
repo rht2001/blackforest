@@ -369,7 +369,7 @@ class RobotHandController:
                 #self.confirm_grip(valid_positions, valid_tactile, mean_matrix=mean_matrix)
 
         self.angle_array = current_pos
-        self.state_change = True if self.state == current_state else False
+        self.state_change = True if self.state != current_state else False
         self.build_result_data()
         return self.results
 
