@@ -13,6 +13,15 @@ data_packet: tuple[int, int, int, int, int, int]
 from config_parameters import REGISTERS
 class RobotHandController:
     def __init__(self, ip="192.168.123.211", port=6000):
+        """ Initialize a RobotHandController instance. Lightweight python wrapper for the Modbus TCP API to control the robot hand with descriptive function names.
+        
+        Parameters
+        ----------
+        ip : str, optional
+            The IP address of the robot hand, by default "192.168.123.211"
+        port : int, optional
+            The port of the robot hand, by default 6000
+        """
         self.ip = ip
         self.port = port
         self.client = ModbusTcpClient(self.ip, port=self.port)
@@ -57,7 +66,9 @@ class RobotHandController:
         ]
         self.sensor_offsets = {}
         self.set_default_speed()
+
     def set_default_speed(self):
+
         self.send_all_commands("DEFAULT_SPEED_SET", value=DEFAULT_MOVEMENT_SPEED)
         pass
     def safe_read(self, addr, length):
@@ -71,13 +82,16 @@ class RobotHandController:
             if not res.isError():
                 values.extend(res.registers)
         return values
+    
     def close(self):
+        """ Close the robot hand completely. """
+        # TODO: Is close the hand like this? Close fingers 0-3 to 0 and thumb to kind of randomly 234, 670?
         vals = [0, 0, 0, 0, 234, 670]
 
         self.send_angles(vals)
 
     def calibrate_offsets(self):
-        print("Kalibriere Sensoren...")
+        print("Calibrating sensor offsets...")
         time.sleep(1)
 
         for name, addr, h, w, key, rel in self.sensor_groups:
@@ -85,6 +99,7 @@ class RobotHandController:
             self.sensor_offsets[name] = np.array(data) if data else np.zeros(h * w)
 
     def send_angles(self, angles):
+
         self.client.write_registers(
             address=1486,
             values=angles,
@@ -107,6 +122,8 @@ class RobotHandController:
     def read_error(self):
             error = self.client.read_holding_registers(address=1606, count=6, device_id=1)
             return error
+    # Question: Why are there two functions for sending commands? one for a command picked from register and one from "send_addresses" dictionary. Is there a reason for this?
+    # "send_angles" is exactly the same as "send_command" with type="ANGLES". I think we can remove "send_angles" and just use "send_command" with the appropriate type.
     def send_all_commands(self,register_name, value):
         self.client.write_registers(
                 address=REGISTERS[register_name],
