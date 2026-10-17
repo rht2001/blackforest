@@ -4,10 +4,11 @@ import time
 from pymodbus.client import ModbusTcpClient
 import numpy as np
 from typing import Literal, Dict
+DEFAULT_MOVEMENT_SPEED = [100, 100, 100, 100, 100, 100]
 
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 data_packet: tuple[int, int, int, int, int, int]
-
+from config_parameters import REGISTERS
 class RobotHandController:
     def __init__(self, ip="192.168.123.211", port=6000):
         self.ip = ip
@@ -51,7 +52,10 @@ class RobotHandController:
             ("Palm", 4900, 8, 14, "Palm", (-15, 0))
         ]
         self.sensor_offsets = {}
-
+        self.set_default_speed()
+    def set_default_speed(self):
+        self.send_all_commands("DEFAULT_SPEED_SET", value=DEFAULT_MOVEMENT_SPEED)
+        pass
     def safe_read(self, addr, length):
         values = []
         for i in range(0, length, 120):
@@ -85,8 +89,13 @@ class RobotHandController:
     def read_error(self):
             error = self.client.read_holding_registers(address=1606, count=6, device_id=1)
             return error
-
-    def send_command(self,  type:DataTypes= "ANGLES", value|data_packet= None):
+    def send_all_commands(self,register_name, value):
+        self.client.write_registers(
+                address=REGISTERS[register_name],
+                values=value,
+                device_id=1
+            )
+    def send_command(self,  type:DataTypes= "ANGLES", value:data_packet= None):
 
         self.client.write_registers(
                     address=self.send_addresses[type],
