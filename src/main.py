@@ -5,7 +5,12 @@ from ui.appInterface import HandApp
 
 
 def main():
-    robot = RobotHandController(ip="192.168.123.211", port=6000)
+    """
+    Main function to run the Dexterous Hand Controller & Tactile Visualizer application.
+    Initializes the robot hand controller as access point of the TCP protocol and starts the Tkinter GUI application.
+    Runs continously for continuous polling of GUI.
+    """
+    robot = RobotHandController(ip="192.168.123.210", port=6000)
     app = HandApp(robot)
 
     is_running = True
