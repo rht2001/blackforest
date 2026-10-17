@@ -1,7 +1,11 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "blackforest"
 version = "0.1.0"
-description = "Add your description here"
+description = "Control interface and tactile intelligence for RH56DFTP dexterous hand"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -9,3 +13,13 @@ dependencies = [
     "pillow>=12.3.0",
     "pymodbus>=3.16.1",
 ]
+
+[project.scripts]
+blackforest = "main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools]
+py-modules = ["main"]
+

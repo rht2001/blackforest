@@ -29,7 +29,9 @@ uv sync
 
 ```bash
 # Run the main application
-uv run python main.py
+uv run blackforest
+# or
+uv run python src/main.py
 ```
 
 ## Project Structure
