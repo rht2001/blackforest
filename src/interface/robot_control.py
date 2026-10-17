@@ -8,7 +8,7 @@ DEFAULT_MOVEMENT_SPEED = [400] * 6
 CLOSE_THRESHOLD = 400
 STATES = Literal["starting", "initialised", "moving", "steady_state", "opening"]
 IMPULSE_REJECTION_WAIT_TIME = 0.5
-IMPULSE_REJECTION_WAIT_TIME = 0.5
+
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 data_packet: tuple[int, int, int, int, int, int]
 from config.config_parameters import REGISTERS
@@ -33,6 +33,14 @@ class RobotHandController:
         self.is_connected = False
         self.mock_angles = [1000, 1000, 1000, 1000, 1000, 1000]
         self.client: ModbusTcpClient|None
+        self.offsets = {
+                "Little": (150, 120),
+                "Ring":   (230, 110),
+                "Middle": (310, 100),
+                "Index":  (390, 110),
+                "Thumb":  (420, 360),
+                "Palm":   (240, 520)
+            }
 
         try:
             self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
