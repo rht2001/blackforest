@@ -9,7 +9,7 @@ DEFAULT_MOVEMENT_SPEED = [400] * 6
 
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 
-DEFAULT_FORCE = 3000
+DEFAULT_FORCE = 1500
 CLOSE_THRESHOLD = 50
 IMPULSE_REJECTION_WAIT_TIME = 0.25
 GRIP_ANGLE_THRESHOLD = 10  # Threshold for detecting if the hand is in a gripping position (0-1000 scale)
