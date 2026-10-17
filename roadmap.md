@@ -10,8 +10,8 @@
 - [x] confirm grip by polling forces (did they reach threshold? - Not sure, wether this would belong to 2.?)
 
 ## 2. Feedback acquisition and analysis
-- [ ] ensure "steady state"
-- [ ] fetch all available sensor data from robotic hand and store in ```@dataclass PhysicalState```
+- [x] ensure "steady state"
+- [x] fetch all available sensor data from robotic hand and store in ```@dataclass PhysicalState```
 - [ ] confirm grip of cylindrical object: ```def confirm_grip(PhysicalState) == True```
   - Planned logic: DOF angle homogeneity across fingers 0-3 (Little, Ring, Middle, Index) with tolerance check, plus active contact pad threshold.
 - [ ] Detect features with thumb to decide on type of object/sensor
