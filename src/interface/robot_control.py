@@ -7,7 +7,7 @@ from config.config_parameters import REGISTERS, DataDict
 
 DEFAULT_MOVEMENT_SPEED = [400] * 6
 CLOSE_THRESHOLD = 50
-IMPULSE_REJECTION_WAIT_TIME = 0.5
+IMPULSE_REJECTION_WAIT_TIME = 0.25
 STATES = Literal["starting", "initialised", "moving", "steady_state", "opening"]
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 
