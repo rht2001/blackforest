@@ -78,7 +78,16 @@ from typing import TypedDict, Literal
 import numpy as np
 import numpy.typing as npt
 
-STATES = Literal["starting", "initialised", "moving", "steady_state", "resetting"]
+STATES = Literal[
+    "starting",
+    "initialised",
+    "open",
+    "closing",
+    "settling",
+    "steady_state",
+    "cylinder_confirmed",
+    "resetting",
+]
 class DataDict(TypedDict):
     angles: np.ndarray
     forces: np.ndarray
