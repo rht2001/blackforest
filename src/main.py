@@ -1,3 +1,4 @@
+import argparse
 import time
 import datetime
 import tkinter as tk
@@ -5,6 +6,7 @@ from interface.robot_control import RobotHandController
 from interface.robot_dataset import RobotDatabase
 from logic.grasp_manager import GraspManager
 from ui.appInterface import HandApp
+from logic.twin_publisher import TwinPublisher, robot_snapshot
 STEP_TIME = 0.03
 def main():
     """
@@ -12,10 +14,12 @@ def main():
     Initializes the robot hand controller as access point of the TCP protocol and starts the Tkinter GUI application.
     Runs continously for continuous polling of GUI.
     """
+
     robot = RobotHandController(ip="192.168.123.210", port=6000)
     grasp_manager = GraspManager()
     app = HandApp(robot)
     db = RobotDatabase()
+    publisher = TwinPublisher("http://127.0.0.1:18765/api/state")
 
     is_running = True
 
@@ -24,8 +28,10 @@ def main():
         is_running = False
         app.destroy()
         db.on_close()
+        publisher.close()
 
     app.protocol("WM_DELETE_WINDOW", on_close)
+
 
     while is_running:
         try:
@@ -35,13 +41,14 @@ def main():
             results_data = grasp_manager.step(robot, results_data)
             app.main(state=results_data.get("state"))
             db.main(data=results_data)
+            if publisher is not None:
+                publisher.submit(robot_snapshot(robot, results_data))
 
 
             elapsed = time.monotonic() - start
             time.sleep(max(STEP_TIME - elapsed, 0))
         except tk.TclError:
             break
-
 
 if __name__ == "__main__":
     main()
