@@ -7,6 +7,7 @@ from typing import Literal, Dict
 DEFAULT_MOVEMENT_SPEED = [400] * 6
 CLOSE_THRESHOLD = 400
 STATES = Literal["starting", "initialised", "moving", "steady_state", "opening"]
+IMPULSE_REJECTION_WAIT_TIME = 0.5
 
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 data_packet: tuple[int, int, int, int, int, int]
@@ -31,6 +32,15 @@ class RobotHandController:
         self.auto_contact_trigerred = False
         self.is_connected = False
         self.mock_angles = [1000, 1000, 1000, 1000, 1000, 1000]
+        self.client: ModbusTcpClient|None
+        self.offsets = {
+                "Little": (150, 120),
+                "Ring":   (230, 110),
+                "Middle": (310, 100),
+                "Index":  (390, 110),
+                "Thumb":  (420, 360),
+                "Palm":   (240, 520)
+            }
 
         try:
             self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
@@ -133,16 +143,35 @@ class RobotHandController:
         if not self.auto_mode_active:
             return False
 
-        # At least 3 sensor pixels must exceed CLOSE_THRESHOLD
-        if np.count_nonzero(matrix > CLOSE_THRESHOLD) >= 3:
-            self.auto_mode_active = False  # Prevent further triggers
-            self.send_command(value=[0, 0, 0, 0, 1000, 1000])  # Execute existing close function
+        contact_present = np.count_nonzero(matrix > CLOSE_THRESHOLD) >= 10
+
+        # Step 1: Contact detected for the first time -> start debounce timer
+        if contact_present and not self.auto_contact_trigerred:
             self.auto_contact_trigerred = True
-            print(f"Contact detected at {matrix[matrix > 0]}")
-            return True
+            self.contact_start_time = time.time()
+            print("Found contact once, waiting for impulse rejection...")
+            time.sleep(0.5)
+            return False
+
+        # Step 2: Contact lost before wait time elapsed -> reset (impulse rejected)
+        if not contact_present and self.auto_contact_trigerred:
+
+            self.auto_contact_trigerred = False
+            return False
+
+        # Step 3: Contact persisted longer than the rejection window -> confirm trigger
+        if contact_present and self.auto_contact_trigerred:
+            if time.time() - self.contact_start_time >= IMPULSE_REJECTION_WAIT_TIME:
+                self.auto_mode_active = False
+                self.auto_contact_trigerred = False
+                self.send_command(value=[0, 0, 0, 0, 1000, 1000])
+                print("Contact confirmed and sustained. Grip closed.")
+                return True
 
         return False
 
+
+        return False
     def read_error(self):
         if not self.is_connected:
             return None
@@ -204,6 +233,10 @@ class RobotHandController:
             raw = np.array(data)
             data_matrix[0, index] = np.mean(raw)
             all_points[0:len(raw), index] = raw
+            offset = self.sensor_offsets.get(name, np.zeros(len(raw)))
+
+            matrix = (raw - offset).reshape(h, w)
+            matrix[matrix < 0] = 0
 
         return data_matrix, all_points
 
