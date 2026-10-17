@@ -20,7 +20,7 @@ def main():
     while is_running:
         try:
             app.main()
-            robot.main()
+            results_data = robot.main()
             time.sleep(0.03)  # ~30 FPS
         except tk.TclError:
             break

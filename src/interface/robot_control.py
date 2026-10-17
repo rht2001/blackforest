@@ -205,27 +205,7 @@ class RobotHandController:
         """Sets the default speed for all 6 DOFs."""
         self.write_data("DEFAULT_SPEED_SET", DEFAULT_MOVEMENT_SPEED)
 
-    def set_angles(self, angles: list[int]) -> bool:
-        """Sets target angles for all 6 DOFs (0=closed, 1000=open)."""
-        return self.write_data("ANGLES", angles)
 
-    def get_angles(self) -> list[int]:
-        """Reads actual joint angles for all 6 DOFs."""
-        res = self.read_data("ANGLES", count=6)
-        return res if res is not None else list(self.current_angles)
-
-    def set_forces(self, forces: list[int]) -> bool:
-        """Sets the force control threshold for all 6 DOFs (0-3000g)."""
-        return self.write_data("FORCES", forces)
-
-    def get_forces(self) -> list[int]:
-        """Reads actual force values for all 6 DOFs."""
-        res = self.read_data("FORCES", count=6)
-        return res if res is not None else [0] * 6
-
-    def open_hand(self):
-        """Opens all fingers fully (angle 1000)."""
-        self.set_angles([1000] * 6)
 
     def close_hand(self):
         """Closes hand to standard grasp position."""
@@ -355,3 +335,12 @@ class RobotHandController:
         mean_matrix, all_points = self.read_tactile_data()
         auto_contact = self.close_on_contact(all_points)
         current_pos = self.read_command()
+
+        if auto_contact:
+            self.state = "moving"
+        if self.state == "moving":
+            if self.current_angles
+
+
+
+        return self.results
