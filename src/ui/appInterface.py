@@ -95,13 +95,13 @@ class HandApp(tk.Tk):
     def open_hand(self):
         for s in self.sliders:
             s.set(1000)
-        self.send_angles()
+        self.robot.open_hand()
 
     def close_hand(self):
         vals = [0, 0, 0, 0, 234, 670]
         for i in range(6):
             self.sliders[i].set(vals[i])
-        self.send_angles()
+        self.robot.close_hand()
     def step_plus(self):
         for s in self.sliders:
             s.set(min(1000, s.get() + 20))
