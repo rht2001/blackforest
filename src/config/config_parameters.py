@@ -36,13 +36,25 @@ REGISTERS = {
 }
 
 
-from typing import TypedDict
+from typing import TypedDict, Literal
 import numpy as np
 import numpy.typing as npt
 
+STATES = Literal["starting", "initialised", "moving", "steady_state", "resetting"]
 class DataDict(TypedDict):
     angles: np.ndarray
     forces: np.ndarray
     position: np.ndarray
     tactile_matrix: np.ndarray
     tactile_mean_matrix: np.ndarray
+    state: STATES
+
+
+default_results: DataDict = {
+    "angles": np.zeros(6, dtype=int),
+    "forces": np.zeros(6, dtype=float),
+    "position": np.zeros(6, dtype=int),
+    "tactile_matrix": np.zeros((112, 17), dtype=float),
+    "tactile_mean_matrix": np.zeros((1, 17), dtype=float),
+    "state": "starting"
+}

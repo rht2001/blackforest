@@ -3,14 +3,15 @@ import time
 from pymodbus.client import ModbusTcpClient
 import numpy as np
 from typing import Literal
-from config.config_parameters import REGISTERS, DataDict
-
+from config.config_parameters import REGISTERS, DataDict, default_results, STATES
 DEFAULT_MOVEMENT_SPEED = [400] * 6
-CLOSE_THRESHOLD = 50
-IMPULSE_REJECTION_WAIT_TIME = 0.25
-STATES = Literal["starting", "initialised", "moving", "steady_state", "opening"]
+
+
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 
+
+CLOSE_THRESHOLD = 50
+IMPULSE_REJECTION_WAIT_TIME = 0.25
 
 class RobotHandController:
     def __init__(self, ip: str = "192.168.123.211", port: int = 6000, mock: bool = False):
@@ -25,16 +26,31 @@ class RobotHandController:
         self.contact_start_time = 0.0
         self.is_connected = False
         self.current_angles = [1000] * 6
+        self.angle_array = np.array(self.current_angles)
         self.mock_angles = [1000] * 6
         self.last_sensor_data: dict[str, np.ndarray] = {}
         self.last_all_points = np.zeros((112, 17))
-        self.results: DataDict = {
-            "angles": np.zeros(6, dtype=int),
-            "forces": np.zeros(6, dtype=float),
-            "position": np.zeros(6, dtype=int),
-            "tactile_matrix": np.zeros((112, 17), dtype=float),
-            "tactile_mean_matrix": np.zeros((1, 17), dtype=float),
-        }
+        self.offsets = {
+                "Little": (150, 120),
+                "Ring":   (230, 110),
+                "Middle": (310, 100),
+                "Index":  (390, 110),
+                "Thumb":  (420, 360),
+                "Palm":   (240, 520)
+            }
+
+        self.results: DataDict = default_results
+
+        try:
+            self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
+            if self.client.connect():
+                self.is_connected = True
+                print(f"[RobotHandController] Connected to hand at {self.ip}:{self.port}")
+            else:
+                print(f"[RobotHandController] Could not reach {self.ip}:{self.port}. Running in simulation/disconnected mode.")
+        except Exception as e:
+            print(f"[RobotHandController] Connection error ({e}). Running in simulation/disconnected mode.")
+            self.client = None
 
         self.send_addresses = {
             "ANGLES": 1486,
@@ -298,16 +314,34 @@ class RobotHandController:
         }
         return self.results
 
-    def main(self) -> DataDict:
-        """Periodic control step."""
+
+        pass
+
+    def main(self)-> DataDict:
         mean_matrix, all_points = self.read_tactile_data()
         auto_contact = self.close_on_contact(all_points)
-        current_pos = self.read_command("ANGLES")
+        current_pos = np.array(self.read_command())
+
+        if np.all(current_pos[:4] < 100):
+            self.state = "resetting"
+            print("nothing detected: opening the hand")
+            self.write_data("ANGLES", [1000] * 6)
+            time.sleep(1)
+
+
 
         if auto_contact:
             self.state = "moving"
-        elif self.state == "moving":
-            if all(abs(act - target) < 50 for act, target in zip(current_pos, [0, 0, 0, 0, 1000, 1000])):
-                self.state = "steady_state"
 
-        return self.build_result_data(mean_matrix, all_points)
+        if self.state == "moving":
+
+            diff = np.abs(self.angle_array - np.array(current_pos))
+            if np.all(diff < 2):
+                self.state = "steady_state"
+                print("steady state is achieved, trying to check position")
+                self.check_position_thing()
+
+
+
+        self.angle_array = current_pos
+        return self.results
