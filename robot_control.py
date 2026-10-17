@@ -5,8 +5,8 @@ from pymodbus.client import ModbusTcpClient
 import numpy as np
 from typing import Literal, Dict
 
-DEFAULT_MOVEMENT_SPEED = [100, 100, 100, 100, 100, 100]
-CLOSE_THRESHOLD = 100
+DEFAULT_MOVEMENT_SPEED = [400] * 6
+CLOSE_THRESHOLD = 400
 STATES = Literal["starting", "initialised", "moving", "steady_state", "opening"]
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 data_packet: tuple[int, int, int, int, int, int]
@@ -66,13 +66,16 @@ class RobotHandController:
         ]
         self.sensor_offsets = {}
         self.state:STATES = "starting"
+        self.startup()
 
     def startup(self):
         self.set_default_speed()
         #With this, we always start at fully open
         self.send_command(value=[1000]*6)
+        print("opened")
         self.state = "initialised"
         self.sliders = [1000] * 6
+        time.sleep(1)
 
 
     def set_default_speed(self):
@@ -145,6 +148,7 @@ class RobotHandController:
                     values=value,
                     device_id=1
                 )
+
     #TODO: check if the count works for reading the forces
     def read_command(self, type:DataTypes= "ANGLES"):
         res = self.client.read_holding_registers(address=self.receive_addresses[type], count=6, device_id=1)
@@ -179,20 +183,20 @@ class RobotHandController:
     def main(self):
 
         _, all_points = self.read_tactile_data()
-        detected = self.close_on_contact(all_points)
+        auto_contact = self.close_on_contact(all_points)
 
         current_pos = self.read_command()
         time.sleep(0.05)
-        if detected:
-            time.sleep(0.01)
-            if np.mean(np.array(current_pos) - np.array(self.sliders)) > 2:
-                self.state = "moving"
-            else:
-                if self.auto_contact_trigerred:
-                    self.state = "steady_state"
-        else:
-            self.sliders = current_pos
-            pass
+        # if auto_contact:
+        #     time.sleep(0.01)
+        #     current_pos = self.read_command()
+        #     if np.mean(np.array(current_pos) - np.array(self.sliders)) > 2:
+        #         self.state = "moving"
+        #     else:
+        #         self.state = "steady_state"
+        # else:
+        #     self.sliders = current_pos
+        #     pass
         # if self.state == "steady_state":
         #     "moving_thumb"
 
