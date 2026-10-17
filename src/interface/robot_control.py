@@ -120,10 +120,7 @@ class RobotHandController:
         else:
             self.state = "initialised"
 
-    # ==========================================
     # Unified Command Bus (read_command / send_command)
-    # ==========================================
-
     def send_command(self, value: list[int], type: DataTypes | RegisterName = "ANGLES") -> bool:
         """
         Unified write access point for commands and register settings.
@@ -213,10 +210,7 @@ class RobotHandController:
                 values.extend(res.registers)
         return values
 
-    # ==========================================
-    # High-Level Semantic Facades
-    # ==========================================
-
+    # High-level semantic facades
     def startup(self, max_force: int = 1500):
         """Initializes speed, force limit, opens hand, and calibrates offsets on startup."""
         self.set_default_speed()

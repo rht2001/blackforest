@@ -205,9 +205,7 @@ class ThumbProber:
             # Clear any transient error flags from the cylindrical grasp once verified at full extension
             robot.clear_errors()
 
-            # =========================================================
-            # OUTER LOOP: Rotation Scan
-            # =========================================================
+            # Outer loop: rotation scan
             for rot_idx, rot in enumerate(self.rotation_steps):
                 if self._stop_event.is_set():
                     break
@@ -241,9 +239,7 @@ class ThumbProber:
 
                 contact_found = False
 
-                # =====================================================
-                # INNER LOOP: Flexion Scan
-                # =====================================================
+                # Inner loop: flexion scan
                 for bend in range(self.retract_bend, self.min_bend, -self.flex_step):
                     if self._stop_event.is_set():
                         break
@@ -277,7 +273,7 @@ class ThumbProber:
                         }
                         self.results.append(record)
                         print(
-                            f"[ThumbProber] 🎯 Contact at Rot={actual_rot}, Bend={actual_bend} on {s_name} "
+                            f"[ThumbProber] Contact at Rot={actual_rot}, Bend={actual_bend} on {s_name} "
                             f"(CoP: [{cx}, {cy}], Force: {f_val}g)"
                         )
                         contact_found = True

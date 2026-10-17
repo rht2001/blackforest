@@ -8,10 +8,19 @@ from logic.thumb_prober import ThumbProber
 
 
 class GraspManager:
-    """
-    Orchestrates the robot hand grasp lifecycle:
-    OPEN -> CLOSING -> SETTLING (1.0s continuous confirmation) -> CYLINDER_CONFIRMED -> THUMB_PROBING -> PROBING_COMPLETE.
-    Transitions to RESETTING whenever an empty grasp or abort occurs.
+    """Orchestrates the finite-state lifecycle of a robotic hand grasp.
+
+    State Flow:
+        OPEN -> CLOSING -> SETTLING -> CYLINDER_CONFIRMED -> THUMB_PROBING.
+        Transitions to RESETTING upon empty grasps, object drop, manual releases,
+        or sensor timeouts.
+
+    Key Capabilities:
+        - Debounced, edge-triggered contact detection from tactile matrices.
+        - Compliance settling verification with geometric and force constraints.
+        - Grasp force retention tracking and drop detection during hold.
+        - Real-time tactile slip detection and callback dispatching.
+        - Integrated thumb probing routines for surface feature detection.
     """
 
     def __init__(
@@ -25,7 +34,22 @@ class GraspManager:
         impulse_wait_time: float = 0.35,
         min_closing_time: float = 0.7,
         reset_cooldown: float = 1.5,
-    ):
+    ) -> None:
+        """Initializes the grasp state machine parameters and tracking attributes.
+
+        Args:
+            settle_duration: Required duration (seconds) of stable tactile contact
+                before confirming a cylinder grasp.
+            settle_timeout: Maximum time (seconds) allowed in the SETTLING state before
+                aborting to RESETTING.
+            angle_tolerance: Angular variance allowed across fingers for alignment.
+            min_active_pads: Minimum number of finger pads that must register contact.
+            pad_force_threshold: Minimum tactile force (grams) required to count a pad as active.
+            contact_trigger_threshold: Tactile matrix threshold used to detect contact initiation.
+            impulse_wait_time: Debounce duration (seconds) to reject transient contact impulses.
+            min_closing_time: Minimum time (seconds) to let fingers move before evaluating steady state.
+            reset_cooldown: Duration (seconds) to block new triggers after releasing the hand.
+        """
         self.settle_duration = settle_duration
         self.settle_timeout = settle_timeout
         self.angle_tolerance = angle_tolerance
@@ -50,45 +74,55 @@ class GraspManager:
         self.contact_cleared: bool = True
         self.last_log_time: float = 0.0
 
-        # Tactile slip detector
         self.slip_detector = TactileSlipDetector()
         self.was_slipping: bool = False
         self.slip_callback: Callable[[list[str], dict], None] | None = None
 
-        # Roadmap Task 2.5 thumb prober
         self.thumb_prober = ThumbProber()
         self.probing_results: list[dict] = []
         self.no_slip_start_time: float = 0.0
         self.no_slip_stability_duration: float = 0.4
         self.has_probed: bool = False
 
-        # Optional reference profiles for template validation
         self.valid_positions: np.ndarray | None = None
         self.valid_tactile: np.ndarray | None = None
 
-        # Hook for Roadmap Task 2.5 (probing thumb)
         self.task_2_5_hook: Callable[[Any, DataDict], None] | None = None
 
-        print("[GraspManager] Initialized. State: OPEN. Ready.")
+        print("[GraspManager] Init | state=OPEN")
 
     def set_reference_profiles(
         self,
         positions: np.ndarray | None = None,
         tactile: np.ndarray | None = None,
     ) -> None:
-        """Sets optional reference profiles for strict template matching."""
+        """Sets optional reference profiles for strict template matching.
+
+        Args:
+            positions: Expected joint angles for a reference grasp profile.
+            tactile: Expected tactile matrix for a reference grasp profile.
+        """
         self.valid_positions = positions
         self.valid_tactile = tactile
 
     def register_slip_callback(self, callback: Callable[[list[str], dict], None]) -> None:
-        """Registers a callback hook invoked when slipping is detected."""
+        """Registers a callback hook invoked when slipping is detected.
+
+        Args:
+            callback: Callable accepting a list of slipping sensor labels and
+                a diagnostics dictionary containing sensor metrics.
+        """
         self.slip_callback = callback
 
     def reset(self, robot: Any = None) -> None:
-        """
-        Explicitly resets the grasp state machine to OPEN.
-        Clears settling and closing timers, and applies the reset cooldown.
-        If robot is provided, commands robot.open_hand().
+        """Resets the state machine to OPEN and re-arms sensors.
+
+        Clears settling and closing timers, drops confirmed force levels, resets
+        the slip detector and thumb prober, and initiates the post-reset cooldown.
+
+        Args:
+            robot: Optional robot controller interface. If provided, commands
+                the robot hand to fully open.
         """
         if robot is not None:
             robot.open_hand()
@@ -107,15 +141,22 @@ class GraspManager:
         self.probing_results.clear()
         self.no_slip_start_time = 0.0
         self.has_probed = False
-        print("[GraspManager] Manual reset -> State: OPEN (re-armed)")
+        print("[GraspManager] Reset | state=OPEN")
 
     def check_contact_trigger(self, tactile_matrix: np.ndarray) -> bool:
-        """
-        Detects sustained tactile contact using impulse rejection debounce.
-        Requires contact to have been cleared before a new trigger can occur.
+        """Detects sustained tactile contact using impulse rejection debounce.
+
+        Requires tactile contact to have cleared previously before allowing a new
+        trigger edge. Suppresses triggers during post-reset cooldown and requires
+        pressure to remain sustained for at least `impulse_wait_time`.
+
+        Args:
+            tactile_matrix: Current tactile sensor matrix from telemetry.
+
+        Returns:
+            True if sustained contact is confirmed; False otherwise.
         """
         now = time.time()
-        # Enforce post-reset cooldown
         if (now - self.reset_end_time) < self.reset_cooldown:
             return False
 
@@ -126,7 +167,6 @@ class GraspManager:
             self.contact_triggered = False
             return False
 
-        # Only accept trigger if contact was previously cleared (edge-triggered)
         if not self.contact_cleared:
             return False
 
@@ -144,23 +184,45 @@ class GraspManager:
         return False
 
     def on_cylinder_confirmed(self, robot: Any, data: DataDict, diagnostics: dict) -> None:
-        """Triggered upon successful 1.0-second sustained cylinder grasp confirmation."""
+        """Handles post-confirmation actions once a cylinder grasp is verified.
+
+        Invoked when grip confirmation criteria have been continuously satisfied
+        for `settle_duration`. Emits structured telemetry and triggers registered
+        probing hooks if available.
+
+        Args:
+            robot: Active robot controller interface.
+            data: Current telemetry dictionary.
+            diagnostics: Grip diagnostics dictionary containing active fingers,
+                spread, and active sensor counts.
+        """
         print(
-            f"[GraspManager] *** CYLINDER CONFIRMED *** Grasp sustained for {self.settle_duration:.2f}s! "
-            f"Spread: {diagnostics.get('spread')}, Active Fingers: {diagnostics.get('active_fingers')}, "
-            f"Sensors: {diagnostics.get('active_sensors')}"
+            f"[GraspManager] Confirmed | hold={self.settle_duration:.1f}s "
+            f"spread={diagnostics.get('spread')} "
+            f"fingers={diagnostics.get('active_fingers')} "
+            f"sensors={diagnostics.get('active_sensors')}"
         )
 
         if self.task_2_5_hook is not None:
-            print("[GraspManager] Triggering Roadmap Task 2.5 (Probing thumb feature detection)...")
+            print("[GraspManager] Probing | triggering Task 2.5 hook")
             self.task_2_5_hook(robot, data)
         else:
-            print("[GraspManager] Ready for Roadmap Task 2.5: No active thumb probing hook registered.")
+            print("[GraspManager] Probing | no Task 2.5 hook registered")
 
     def step(self, robot: Any, data: DataDict) -> DataDict:
-        """
-        Per-frame state machine step.
-        Evaluates telemetry and sensor matrices, mutates state, controls hand actuation.
+        """Executes a single state machine update tick.
+
+        Evaluates current finger angles and tactile feedback matrices to drive
+        transitions between OPEN, CLOSING, SETTLING, CYLINDER_CONFIRMED,
+        THUMB_PROBING, and RESETTING. Commands robot actuation and populates
+        the telemetry dictionary with updated state, slip metrics, and probing results.
+
+        Args:
+            robot: Robot hand controller interface.
+            data: Telemetry dictionary containing current joint angles and tactile matrices.
+
+        Returns:
+            The input telemetry dictionary augmented with state machine outputs.
         """
         now = time.time()
         current_angles = np.asarray(data["angles"])
@@ -174,51 +236,41 @@ class GraspManager:
 
         diff = np.abs(current_angles - self.last_angles)
 
-        # ---------------------------------------------------------
         # State: OPEN
-        # ---------------------------------------------------------
         if self.state in ("open", "initialised", "starting"):
             self.state = "open"
             if self.check_contact_trigger(tactile_matrix):
-                print("[GraspManager] Contact triggered -> State: CLOSING (latching fingers 0-3, thumb open)")
+                print("[GraspManager] State: OPEN -> CLOSING | contact triggered")
                 self.state = "closing"
                 self.closing_start_time = now
                 state_changed = True
-                # Latch fingers 0-3 only; thumb stays completely open (1000, 1000)
+                # Close fingers 0-3 while keeping thumb fully open
                 robot.set_angles([0, 0, 0, 0, 1000, 1000])
 
-        # ---------------------------------------------------------
         # State: CLOSING
-        # ---------------------------------------------------------
         elif self.state == "closing":
             closing_elapsed = now - self.closing_start_time
 
-            # Only evaluate steady state once physical motion has had time to start and slow down
             has_moved = np.any(finger_angles < 900)
             motion_halted = np.all(diff < 3) and (closing_elapsed >= self.min_closing_time) and has_moved
 
             if motion_halted:
-                # Transition to settling to let compliance and tactile pressure develop
                 self.state = "settling"
                 self.settle_start_time = now
                 self.last_log_time = now
                 state_changed = True
                 print(
-                    f"[GraspManager] Hand motion stabilized (Angles: {finger_angles.tolist()}). "
-                    f"Beginning stabilization & grip verification -> SETTLING"
+                    f"[GraspManager] State: CLOSING -> SETTLING | motion stabilized | angles={finger_angles.tolist()}"
                 )
 
-        # ---------------------------------------------------------
-        # State: SETTLING (Continuous verification with settle_timeout)
-        # ---------------------------------------------------------
+        # State: SETTLING
         elif self.state == "settling":
             settling_elapsed = now - self.settle_start_time
 
-            # Immediate empty grasp detection: do not wait for 3.0s timeout if hand closed to fist
+            # Abort early if fingers closed into an empty fist
             if is_empty_grasp(finger_angles, pad_pressures):
                 print(
-                    f"[GraspManager] EMPTY GRASP during settling (Angles: {finger_angles.tolist()}). "
-                    f"Opening hand -> RESETTING"
+                    f"[GraspManager] State: SETTLING -> RESETTING | empty grasp | angles={finger_angles.tolist()}"
                 )
                 self.state = "resetting"
                 self.reset_start_time = now
@@ -239,10 +291,10 @@ class GraspManager:
                 if is_valid:
                     if (now - self.last_log_time) >= 0.25:
                         print(
-                            f"[GraspManager] Settling confirmed... ({settling_elapsed:.2f}s/{self.settle_duration:.2f}s) | "
-                            f"Angles: {finger_angles.tolist()} | Spread: {diagnostics.get('spread')} | "
-                            f"Active Fingers: {diagnostics.get('active_fingers')} | "
-                            f"Sensors: {diagnostics.get('active_sensors')}"
+                            f"[GraspManager] Settling | progress={settling_elapsed:.2f}/{self.settle_duration:.2f}s | "
+                            f"spread={diagnostics.get('spread')} | "
+                            f"fingers={diagnostics.get('active_fingers')} | "
+                            f"sensors={diagnostics.get('active_sensors')}"
                         )
                         self.last_log_time = now
 
@@ -258,27 +310,22 @@ class GraspManager:
                 else:
                     if (now - self.last_log_time) >= 0.35:
                         print(
-                            f"[GraspManager] Settling... ({reason}) | "
-                            f"Active Fingers: {diagnostics.get('active_fingers')} | "
-                            f"Sensors: {diagnostics.get('active_sensors')} | "
-                            f"Pressures: {diagnostics.get('finger_pressures')}"
+                            f"[GraspManager] Settling | waiting={reason} | "
+                            f"fingers={diagnostics.get('active_fingers')} | "
+                            f"sensors={diagnostics.get('active_sensors')}"
                         )
                         self.last_log_time = now
 
-                    # Timeout: if valid grip cannot be sustained within settle_timeout, abort to resetting
                     if settling_elapsed >= self.settle_timeout:
                         print(
-                            f"[GraspManager] Settling timeout after {self.settle_timeout:.1f}s ({reason}). "
-                            f"Opening hand -> RESETTING"
+                            f"[GraspManager] State: SETTLING -> RESETTING | timeout={self.settle_timeout:.1f}s | reason={reason}"
                         )
                         self.state = "resetting"
                         self.reset_start_time = now
                         state_changed = True
                         robot.open_hand()
 
-        # ---------------------------------------------------------
         # State: CYLINDER_CONFIRMED
-        # ---------------------------------------------------------
         elif self.state == "cylinder_confirmed":
             primary_pressures = {f: pad_pressures.get(f, 0.0) for f in ("Little", "Ring", "Middle", "Index")}
             active_contact_fingers = sum(
@@ -286,43 +333,33 @@ class GraspManager:
             )
             total_finger_force = sum(primary_pressures.values())
 
-            # Continuously track peak confirmed grasp force
             if total_finger_force > self.confirmed_total_force:
                 self.confirmed_total_force = total_finger_force
                 for f, p in primary_pressures.items():
                     self.confirmed_forces[f] = max(self.confirmed_forces.get(f, 0.0), p)
 
-            # Check retention of individual fingers relative to peak hold force (at least 35% of peak)
+            # Require each finger to retain at least 35% of peak hold force (floor at 50g)
             retained_fingers = sum(
                 1 for f, p in primary_pressures.items()
                 if p >= max(50.0, 0.35 * self.confirmed_forces.get(f, 0.0))
             )
 
-            # Relative force drop threshold: drops below 45% of peak confirmed hold force, or below minimum floor
+            # Drop grasp if total force drops below 45% of peak or fewer than 2 fingers contact
             rel_force_threshold = max(100.0, 0.45 * self.confirmed_total_force)
             force_dropped = bool(
                 (total_finger_force < rel_force_threshold) or (retained_fingers < 2)
             )
 
-            # Periodic telemetry for clear real-time visibility during cylinder hold
             if (now - self.last_log_time) >= 0.5:
                 print(
-                    f"[GraspManager] Cylinder hold active | "
-                    f"Angles: {finger_angles.tolist()} | "
-                    f"Active: {active_contact_fingers}/4 (Retained: {retained_fingers}/4) | "
-                    f"Total: {total_finger_force:.1f}g (Peak: {self.confirmed_total_force:.1f}g) | "
-                    f"Pressures: {dict((k, round(v, 1)) for k, v in primary_pressures.items())}"
+                    f"[GraspManager] Hold | "
+                    f"force={total_finger_force:.0f}g (peak={self.confirmed_total_force:.0f}g) | "
+                    f"fingers={active_contact_fingers}/4 (retained={retained_fingers}/4)"
                 )
                 self.last_log_time = now
 
-            # 1. Hand opened detection (UI button, manual sliders, or open release)
             hand_opened = np.any(finger_angles > 350) or np.mean(finger_angles) > 250
-
-            # 2. Empty fist / object slipped out detection
-            # Tactile-gated: only true if fingers curled AND tactile force confirmed lost
             is_empty_fist = is_empty_grasp(finger_angles, pad_pressures)
-
-            # 3. Palm curled without object (fingers curled into palm with NO cylinder contact on nails)
             palm_val = pad_pressures.get("Palm", 0.0)
             is_palm_curled = bool(
                 palm_val > 250.0
@@ -331,7 +368,7 @@ class GraspManager:
             )
 
             if hand_opened:
-                print(f"[GraspManager] Hand opened (Angles: {finger_angles.tolist()}) -> Opening hand -> RESETTING")
+                print(f"[GraspManager] State: CYLINDER_CONFIRMED -> RESETTING | hand opened | angles={finger_angles.tolist()}")
                 self.state = "resetting"
                 self.reset_start_time = now
                 self.contact_loss_start_time = 0.0
@@ -340,7 +377,7 @@ class GraspManager:
                 state_changed = True
                 robot.open_hand()
             elif is_empty_fist:
-                print(f"[GraspManager] Contact lost: Object dropped / fingers closed into fist (Angles: {finger_angles.tolist()}) -> Opening hand -> RESETTING")
+                print(f"[GraspManager] State: CYLINDER_CONFIRMED -> RESETTING | empty fist | angles={finger_angles.tolist()}")
                 self.state = "resetting"
                 self.reset_start_time = now
                 self.contact_loss_start_time = 0.0
@@ -349,7 +386,7 @@ class GraspManager:
                 state_changed = True
                 robot.open_hand()
             elif is_palm_curled:
-                print(f"[GraspManager] Contact lost: Fingers curled into palm (Palm: {palm_val:.1f}g, Angles: {finger_angles.tolist()}) -> Opening hand -> RESETTING")
+                print(f"[GraspManager] State: CYLINDER_CONFIRMED -> RESETTING | palm curled (palm={palm_val:.0f}g)")
                 self.state = "resetting"
                 self.reset_start_time = now
                 self.contact_loss_start_time = 0.0
@@ -362,9 +399,8 @@ class GraspManager:
                     self.contact_loss_start_time = now
                 elif (now - self.contact_loss_start_time) >= 0.15:
                     print(
-                        f"[GraspManager] Contact lost: Tactile force dropped "
-                        f"(Total: {total_finger_force:.1f}g < {rel_force_threshold:.1f}g, "
-                        f"Retained: {retained_fingers}/4 fingers, Peak: {self.confirmed_total_force:.1f}g) -> Opening hand -> RESETTING"
+                        f"[GraspManager] State: CYLINDER_CONFIRMED -> RESETTING | force drop "
+                        f"({total_finger_force:.0f}g < {rel_force_threshold:.0f}g, retained={retained_fingers}/4)"
                     )
                     self.state = "resetting"
                     self.reset_start_time = now
@@ -376,9 +412,7 @@ class GraspManager:
             else:
                 self.contact_loss_start_time = 0.0
 
-            # ---------------------------------------------------------
-            # Slip Detection (only while cylinder grasp is maintained)
-            # ---------------------------------------------------------
+            # Slip detection during cylinder hold
             if self.state == "cylinder_confirmed":
                 data["peak_force"] = self.confirmed_total_force
                 data["total_finger_force"] = total_finger_force
@@ -391,20 +425,19 @@ class GraspManager:
                         for k, v in slip_diag.get("sensors", {}).items()
                         if v.get("slip_reason")
                     }
-                    print(f"[GraspManager] ⚠️ SLIP DETECTED on: {slipping_contacts} | {slip_details}")
+                    print(f"[GraspManager] Slip detected | contacts={slipping_contacts}")
                     if self.slip_callback is not None:
                         self.slip_callback(slipping_contacts, slip_diag)
                 elif not is_slipping and self.was_slipping:
-                    print("[GraspManager] Grasp stabilized. Slip warning cleared.")
+                    print("[GraspManager] Slip cleared | grasp stable")
 
                 self.was_slipping = is_slipping
 
-                # Once cylinder grip is confirmed and no slip is detected, initiate thumb probing
                 if not is_slipping and not self.has_probed:
                     if self.no_slip_start_time == 0.0:
                         self.no_slip_start_time = now
                     elif (now - self.no_slip_start_time) >= self.no_slip_stability_duration:
-                        print("[GraspManager] Grasp sustained without slip -> Starting THUMB_PROBING routine...")
+                        print("[GraspManager] State: CYLINDER_CONFIRMED -> THUMB_PROBING | grip stable")
                         self.state = "thumb_probing"
                         self.has_probed = True
                         self.contact_loss_start_time = 0.0
@@ -413,20 +446,17 @@ class GraspManager:
                 else:
                     self.no_slip_start_time = 0.0
 
-        # ---------------------------------------------------------
-        # State: THUMB_PROBING (Low-force touch-and-retract rastering)
-        # ---------------------------------------------------------
+        # State: THUMB_PROBING
         elif self.state == "thumb_probing":
             primary_pressures = {f: pad_pressures.get(f, 0.0) for f in ("Little", "Ring", "Middle", "Index")}
             total_finger_force = sum(primary_pressures.values())
 
-            # Grasp retention safety checks on primary fingers 0-3
             hand_opened = np.any(finger_angles > 350) or np.mean(finger_angles) > 250
             is_empty_fist = is_empty_grasp(finger_angles, pad_pressures)
 
             if hand_opened or is_empty_fist:
                 reason = "hand opened" if hand_opened else "empty fist"
-                print(f"[GraspManager] Grasp lost during probing ({reason}) -> Opening hand -> RESETTING")
+                print(f"[GraspManager] State: THUMB_PROBING -> RESETTING | grasp lost ({reason})")
                 self.thumb_prober.stop()
                 self.state = "resetting"
                 self.reset_start_time = now
@@ -436,23 +466,20 @@ class GraspManager:
                 state_changed = True
                 robot.open_hand()
             elif self.thumb_prober.is_finished:
-                # Probing finished -> revert to cylinder_confirmed (holding object)
                 self.probing_results = list(self.thumb_prober.results)
                 self.state = "cylinder_confirmed"
                 self.no_slip_start_time = now
                 self.contact_loss_start_time = 0.0
                 state_changed = True
                 print(
-                    f"[GraspManager] Probing complete! Mapped {len(self.probing_results)} contact points -> Reverted to CYLINDER_CONFIRMED"
+                    f"[GraspManager] State: THUMB_PROBING -> CYLINDER_CONFIRMED | probing complete (points={len(self.probing_results)})"
                 )
                 self.slip_detector.reset()
                 self.was_slipping = False
                 state_changed = True
                 robot.open_hand()
 
-        # ---------------------------------------------------------
         # State: RESETTING
-        # ---------------------------------------------------------
         elif self.state == "resetting":
             hand_opened = np.all(current_angles[:4] > 880)
             reset_timed_out = (now - self.reset_start_time) > 2.0
@@ -466,12 +493,7 @@ class GraspManager:
                 self.slip_detector.reset()
                 self.was_slipping = False
                 state_changed = True
-                print(
-                    f"[GraspManager] Hand reopened (Angles: {finger_angles.tolist()}). "
-                    f"Cooldown {self.reset_cooldown:.1f}s active -> OPEN"
-                )
-
-
+                print(f"[GraspManager] State: RESETTING -> OPEN | hand reopened")
 
         self.last_angles = current_angles
         data["state"] = self.state
@@ -488,15 +510,25 @@ class GraspManager:
         return data
 
     def on_probing_finished(self) -> None:
-        """Callback when thumb probing routine finishes: reverts to cylinder_confirmed."""
-        print("[GraspManager] Probing routine finished -> Reverting to CYLINDER_CONFIRMED")
+        """Handles completion callback from the thumb probing routine.
+
+        Saves probed tactile contact points and reverts the state machine to
+        CYLINDER_CONFIRMED holding state.
+        """
+        print(
+            f"[GraspManager] State: THUMB_PROBING -> CYLINDER_CONFIRMED | probing finished (points={len(self.probing_results)})"
+        )
         self.probing_results = list(self.thumb_prober.results)
         self.state = "cylinder_confirmed"
         self.no_slip_start_time = time.time()
 
     def restart_probing(self, robot: Any) -> None:
-        """Manually triggers / restarts the thumb probing routine."""
-        print("[GraspManager] Manual UI trigger -> Starting THUMB_PROBING routine...")
+        """Manually triggers or restarts the autonomous thumb probing routine.
+
+        Args:
+            robot: Robot hand controller interface.
+        """
+        print("[GraspManager] State: -> THUMB_PROBING | manual trigger")
         self.state = "thumb_probing"
         self.has_probed = True
         self.contact_loss_start_time = 0.0
