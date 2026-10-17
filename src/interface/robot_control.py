@@ -318,8 +318,13 @@ class RobotHandController:
             return res.registers
         return None
 
+<<<<<<< HEAD
     def read_tactile_data(self) -> tuple[np.ndarray, np.ndarray]:
         """Reads tactile matrix data across all 17 sensor groups and caches results."""
+=======
+    def read_tactile_data(self)->tuple[np.ndarray, np.ndarray]:
+        # Max cells is 112 (Palm: 8 * 14 = 112)
+>>>>>>> a36dcd7 (results data)
         data_matrix = np.zeros((1, 17))
         all_points = np.zeros((112, 17))
         raw_cache = {}
