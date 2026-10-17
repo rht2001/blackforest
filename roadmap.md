@@ -14,8 +14,10 @@
 - [x] fetch all available sensor data from robotic hand and store in ```@dataclass PhysicalState```
 - [ ] confirm grip of cylindrical object: ```def confirm_grip(PhysicalState) == True```
   - Planned logic: DOF angle homogeneity across fingers 0-3 (Little, Ring, Middle, Index) with tolerance check, plus active contact pad threshold.
-- [ ] Detect features with thumb to decide on type of object/sensor
 - [ ] fetch ```PhysicalState``` again (e.g. ```PhysicalState.update()```, as we need this function anyways for polling loop of movement detection). -> set new steady state.
+
+## 2.5 Detect sensor type and orientation by probing thumb
+- [ ] Detect features with thumb to decide on type of object/sensor
 
 ## 3. Activate movement/Slip detection
 - [ ] continuously fetch ```PhysicalState.update()``` to detect movements/slip
