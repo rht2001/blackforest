@@ -3,19 +3,19 @@ import time
 from pymodbus.client import ModbusTcpClient
 import numpy as np
 from typing import Literal
-from config.config_parameters import REGISTERS, DataDict, default_results, STATES
-from pymodbus.exceptions import ModbusException
+from config.config_parameters import RegisterName, DataDict, default_results, STATES, REGISTERS
 DEFAULT_MOVEMENT_SPEED = [400] * 6
 
 
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 
-
+DEFAULT_FORCE = 3000
 CLOSE_THRESHOLD = 50
 IMPULSE_REJECTION_WAIT_TIME = 0.25
+GRIP_ANGLE_THRESHOLD = 10  # Threshold for detecting if the hand is in a gripping position (0-1000 scale)
 
 class RobotHandController:
-    def __init__(self, ip: str = "192.168.123.211", port: int = 6000, mock: bool = False, simulate: bool = False):
+    def __init__(self, ip: str = "192.168.123.211", port: int = 6000, mock: bool = False):
         """
         Lightweight Python wrapper for Modbus TCP control of the RH56DFTP dexterous hand.
         """
@@ -31,9 +31,6 @@ class RobotHandController:
         self.mock_angles = [1000] * 6
         self.last_sensor_data: dict[str, np.ndarray] = {}
         self.last_all_points = np.zeros((112, 17))
-        self.mean_matrix = np.zeros((1, 17))
-        self.all_points = self.last_all_points
-        self.state_change = False
         self.offsets = {
                 "Little": (150, 120),
                 "Ring":   (230, 110),
@@ -43,12 +40,18 @@ class RobotHandController:
                 "Palm":   (240, 520)
             }
 
-        self.results: DataDict = {
-            key: value.copy() if isinstance(value, np.ndarray) else value
-            for key, value in default_results.items()
-        }
-        self.last_tactile_valid = [False] * 17
-        self.last_timestamp_ns = 0
+        self.results: DataDict = default_results
+
+        try:
+            self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
+            if self.client.connect():
+                self.is_connected = True
+                print(f"[RobotHandController] Connected to hand at {self.ip}:{self.port}")
+            else:
+                print(f"[RobotHandController] Could not reach {self.ip}:{self.port}. Running in simulation/disconnected mode.")
+        except Exception as e:
+            print(f"[RobotHandController] Connection error ({e}). Running in simulation/disconnected mode.")
+            self.client = None
 
         self.send_addresses = {
             "ANGLES": 1486,
@@ -59,7 +62,7 @@ class RobotHandController:
         self.receive_addresses = {
             "ANGLES": 1546,
             "FORCES": 1582,
-            "POSITION": REGISTERS["POS_ACT"],
+            "POSITION": 1594,
         }
 
         self.sensor_groups = [
@@ -89,7 +92,7 @@ class RobotHandController:
         self.sensor_offsets: dict[str, np.ndarray] = {}
         self.state: STATES = "starting"
 
-        if not (mock or simulate):
+        if not mock:
             try:
                 self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
                 if self.client.connect():
@@ -113,7 +116,7 @@ class RobotHandController:
     # Unified Command Bus (read_command / send_command)
     # ==========================================
 
-    def send_command(self, value: list[int], type: DataTypes | str = "ANGLES") -> bool:
+    def send_command(self, value: list[int], type: DataTypes | RegisterName = "ANGLES") -> bool:
         """
         Unified write access point for commands and register settings.
         `type` can be a standard data category ('ANGLES', 'FORCES', 'POSITION')
@@ -121,7 +124,7 @@ class RobotHandController:
         """
         if type in self.send_addresses:
             address = self.send_addresses[type]
-        elif type in REGISTERS:
+        elif type in RegisterName:
             address = REGISTERS[type]
         else:
             raise ValueError(f"Unknown command target: {type}")
@@ -136,7 +139,7 @@ class RobotHandController:
         res = self.client.write_registers(address=address, values=value, device_id=1)
         return not res.isError()
 
-    def read_command(self, type: DataTypes | str = "ANGLES", count: int = 6) -> list[int] | None:
+    def read_command(self, type: DataTypes | str = "ANGLES", count: int = 6) -> list[int]:
         """
         Unified read access point for actuator telemetry and register inspection.
         `type` can be a standard data category ('ANGLES', 'FORCES', 'POSITION')
@@ -154,56 +157,38 @@ class RobotHandController:
                 return list(self.current_angles)
             return [0] * count
 
-        values = self.safe_read(address, count)
-        if values is not None:
+        res = self.client.read_holding_registers(address=address, count=count, device_id=1)
+        if not res.isError():
             if type in ("ANGLES", "ANGLE_ACT"):
-                self.current_angles = list(values)
-            if type in ("FORCES", "FORCE_ACT"):
-                values = [value - 65536 if value >= 32768 else value for value in values]
-            return values
+                self.current_angles = list(res.registers)
+            return list(res.registers)
 
         print(f"[RobotHandController] Failed to read {type} from address {address}")
-        return None
+        return [0] * count
 
     def write_data(self, target: DataTypes | str, values: list[int]) -> bool:
         """Compatibility wrapper for send_command."""
         return self.send_command(value=values, type=target)
 
-    def read_data(self, target: DataTypes | str, count: int = 6) -> list[int] | None:
+    def read_data(self, target: DataTypes | str, count: int = 6) -> list[int]:
         """Compatibility wrapper for read_command."""
         return self.read_command(type=target, count=count)
 
-    def safe_read(self, addr: int, length: int) -> list[int] | None:
+    def safe_read(self, addr: int, length: int) -> list[int]:
         """Reads arbitrary holding registers in safe chunks of up to 120 registers."""
         if not self.is_connected or self.client is None:
             return [0] * length
 
         values = []
-        try:
-            for offset in range(0, length, 120):
-                count = min(120, length - offset)
-                response = self.client.read_holding_registers(
-                    address=addr + offset, count=count, device_id=1)
-                if response.isError() or len(response.registers) != count:
-                    return None
-                values.extend(response.registers)
-        except (ModbusException, OSError):
-            return None
+        for i in range(0, length, 120):
+            res = self.client.read_holding_registers(
+                address=addr + i,
+                count=min(120, length - i),
+                device_id=1,
+            )
+            if not res.isError():
+                values.extend(res.registers)
         return values
-
-    def send_angles(self, angles: list[int]) -> bool:
-        return self.set_angles(angles)
-
-    def receive_data(self, type: DataTypes = "ANGLES"):
-        return self.read_command(type)
-
-    def read_current_angles(self):
-        return self.get_angles()
-
-    def disconnect(self):
-        if self.client is not None:
-            self.client.close()
-        self.is_connected = False
 
     # ==========================================
     # High-Level Semantic Facades
@@ -217,6 +202,8 @@ class RobotHandController:
             self.calibrate_offsets()
         print("[RobotHandController] Hand opened and ready.")
         self.state = "initialised"
+        self.send_command(type="DEFAULT_FORCE_SET", value=[3000]*6)
+
 
     def set_default_speed(self):
         """Sets the default speed for all 6 DOFs."""
@@ -244,6 +231,7 @@ class RobotHandController:
         self.auto_mode_active = True
         self.auto_contact_trigerred = False
         self.contact_start_time = 0.0
+        time.sleep(0.5)  # Allow time for the hand to open before further commands
 
     def close_hand(self):
         """Closes hand to standard grasp position and disarms automatic grip detection."""
@@ -251,6 +239,7 @@ class RobotHandController:
         self.auto_mode_active = False
         self.auto_contact_trigerred = False
         self.contact_start_time = 0.0
+        time.sleep(0.5)  # Allow time for the hand to close before further commands
 
     def calibrate_offsets(self):
         """Calibrates baseline tactile sensor readings."""
@@ -260,13 +249,12 @@ class RobotHandController:
             data = self.safe_read(addr, h * w)
             self.sensor_offsets[name] = np.array(data) if data else np.zeros(h * w)
 
-    def close_on_contact(self, matrix: np.ndarray | None = None) -> bool:
+    def close_on_contact(self) -> bool:
         """Triggers grip closure if tactile pressure exceeds contact threshold with impulse rejection."""
         if not self.auto_mode_active:
             return False
 
-        contact_present = np.count_nonzero(
-            (self.all_points if matrix is None else matrix) > CLOSE_THRESHOLD) >= 10
+        contact_present = np.count_nonzero(self.all_points > CLOSE_THRESHOLD) >= 10
 
         # Step 1: Contact detected for the first time -> start debounce timer
         if contact_present and not self.auto_contact_trigerred:
@@ -302,13 +290,10 @@ class RobotHandController:
         data_matrix = np.zeros((1, 17))
         all_points = np.zeros((112, 17))
         raw_cache = {}
-        self.last_tactile_valid = []
 
         for index, (name, addr, h, w, key, rel) in enumerate(self.sensor_groups):
             data = self.safe_read(addr, h * w)
-            valid = data is not None and len(data) == h * w
-            self.last_tactile_valid.append(valid)
-            if not valid:
+            if not data:
                 continue
 
             raw = np.array(data)
@@ -323,39 +308,17 @@ class RobotHandController:
         self.last_all_points = all_points
         return data_matrix, all_points
 
-    def build_result_data(self, mean_matrix=None, all_points=None, telemetry=None) -> DataDict:
+    def build_result_data(self):
         """Packages polled kinematics, telemetry, and tactile data into DataDict."""
-        angles, forces, position = telemetry if telemetry is not None else (
-            self.read_command("ANGLES"), self.read_command("FORCES"),
-            self.read_command("POSITION"))
-        self.results = {
-            "angles": np.array(angles),
-            "forces": np.array(forces),
-            "position": np.array(position),
-            "tactile_matrix": self.all_points if all_points is None else all_points,
-            "tactile_mean_matrix": self.mean_matrix if mean_matrix is None else mean_matrix,
-            "state": self.state,
-            "state_change": self.state_change,
-        }
-        return self.results
 
-    def capture_telemetry(self):
-        results = self.main()
-        tactile = [[None] * len(self.sensor_groups) for _ in range(112)]
-        for column, (name, *_rest) in enumerate(self.sensor_groups):
-            if self.last_tactile_valid[column]:
-                for row, value in enumerate(self.last_sensor_data[name]):
-                    tactile[row][column] = int(value)
-        return {
-            "simulated": not self.is_connected,
-            "timestamp_ns": self.last_timestamp_ns,
-            "angles": results["angles"].tolist(),
-            "forces": results["forces"].tolist(),
-            "positions": results["position"].tolist(),
-            "tactile": tactile,
-            "tactile_valid": list(self.last_tactile_valid),
-            "state": results["state"],
-            "state_change": results["state_change"],
+        self.results = {
+            "angles": np.array(self.read_command("ANGLES")),
+            "forces": np.array(self.read_command("FORCES")),
+            "position": np.array(self.read_command("POSITION")),
+            "tactile_matrix": self.all_points,
+            "tactile_mean_matrix": self.mean_matrix,
+            "state": self.state,
+            "state_change": self.state_change
         }
 
 
@@ -385,36 +348,30 @@ class RobotHandController:
         return False, "Stable grip not confirmed"
 
     def main(self)-> DataDict:
-        self.last_timestamp_ns = time.time_ns()
-        previous_state = self.state
-        mean_matrix, all_points = self.read_tactile_data()
-        self.mean_matrix, self.all_points = mean_matrix, all_points
-        auto_contact = self.close_on_contact(all_points)
-        angles = self.read_command("ANGLES")
-        forces = self.read_command("FORCES")
-        position = self.read_command("POSITION")
-        current_pos = np.array(angles) if angles is not None else self.angle_array.copy()
-
-        if angles is not None and np.all(current_pos[:4] < 100):
-            print(current_pos)
-            self.state = "resetting"
-            print("nothing detected: opening the hand")
-            self.write_data("ANGLES", [1000] * 6)
-            self.auto_mode_active = True
-            time.sleep(1)
+        self.state_change = False
+        current_state = self.state
+        self.mean_matrix, self.all_points = self.read_tactile_data()
+        auto_contact = self.close_on_contact()
+        current_pos = np.array(self.read_command())
 
         if auto_contact:
             self.state = "moving"
 
         if self.state == "moving":
+        # TODO: Steady state detection only polls between two consecutive readings, which may not be sufficient for robust detection. Consider implementing a more sophisticated method that tracks the last N readings and checks for stability over that window.
 
             diff = np.abs(self.angle_array - np.array(current_pos))
             if np.all(diff < 2):
                 self.state = "steady_state"
                 print("steady state is achieved, trying to check position")
 
+                # TODO: READ valid_positions and valid_tactile here after steady state is achieved.
+
+
                 #self.confirm_grip(valid_positions, valid_tactile, mean_matrix=mean_matrix)
 
         self.angle_array = current_pos
-        self.state_change = self.state != previous_state
-        return self.build_result_data(telemetry=(angles, forces, position))
+        self.state_change = True if self.state != current_state else False
+        self.build_result_data()
+        return self.results
+

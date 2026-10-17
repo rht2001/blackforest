@@ -23,6 +23,5 @@ blackforest = "main:main"
 where = ["src"]
 
 [tool.setuptools]
-package-dir = {"" = "src"}
 py-modules = ["main"]
 

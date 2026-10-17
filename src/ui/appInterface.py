@@ -145,19 +145,19 @@ class HandApp(tk.Tk):
             self.positions[name] = values
             self.create_button(name, values)
 
-    def draw(self, outputs=None):
+    def draw(self):
         self.canvas.delete("all")
         self.canvas.create_image(350, 450, image=self.hand_img)
 
-        for column, (name, addr, h, w, key, rel) in enumerate(self.robot.sensor_groups):
-            if outputs is not None:
-                if not outputs["tactile_valid"][column]:
-                    continue
-                raw = np.array([outputs["tactile"][row][column] for row in range(h * w)])
-            elif name in self.robot.last_sensor_data:
+        for name, addr, h, w, key, rel in self.robot.sensor_groups:
+            # Prefer cached tactile data from robot loop to avoid redundant Modbus traffic
+            if name in self.robot.last_sensor_data:
                 raw = self.robot.last_sensor_data[name]
             else:
-                continue
+                data = self.robot.safe_read(addr, h * w)
+                if not data:
+                    continue
+                raw = np.array(data)
 
             offset = self.robot.sensor_offsets.get(name, np.zeros(len(raw)))
             matrix = (raw - offset).reshape(h, w)
@@ -205,5 +205,10 @@ class HandApp(tk.Tk):
                 fill="blue"
             )
 
-    def main(self, outputs=None):
-        self.draw(outputs)
+    def main(self):
+        self.draw()
+        try:
+            self.update_idletasks()
+            self.update()
+        except tk.TclError:
+            pass

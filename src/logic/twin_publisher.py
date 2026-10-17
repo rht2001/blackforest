@@ -23,6 +23,37 @@ def vector(value, low, high):
             and all(number(v, low, high) for v in value) else None)
 
 
+def robot_snapshot(robot, results):
+    """Adapt main's DataDict and raw cache without hardware IO."""
+    tactile = [[None] * len(REGIONS) for _ in range(112)]
+    valid = [False] * len(REGIONS)
+    for column, (_, (height, width)) in enumerate(REGIONS):
+        if column >= len(robot.sensor_groups):
+            continue
+        name, _, source_height, source_width, *_rest = robot.sensor_groups[column]
+        if (source_height, source_width) != (height, width):
+            continue
+        values = robot.last_sensor_data.get(name)
+        if hasattr(values, "tolist"):
+            values = values.tolist()
+        if not isinstance(values, (list, tuple)) or len(values) != height * width:
+            continue
+        valid[column] = True
+        for row, value in enumerate(values):
+            tactile[row][column] = value
+    angles = results.get("angles")
+    forces = results.get("forces")
+    if hasattr(angles, "tolist"):
+        angles = angles.tolist()
+    if hasattr(forces, "tolist"):
+        forces = forces.tolist()
+    if isinstance(forces, (list, tuple)):
+        forces = [value - 65536 if number(value, 32768, 65535) else value
+                  for value in forces]
+    return {"simulated": not robot.is_connected, "angles": angles, "forces": forces,
+            "tactile": tactile, "tactile_valid": valid}
+
+
 def twin_payload(outputs):
     """Convert only valid regions; preserve palm wire order for the viewer."""
     points = outputs["tactile"]

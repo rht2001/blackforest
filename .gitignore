@@ -10,7 +10,5 @@ wheels/
 .venv
 .DS_Store
 uv.lock
-# Local telemetry
-main_dataset.csv
-test_dataset.csv
+
 *.csv

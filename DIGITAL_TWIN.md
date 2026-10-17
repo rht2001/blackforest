@@ -1,63 +1,46 @@
-# App, CSV und Digital Twin gemeinsam testen
+# Digital Twin auf dem Team-main
 
-Die neue Telemetrie ist optional (`--twin`), liest keine zusätzlichen Sensoren und
-sendet keine Hardwarebefehle. Derselbe Snapshot versorgt CSV, Tk-Anzeige und Twin.
-CSV speichert jeden Zyklus; der Hintergrundsender überträgt den jeweils neuesten
-Snapshot, mit höchstens einem wartenden Paket. Eine fehlende Bridge unterbricht
-die Erfassung nicht. Positionswerte bleiben in der CSV; die aktuelle Bridge nutzt
-Winkel, Kräfte und die 17 taktilen Regionen. Simulationsdaten sind im Viewer markiert.
+Basis: `origin/main` bei `5851e49` (17.10.2026). Aktueller 3D-Viewer,
+2D-Taktilkarte und lokale HTTP-Bridge aus Karls Twin-Version.
+Steuerung, Register, GUI, Datenbank und Abhängigkeiten entsprechen main.
+Die frühere separate CSV-Integration ist nicht enthalten.
 
-## Tests ohne Hardware
+## Start
 
-Im Repository-Hauptverzeichnis:
-
-```powershell
-uv run python -m unittest discover -s tests -v
-```
-
-## Gemeinsamer manueller Test
-
-Terminal 1, Repository-Hauptverzeichnis:
+Terminal 1 im Repository-Hauptverzeichnis:
 
 ```powershell
 uv run python digital_twin/bridge_server.py
 ```
 
-Browser öffnen: http://127.0.0.1:18765/ und **Live aus Python** wählen.
-Optional http://127.0.0.1:18765/tactile öffnen und **Live-Bridge** wählen.
+Browser: http://127.0.0.1:18765/ und **Live aus Python** wählen.
+2D-Karte: http://127.0.0.1:18765/tactile.
+Die Viewer können auch ihre eigene Simulation ohne Hardware anzeigen.
 
-Terminal 2, Repository-Hauptverzeichnis:
-
-```powershell
-uv run blackforest --simulate --twin --dataset test_dataset.csv
-```
-
-GUI-Regler bewegen und loslassen: dieselben Winkel sollten im Twin ankommen.
-Der vorhandene Mock liefert taktile Nullen, also keine Kontaktflecken. Die 2D-Karte
-kann ihre eigenen synthetischen Kontakte mit **Simulation** anzeigen, diese werden
-aber nicht als Robotermessungen in die CSV übernommen.
-
-GUI über X schließen, erneut starten, wieder schließen. CSV prüfen:
+Terminal 2, vorhandene Hardware-App mit optionaler Twin-Ausgabe:
 
 ```powershell
-uv run python -c "import pandas as pd; d=pd.read_csv('test_dataset.csv',sep=';'); print(d[['index','simulated','angles']].tail()); print('Zeilen:',len(d),'Index eindeutig:',d['index'].is_unique)"
-Invoke-RestMethod http://127.0.0.1:18765/api/state | Select-Object seq,simulated,angles_act
+uv run python src/main.py --twin
 ```
 
-Der Index läuft weiter und simulated ist True. Nach vier Sekunden ohne Daten zeigt
-der Twin die Verbindung als veraltet. Bridge mit Ctrl+C beenden. Bleibt die App
-offen, läuft die CSV-Erfassung weiter; nach Bridge-Neustart treffen neue Pakete ein.
-Keine zweite Hardware-App parallel starten.
+Ohne `--twin` startet die Team-App ohne Hintergrundsender. Die Hardware-IP
+bleibt wie in main bei `192.168.123.210`. Startup, Standardkraft und automatische
+Greifsteuerung stammen unverändert aus main. `--twin-url` überschreibt das
+HTTP-Ziel. Bridge und Browser öffnen keine Hardwareverbindung.
 
-## Mit Hardware
+Der Adapter verwendet ausschließlich `DataDict` und `last_sensor_data`:
+keine zusätzlichen Sensorabfragen oder Bewegungsbefehle. Fehlende oder
+unvollständige Regionen werden ausgelassen, Padding bleibt ungültig.
+Kraftregister werden nur für die Anzeige vorzeichenbehaftet interpretiert.
+Der Hintergrundsender hält höchstens ein wartendes Paket. Eine nicht erreichbare
+Bridge blockiert die Datenbank nicht. Von main als Nullen ersetzte Lesefehler
+kann der Adapter nicht nachträglich von echten Nullmessungen unterscheiden.
 
-Nach dem Simulationstest --simulate weglassen. Dabei gilt das bisherige Startup
-mit Öffnen der Hand und automatischem Kontaktschließen. Nur die blackforest-App
-verbindet sich zur Hand, Bridge und Browser sind reine Anzeige.
+## Tests ohne Hardware
 
-Winkelbereich der Bridge: 0–1000, Kraftbereich: -4000–4000, Taxels: 0–4095.
-Ungültige Werte werden für die Anzeige ausgelassen; die CSV behält die Originaldaten.
-Fehlende Regionen werden nicht als gültige Nullmatrizen übertragen. Taktile Rohdaten
-bleiben in Erfassungsreihenfolge, einschließlich der speziellen Palm-Zuordnung im Viewer.
-Der Twin bleibt ein geometrisches Modell mit teilweise angenäherten Sensorlagen
-und Gelenkkennlinien; die Anbindung kalibriert diese Geometrie nicht.
+```powershell
+uv run python -m unittest discover -s tests -v
+```
+
+Tests verwenden künstliche Telemetrie und einen lokalen HTTP-Server;
+sie instanziieren keinen Hardwarecontroller.
