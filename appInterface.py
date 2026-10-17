@@ -6,16 +6,16 @@ import os
 import json
 import time
 from robot_control import RobotHandController
-
-class HandApp:
-    def __init__(self, root, robot: RobotHandController):
-        self.root = root
+#TODO : provide a simulation environment to run it without the robot being connected
+class HandApp(tk.Tk):
+    def __init__(self, robot: RobotHandController):
+        super().__init__()
         self.robot = robot
 
         self.SAVE_FILE = "positions.json"
         self.pixel = 6
         self.positions = {}
-
+        self.sliders = []
 
         self.offsets = {
             "Little": (150, 120),
@@ -30,18 +30,15 @@ class HandApp:
         self.setup_ui()
         self.load_positions()
 
-        self.root.after(500, self.update_angles_from_robot)
-        self.root.after(1000, self.robot.calibrate_offsets)
-        self.loop()
-
     def setup_window(self):
-        self.root.title("Greifhand – mit Positionsspeicher")
-        self.root.geometry("1200x900")
+        # 'self' is now the Tk window
+        self.title("Greifhand – mit Positionsspeicher")
+        self.geometry("1200x900")
 
-        self.left_frame = tk.Frame(self.root)
+        self.left_frame = tk.Frame(self)
         self.left_frame.pack(side="left", fill="y", padx=10)
 
-        self.right_frame = tk.Frame(self.root)
+        self.right_frame = tk.Frame(self)
         self.right_frame.pack(side="right", fill="both", expand=True)
 
         img = Image.open(os.path.join(os.path.dirname(__file__), "hand.png"))
@@ -203,3 +200,5 @@ class HandApp:
                 fill="blue"
             )
 
+    def main(self):
+        self.draw()

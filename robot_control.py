@@ -133,6 +133,8 @@ class RobotHandController:
 
         return data_matrix, all_points
 
+    def main(self):
+        pass
 
 
 
