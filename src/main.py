@@ -13,14 +13,11 @@ def main():
     Initializes the robot hand controller as access point of the TCP protocol and starts the Tkinter GUI application.
     Runs continously for continuous polling of GUI.
     """
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--twin", action="store_true", help="Publish to the local digital twin")
-    parser.add_argument("--twin-url", default="http://127.0.0.1:18765/api/state")
-    args = parser.parse_args()
+
     robot = RobotHandController(ip="192.168.123.210", port=6000)
     app = HandApp(robot)
     db = RobotDatabase()
-    publisher = TwinPublisher(args.twin_url) if args.twin else None
+    publisher = TwinPublisher("http://127.0.0.1:18765/api/state")
 
     is_running = True
 
