@@ -280,13 +280,8 @@ class RobotHandController:
             return None
         return self.client.read_holding_registers(address=REGISTERS["ERROR"], count=6, device_id=1)
 
-<<<<<<< HEAD
     def read_tactile_data(self) -> tuple[np.ndarray, np.ndarray]:
         """Reads tactile matrix data across all 17 sensor groups and caches results."""
-=======
-    def read_tactile_data(self)->tuple[np.ndarray, np.ndarray]:
-        # Max cells is 112 (Palm: 8 * 14 = 112)
->>>>>>> a36dcd7 (results data)
         data_matrix = np.zeros((1, 17))
         all_points = np.zeros((112, 17))
         raw_cache = {}
@@ -316,11 +311,34 @@ class RobotHandController:
             "position": np.array(self.read_command("POSITION")),
             "tactile_matrix": all_points,
             "tactile_mean_matrix": mean_matrix,
+            "state": self.state
         }
-        return self.results
 
 
-        pass
+    def confirm_grip(self,valid_positions:np.ndarray, valid_tactile:np.ndarray,mean_matrix, state: PhysicalState, angle_tolerance: int = 100, min_contact_fingers: int = 3) -> tuple[bool, str]:
+
+        finger_angles = self.angle_array[0:4]  # Little, Ring, Middle, Index
+
+        if np.any(finger_angles<50):
+            return False, "Grasp missed: One or more fingers closed completely (empty grasp)."
+
+        if all(a > 950 for a in finger_angles):
+            return False, "Hand still open: No contact detected."
+
+        spread = max(finger_angles) - min(finger_angles)
+        if spread > angle_tolerance:
+            return False, f"Non-homogeneous grasp: Angle spread {spread} exceeds tolerance {angle_tolerance}."
+
+
+
+        mask_positions = np.abs(valid_positions - finger_angles) <= 0.05 * np.abs(valid_positions)
+        mask_tactile = np.abs(valid_tactile - mean_matrix) <= 0.05 * np.abs(valid_tactile)
+
+        all_within_tolerance = mask_positions.all() and mask_tactile.all()
+        if all_within_tolerance:
+            return True, "Stable cylindrical grasp confirmed."
+
+        return False, "Stable grip not confirmed"
 
     def main(self)-> DataDict:
         mean_matrix, all_points = self.read_tactile_data()
@@ -328,12 +346,11 @@ class RobotHandController:
         current_pos = np.array(self.read_command())
 
         if np.all(current_pos[:4] < 100):
+            print(current_pos)
             self.state = "resetting"
             print("nothing detected: opening the hand")
             self.write_data("ANGLES", [1000] * 6)
             time.sleep(1)
-
-
 
         if auto_contact:
             self.state = "moving"
@@ -344,9 +361,9 @@ class RobotHandController:
             if np.all(diff < 2):
                 self.state = "steady_state"
                 print("steady state is achieved, trying to check position")
-                self.check_position_thing()
 
-
+                #self.confirm_grip(valid_positions, valid_tactile, mean_matrix=mean_matrix)
 
         self.angle_array = current_pos
         return self.results
+
