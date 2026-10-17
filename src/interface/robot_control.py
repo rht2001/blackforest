@@ -229,6 +229,7 @@ class RobotHandController:
         self.auto_mode_active = True
         self.auto_contact_trigerred = False
         self.contact_start_time = 0.0
+        time.sleep(0.5)  # Allow time for the hand to open before further commands
 
     def close_hand(self):
         """Closes hand to standard grasp position and disarms automatic grip detection."""
@@ -236,6 +237,7 @@ class RobotHandController:
         self.auto_mode_active = False
         self.auto_contact_trigerred = False
         self.contact_start_time = 0.0
+        time.sleep(0.5)  # Allow time for the hand to close before further commands
 
     def calibrate_offsets(self):
         """Calibrates baseline tactile sensor readings."""
