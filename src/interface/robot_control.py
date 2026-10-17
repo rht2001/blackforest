@@ -44,6 +44,7 @@ class RobotHandController:
 
         try:
             self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
+            print(f"[RobotHandController] Attempting connection to {self.ip}:{self.port}...")
             if self.client.connect():
                 self.is_connected = True
                 print(f"[RobotHandController] Connected to hand at {self.ip}:{self.port}")
@@ -91,6 +92,9 @@ class RobotHandController:
         ]
         self.sensor_offsets: dict[str, np.ndarray] = {}
         self.state: STATES = "starting"
+        self.state_change: bool = False
+        self.mean_matrix: np.ndarray = np.zeros((1, 17))
+        self.all_points: np.ndarray = np.zeros((112, 17))
 
         if not mock:
             try:
@@ -194,15 +198,25 @@ class RobotHandController:
     # High-Level Semantic Facades
     # ==========================================
 
-    def startup(self):
-        """Initializes speed, opens hand, and calibrates offsets on startup."""
+    def startup(self, max_force: int = 1500):
+        """Initializes speed, force limit, opens hand, and calibrates offsets on startup."""
         self.set_default_speed()
+        self.set_max_force(max_force)
         self.open_hand()
         if self.is_connected:
             self.calibrate_offsets()
-        print("[RobotHandController] Hand opened and ready.")
+        print(f"[RobotHandController] Hand opened and ready (max force: {max_force}g).")
         self.state = "initialised"
-        self.send_command(type="DEFAULT_FORCE_SET", value=[3000]*6)
+
+    def set_max_force(self, force_g: int = 1500) -> bool:
+        """
+        Sets the maximum gripping force threshold for all 6 DOFs (range: 100 - 3000g).
+        Writes to both active FORCES register (1498) and DEFAULT_FORCE_SET register (1044).
+        """
+        force_val = max(100, min(3000, int(force_g)))
+        self.set_forces([force_val] * 6)
+        return self.send_command([force_val] * 6, "DEFAULT_FORCE_SET")
+
 
 
     def set_default_speed(self):
@@ -308,9 +322,8 @@ class RobotHandController:
         self.last_all_points = all_points
         return data_matrix, all_points
 
-    def build_result_data(self):
+    def build_result_data(self) -> DataDict:
         """Packages polled kinematics, telemetry, and tactile data into DataDict."""
-
         self.results = {
             "angles": np.array(self.read_command("ANGLES")),
             "forces": np.array(self.read_command("FORCES")),
@@ -318,60 +331,22 @@ class RobotHandController:
             "tactile_matrix": self.all_points,
             "tactile_mean_matrix": self.mean_matrix,
             "state": self.state,
-            "state_change": self.state_change
+            "state_change": self.state_change,
         }
-
-
-    def confirm_grip(self,valid_positions:np.ndarray, valid_tactile:np.ndarray,mean_matrix, angle_tolerance: int = 100, min_contact_fingers: int = 3) -> tuple[bool, str]:
-
-        finger_angles = self.angle_array[0:4]  # Little, Ring, Middle, Index
-
-        if np.any(finger_angles<50):
-            return False, "Grasp missed: One or more fingers closed completely (empty grasp)."
-
-        if all(a > 950 for a in finger_angles):
-            return False, "Hand still open: No contact detected."
-
-        spread = max(finger_angles) - min(finger_angles)
-        if spread > angle_tolerance:
-            return False, f"Non-homogeneous grasp: Angle spread {spread} exceeds tolerance {angle_tolerance}."
-
-
-
-        mask_positions = np.abs(valid_positions - finger_angles) <= 0.05 * np.abs(valid_positions)
-        mask_tactile = np.abs(valid_tactile - mean_matrix) <= 0.05 * np.abs(valid_tactile)
-
-        all_within_tolerance = mask_positions.all() and mask_tactile.all()
-        if all_within_tolerance:
-            return True, "Stable cylindrical grasp confirmed."
-
-        return False, "Stable grip not confirmed"
-
-    def main(self)-> DataDict:
-        self.state_change = False
-        current_state = self.state
-        self.mean_matrix, self.all_points = self.read_tactile_data()
-        auto_contact = self.close_on_contact()
-        current_pos = np.array(self.read_command())
-
-        if auto_contact:
-            self.state = "moving"
-
-        if self.state == "moving":
-        # TODO: Steady state detection only polls between two consecutive readings, which may not be sufficient for robust detection. Consider implementing a more sophisticated method that tracks the last N readings and checks for stability over that window.
-
-            diff = np.abs(self.angle_array - np.array(current_pos))
-            if np.all(diff < 2):
-                self.state = "steady_state"
-                print("steady state is achieved, trying to check position")
-
-                # TODO: READ valid_positions and valid_tactile here after steady state is achieved.
-
-
-                #self.confirm_grip(valid_positions, valid_tactile, mean_matrix=mean_matrix)
-
-        self.angle_array = current_pos
-        self.state_change = True if self.state != current_state else False
-        self.build_result_data()
         return self.results
+
+    def poll(self) -> DataDict:
+        """
+        Pure hardware polling method.
+        Acquires tactile matrices and joint telemetry without decision logic.
+        """
+        self.mean_matrix, self.all_points = self.read_tactile_data()
+        current_pos = np.array(self.read_command())
+        self.angle_array = current_pos
+        return self.build_result_data()
+
+    def main(self) -> DataDict:
+        """Hardware acquisition entry point (alias for poll)."""
+        return self.poll()
+
 
