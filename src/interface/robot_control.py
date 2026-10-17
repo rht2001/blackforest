@@ -7,11 +7,11 @@ from typing import Literal, Dict
 DEFAULT_MOVEMENT_SPEED = [400] * 6
 CLOSE_THRESHOLD = 400
 IMPULSE_REJECTION_WAIT_TIME = 0.5
-STATES = Literal["starting", "initialised", "moving", "steady_state", "opening"]
+
 
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 data_packet: tuple[int, int, int, int, int, int]
-from config.config_parameters import REGISTERS, DataDict
+from config.config_parameters import REGISTERS, DataDict, default_results
 
 
 class RobotHandController:
@@ -27,6 +27,7 @@ class RobotHandController:
         self.contact_start_time = 0.0
         self.is_connected = False
         self.current_angles = [1000] * 6
+        self.angle_array = np.array(self.current_angles)
         self.mock_angles = [1000] * 6
         self.last_sensor_data: dict[str, np.ndarray] = {}
         self.last_all_points = np.zeros((112, 17))
@@ -38,13 +39,9 @@ class RobotHandController:
                 "Thumb":  (420, 360),
                 "Palm":   (240, 520)
             }
-        self.results: DataDict = {
-            "angles": np.zeros(6, dtype=int),
-            "forces": np.zeros(6, dtype=float),
-            "position": np.zeros(6, dtype=int),
-            "tactile_matrix": np.zeros((112, 17), dtype=float),
-            "tactile_mean_matrix": np.zeros((1, 17), dtype=float)
-        }
+
+        self.results: DataDict = default_results
+
         try:
             self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
             if self.client.connect():
@@ -331,16 +328,31 @@ class RobotHandController:
 
         pass
 
-    def main(self):
+    def main(self)-> DataDict:
         mean_matrix, all_points = self.read_tactile_data()
         auto_contact = self.close_on_contact(all_points)
-        current_pos = self.read_command()
+        current_pos = np.array(self.read_command())
+
+        if np.all(current_pos[:4] < 100):
+            self.state = "resetting"
+            print("nothing detected: opening the hand")
+            self.write_data("ANGLES", [1000] * 6)
+            time.sleep(1)
+
+
 
         if auto_contact:
             self.state = "moving"
+
         if self.state == "moving":
-            if self.current_angles
+
+            diff = np.abs(self.angle_array - np.array(current_pos))
+            if np.all(diff < 2):
+                self.state = "steady_state"
+                print("steady state is achieved, trying to check position")
+                self.check_position_thing()
 
 
 
+        self.angle_array = current_pos
         return self.results
