@@ -34,3 +34,15 @@ REGISTERS = {
     "FINGERFIV_TOUCH": 4480,
     "FINGERPALM_TOUCH": 4900,
 }
+
+
+from typing import TypedDict
+import numpy as np
+import numpy.typing as npt
+
+class DataDict(TypedDict):
+    angles: np.ndarray
+    forces: np.ndarray
+    position: np.ndarray
+    tactile_matrix: np.ndarray
+    tactile_mean_matrix: np.ndarray

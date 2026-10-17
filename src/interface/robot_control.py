@@ -11,7 +11,7 @@ IMPULSE_REJECTION_WAIT_TIME = 0.5
 
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 data_packet: tuple[int, int, int, int, int, int]
-from config.config_parameters import REGISTERS
+from config.config_parameters import REGISTERS, DataDict
 
 
 class RobotHandController:
@@ -41,7 +41,7 @@ class RobotHandController:
                 "Thumb":  (420, 360),
                 "Palm":   (240, 520)
             }
-
+        self.results: DataDict
         try:
             self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
             if self.client.connect():
@@ -103,6 +103,7 @@ class RobotHandController:
         print("opened")
         self.state = "initialised"
         self.sliders = [1000] * 6
+        self.calibrate_offsets()
 
     def set_default_speed(self):
         if not self.is_connected:
@@ -225,22 +226,25 @@ class RobotHandController:
         data_matrix = np.zeros((1, 17))
         all_points = np.zeros((112, 17))
 
-        for index, (_, addr, h, w, key, rel) in enumerate(self.sensor_groups):
+        for index, (name, addr, h, w, key, rel) in enumerate(self.sensor_groups):
             data = self.safe_read(addr, h * w)
             if not data:
                 continue
 
             raw = np.array(data)
-            data_matrix[0, index] = np.mean(raw)
-            all_points[0:len(raw), index] = raw
             offset = self.sensor_offsets.get(name, np.zeros(len(raw)))
+            matrix = np.maximum(0, raw - offset)
 
-            matrix = (raw - offset).reshape(h, w)
-            matrix[matrix < 0] = 0
+            data_matrix[0, index] = np.mean(matrix)
+            all_points[0:len(raw), index] = matrix
 
         return data_matrix, all_points
+    def build_result_data(self, mean_matrix, all_points)->DataDict:
+
+
+        pass
 
     def main(self):
-        _, all_points = self.read_tactile_data()
+        mean_matrix, all_points = self.read_tactile_data()
         auto_contact = self.close_on_contact(all_points)
         current_pos = self.read_command()
