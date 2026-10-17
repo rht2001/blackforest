@@ -64,7 +64,8 @@ class HandApp(tk.Tk):
             s.pack(side="left")
             s.bind("<ButtonRelease-1>", lambda e: self.send_angles())
 
-            self.robot.sliders.append(s)
+            s.set(self.robot.mock_angles[i])
+            self.sliders.append(s)
 
         bf = tk.Frame(self.left_frame)
         bf.pack(pady=10)
@@ -83,27 +84,27 @@ class HandApp(tk.Tk):
         self.saved_frame.pack(fill="both", expand=True)
 
     def send_angles(self):
-        self.robot.send_angles([s.get() for s in self.robot.sliders])
+        self.robot.send_angles([s.get() for s in self.sliders])
 
     def update_angles_from_robot(self):
         registers = self.robot.read_current_angles()
         if registers:
             for i in range(6):
-                self.robot.sliders[i].set(registers[i])
+                self.sliders[i].set(registers[i])
 
     def öffnen(self):
-        for s in self.robot.sliders:
+        for s in self.sliders:
             s.set(1000)
         self.send_angles()
 
 
     def step_plus(self):
-        for s in self.robot.sliders:
+        for s in self.sliders:
             s.set(min(1000, s.get() + 20))
         self.send_angles()
 
     def step_minus(self):
-        for s in self.robot.sliders:
+        for s in self.sliders:
             s.set(max(0, s.get() - 20))
         self.send_angles()
 
@@ -112,7 +113,7 @@ class HandApp(tk.Tk):
         if not name:
             return
 
-        values = [s.get() for s in self.robot.sliders]
+        values = [s.get() for s in self.sliders]
         self.positions[name] = values
         self.save_to_file()
         self.create_button(name, values)
@@ -120,7 +121,7 @@ class HandApp(tk.Tk):
     def create_button(self, name, values):
         def apply():
             for i in range(6):
-                self.robot.sliders[i].set(values[i])
+                self.sliders[i].set(values[i])
             self.send_angles()
 
         tk.Button(self.saved_frame, text=name, command=apply).pack(fill="x")
@@ -140,14 +141,14 @@ class HandApp(tk.Tk):
             self.positions[name] = values
             self.create_button(name, values)
 
-    def draw(self):
+    def draw(self, outputs):
         self.canvas.delete("all")
         self.canvas.create_image(350, 450, image=self.hand_img)
 
-        for name, addr, h, w, key, rel in self.robot.sensor_groups:
-            data = self.robot.safe_read(addr, h * w)
-            if not data:
+        for column, (name, addr, h, w, key, rel) in enumerate(self.robot.sensor_groups):
+            if not outputs["tactile_valid"][column]:
                 continue
+            data = [outputs["tactile"][row][column] for row in range(h * w)]
 
             raw = np.array(data)
             offset = self.robot.sensor_offsets.get(name, np.zeros(len(raw)))
@@ -199,10 +200,6 @@ class HandApp(tk.Tk):
                 fill="blue"
             )
 
-    def main(self):
-        self.draw()
-        try:
-            self.update_idletasks()
-            self.update()
-        except tk.TclError:
-            pass
+    def main(self, outputs):
+        # Tk's mainloop processes events; never call update() recursively here.
+        self.draw(outputs)

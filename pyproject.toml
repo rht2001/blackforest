@@ -9,6 +9,7 @@ description = "Control interface and tactile intelligence for RH56DFTP dexterous
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "pandas>=2.2",
     "numpy>=2.5.4",
     "pillow>=12.3.0",
     "pymodbus>=3.16.1",
@@ -22,5 +23,6 @@ blackforest = "main:main"
 where = ["src"]
 
 [tool.setuptools]
+package-dir = {"" = "src"}
 py-modules = ["main"]
 

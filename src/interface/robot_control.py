@@ -11,10 +11,12 @@ STATES = Literal["starting", "initialised", "moving", "steady_state", "opening"]
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 data_packet: tuple[int, int, int, int, int, int]
 from config.config_parameters import REGISTERS
+from logic.robot_outputs import robot_outputs
+from pymodbus.exceptions import ModbusException
 
 
 class RobotHandController:
-    def __init__(self, ip="192.168.123.211", port=6000):
+    def __init__(self, ip="192.168.123.211", port=6000, simulate=False):
         """ Initialize a RobotHandController instance. Lightweight python wrapper for the Modbus TCP API to control the robot hand with descriptive function names.
 
         Parameters
@@ -32,16 +34,17 @@ class RobotHandController:
         self.is_connected = False
         self.mock_angles = [1000, 1000, 1000, 1000, 1000, 1000]
 
-        try:
-            self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
-            if self.client.connect():
-                self.is_connected = True
-                print(f"[RobotHandController] Connected to hand at {self.ip}:{self.port}")
-            else:
-                print(f"[RobotHandController] Could not reach {self.ip}:{self.port}. Running in simulation/disconnected mode.")
-        except Exception as e:
-            print(f"[RobotHandController] Connection error ({e}). Running in simulation/disconnected mode.")
-            self.client = None
+        self.client = None
+        if not simulate:
+            try:
+                self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
+                self.is_connected = bool(self.client.connect())
+            except (ModbusException, OSError) as error:
+                print(f"[RobotHandController] Connection error: {error}")
+        if self.is_connected:
+            print(f"[RobotHandController] Connected to {self.ip}:{self.port}")
+        else:
+            print("[RobotHandController] Simulation mode; telemetry marked simulated.")
 
         self.send_addresses = {
             "ANGLES": 1486,
@@ -52,7 +55,7 @@ class RobotHandController:
         self.receive_addresses = {
             "ANGLES": 1546,
             "FORCES": 1582,
-            "POSITION": 1594,
+            "POSITION": REGISTERS["POS_ACT"],
         }
         self.sensor_groups = [
             ("Little Tip", 3000, 3, 3, "Little", (8, 10)),
@@ -103,14 +106,16 @@ class RobotHandController:
         if not self.is_connected:
             return [0] * length
         values = []
-        for i in range(0, length, 120):
-            res = self.client.read_holding_registers(
-                address=addr + i,
-                count=min(120, length - i),
-                device_id=1
-            )
-            if not res.isError():
-                values.extend(res.registers)
+        try:
+            for offset in range(0, length, 120):
+                count = min(120, length - offset)
+                response = self.client.read_holding_registers(
+                    address=addr + offset, count=count, device_id=1)
+                if response.isError() or len(response.registers) != count:
+                    return None
+                values.extend(response.registers)
+        except (ModbusException, OSError):
+            return None
         return values
 
     def close(self):
@@ -170,44 +175,47 @@ class RobotHandController:
 
     def read_command(self, type: DataTypes = "ANGLES"):
         if not self.is_connected:
-            if type == "ANGLES":
-                return list(self.mock_angles)
-            return [0] * 6
-        res = self.client.read_holding_registers(address=self.receive_addresses[type], count=6, device_id=1)
-        if not res.isError():
-            return res.registers
-        print("Couldnt grab the data")
-        return self.read_error()
+            return list(self.mock_angles) if type == "ANGLES" else [0] * 6
+        values = self.safe_read(self.receive_addresses[type], 6)
+        if values is not None and type == "FORCES":
+            values = [v - 65536 if v >= 32768 else v for v in values]
+        return values
 
     def receive_data(self, type: DataTypes = "ANGLES"):
         """Backward compatibility alias for read_command."""
         return self.read_command(type=type)
 
     def read_current_angles(self):
-        if not self.is_connected:
-            return list(self.mock_angles)
-        res = self.client.read_holding_registers(address=1486, count=6, device_id=1)
-        if not res.isError():
-            return res.registers
-        return None
+        return self.read_command("ANGLES")
 
     def read_tactile_data(self):
-        # Max cells is 112 (Palm: 8 * 14 = 112)
-        data_matrix = np.zeros((1, 17))
-        all_points = np.zeros((112, 17))
+        # Preserve region order: 112 cells x 17 regions; None for padding/errors.
+        points = [[None] * len(self.sensor_groups) for _ in range(112)]
+        valid = []
+        for column, (_, addr, height, width, _, _) in enumerate(self.sensor_groups):
+            values = self.safe_read(addr, height * width)
+            valid.append(values is not None)
+            if values is not None:
+                for row, value in enumerate(values):
+                    points[row][column] = value
+        return points, valid
 
-        for index, (_, addr, h, w, key, rel) in enumerate(self.sensor_groups):
-            data = self.safe_read(addr, h * w)
-            if not data:
-                continue
+    def main(self) -> robot_outputs:
+        timestamp = time.time_ns()
+        tactile, valid = self.read_tactile_data()
+        measured = [value for row in tactile for value in row if value is not None]
+        self.close_on_contact(np.asarray(measured))
+        return {
+            "simulated": not self.is_connected,
+            "timestamp_ns": timestamp,
+            "angles": self.read_command("ANGLES"),
+            "forces": self.read_command("FORCES"),
+            "positions": self.read_command("POSITION"),
+            "tactile": tactile,
+            "tactile_valid": valid,
+        }
 
-            raw = np.array(data)
-            data_matrix[0, index] = np.mean(raw)
-            all_points[0:len(raw), index] = raw
-
-        return data_matrix, all_points
-
-    def main(self):
-        _, all_points = self.read_tactile_data()
-        auto_contact = self.close_on_contact(all_points)
-        current_pos = self.read_command()
+    def disconnect(self):
+        if self.client is not None:
+            self.client.close()
+        self.is_connected = False
