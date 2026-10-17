@@ -8,6 +8,7 @@ DEFAULT_MOVEMENT_SPEED = [400] * 6
 CLOSE_THRESHOLD = 400
 STATES = Literal["starting", "initialised", "moving", "steady_state", "opening"]
 IMPULSE_REJECTION_WAIT_TIME = 0.5
+IMPULSE_REJECTION_WAIT_TIME = 0.5
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 data_packet: tuple[int, int, int, int, int, int]
 from config.config_parameters import REGISTERS
