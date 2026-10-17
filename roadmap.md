@@ -5,9 +5,9 @@
 - Stick to english code and annotations
 
 ## 1. Grab the Object
-- [ ] tactile input as trigger to grab the object/sensor
-- [ ] close the hand until full force threshold (chapter 2.6.12 in doc, "FORCE_SET")
-- [ ] confirm grip by polling forces (did they reach threshold? - Not sure, wether this would belong to 2.?)
+- [x] tactile input as trigger to grab the object/sensor
+- [x] close the hand until full force threshold (chapter 2.6.12 in doc, "FORCE_SET")
+- [x] confirm grip by polling forces (did they reach threshold? - Not sure, wether this would belong to 2.?)
 
 ## 2. Feedback acquisition and analysis
 - [ ] ensure "steady state"
