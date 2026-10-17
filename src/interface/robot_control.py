@@ -224,12 +224,18 @@ class RobotHandController:
         return res if res is not None else [0] * 6
 
     def open_hand(self):
-        """Opens all fingers fully (angle 1000)."""
+        """Opens all fingers fully (angle 1000) and re-arms automatic grip detection."""
         self.set_angles([1000] * 6)
+        self.auto_mode_active = True
+        self.auto_contact_trigerred = False
+        self.contact_start_time = 0.0
 
     def close_hand(self):
-        """Closes hand to standard grasp position."""
+        """Closes hand to standard grasp position and disarms automatic grip detection."""
         self.set_angles([0, 0, 0, 0, 234, 670])
+        self.auto_mode_active = False
+        self.auto_contact_trigerred = False
+        self.contact_start_time = 0.0
 
     def calibrate_offsets(self):
         """Calibrates baseline tactile sensor readings."""
