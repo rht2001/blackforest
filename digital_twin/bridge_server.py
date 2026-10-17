@@ -18,8 +18,8 @@ from pathlib import Path
 
 from tactile_layout import REGIONS
 
-FIELDS = ('simulated', 'angles', 'angles_set', 'angles_act', 'force_act', 'tactile', 'tactile_regions')
-STATE = {'simulated': None, 'angles_set': None, 'angles_act': None, 'force_act': None, 'tactile': {}, 'tactile_regions': {}, 'field_received_at': {}, 'received_at': 0, 'seq': 0}
+FIELDS = ('angles', 'angles_set', 'angles_act', 'force_act', 'position_act', 'tactile', 'tactile_regions', 'tactile_means', 'source', 'simulated')
+STATE = {'angles_set': None, 'angles_act': None, 'force_act': None, 'tactile': {}, 'tactile_regions': {}, 'field_received_at': {}, 'received_at': 0, 'seq': 0}
 LOCK = threading.Lock()
 HTML = Path(__file__).with_name('hand_twin_6dof.html')
 TACTILE_HTML = Path(__file__).with_name('tactile_2d.html')
@@ -27,51 +27,62 @@ TACTILE_HTML = Path(__file__).with_name('tactile_2d.html')
 def vector(value, name, lo, hi):
     if value is None: return None
     if not isinstance(value, list) or len(value) != 6:
-        raise ValueError(f'{name} muss eine Liste von 6 Zahlen sein')
+        raise ValueError(f'{name} must be a list of 6 numbers')
     vals=[]
     for x in value:
         if not isinstance(x, (float, int)) or isinstance(x,bool) or not math.isfinite(x) or not lo <= x <= hi:
-            raise ValueError(f'{name} enthält ungültige Werte ({lo}..{hi})')
+            raise ValueError(f'{name} contains invalid values ({lo}..{hi})')
         vals.append(round(float(x),3))
     return vals
 
 def normalize(payload):
-    if not isinstance(payload,dict):raise ValueError('Erwartet JSON-Objekt')
+    if not isinstance(payload,dict):raise ValueError('Expected a JSON object')
+    if 'tactile_matrix' in payload:
+        from blackforest_adapter import datadict_payload
+        payload=datadict_payload(payload,valid_regions=payload.get('tactile_valid'),simulated=payload.get('simulated',False))
     out={}
-    if 'simulated' in payload:
-        if not isinstance(payload['simulated'], bool): raise ValueError('simulated must be boolean')
-        out['simulated'] = payload['simulated']
     for name in ('angles','angles_set','angles_act'):
         if name in payload:out[name]=vector(payload[name],name,0,1000)
     if 'force_act' in payload:out['force_act']=vector(payload['force_act'],'force_act',-4000,4000)
+    if 'position_act' in payload:out['position_act']=vector(payload['position_act'],'position_act',0,65535)
+    if 'tactile_means' in payload:
+        means=payload['tactile_means']
+        if not isinstance(means,dict) or any(k not in REGIONS or isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) or not 0<=v<=4095 for k,v in means.items()):raise ValueError('Invalid region means')
+        out['tactile_means']=dict(means)
+    if 'source' in payload:
+        if not isinstance(payload['source'],str) or len(payload['source'])>160:raise ValueError('Invalid data source')
+        out['source']=payload['source']
+    if 'simulated' in payload:
+        if type(payload['simulated']) is not bool:raise ValueError('simulated must be boolean')
+        out['simulated']=payload['simulated']
     if 'tactile' in payload:
         t=payload['tactile']
-        if not isinstance(t,dict):raise ValueError('tactile muss ein Objekt sein')
+        if not isinstance(t,dict):raise ValueError('tactile must be an object')
         clean={}
         for name, value in t.items():
             if name not in ('little','ring','middle','index','thumb','palm'):continue
             if isinstance(value,dict):
                 value={k:v for k,v in value.items() if k in ('max','mean')}
                 if not all(isinstance(v,(int,float)) and not isinstance(v,bool) and math.isfinite(v) and 0<=v<=4095 for v in value.values()):
-                    raise ValueError('Taktile Werte außerhalb 0..4095')
+                    raise ValueError('Tactile values outside 0..4095')
             elif not (isinstance(value,(int,float)) and not isinstance(value,bool) and math.isfinite(value) and 0<=value<=4095):
-                raise ValueError('Taktile Werte außerhalb 0..4095')
+                raise ValueError('Tactile values outside 0..4095')
             clean[name]=value
         out['tactile']=clean
     if 'tactile_regions' in payload:
         regions = payload['tactile_regions']
-        if not isinstance(regions, dict): raise ValueError('tactile_regions muss ein Objekt sein')
+        if not isinstance(regions, dict): raise ValueError('tactile_regions must be an object')
         clean = {}
         for key, matrix in regions.items():
-            if key not in REGIONS: raise ValueError('Unbekannte Sensorregion: '+key)
+            if key not in REGIONS: raise ValueError('Unbekannte Sensor region: '+key)
             rows, cols = REGIONS[key]
             if not isinstance(matrix,list) or len(matrix)!=rows or any(not isinstance(row,list) or len(row)!=cols for row in matrix):
-                raise ValueError('Falsche Matrixdimension: '+key)
+                raise ValueError('Wrong matrix dimensions: '+key)
             if any(not isinstance(v,(int,float)) or isinstance(v,bool) or not math.isfinite(v) or not 0<=v<=4095 for row in matrix for v in row):
-                raise ValueError('Sensorzellen außerhalb 0..4095')
+                raise ValueError('Sensor values outside 0..4095')
             clean[key]=matrix
         out['tactile_regions']=clean
-    if not out:raise ValueError('Keine gültigen Felder. Erlaubt: '+', '.join(FIELDS))
+    if not out:raise ValueError('No valid fields. Allowed: '+', '.join(FIELDS))
     return out
 
 class Handler(BaseHTTPRequestHandler):
@@ -92,13 +103,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ('/tactile','/tactile/','/tactile_2d.html'):
             try:self.send_data(TACTILE_HTML.read_bytes(),200,'text/html; charset=utf-8')
-            except FileNotFoundError:self.respond_json({'error':'2D-Karte fehlt: python build_tactile_2d.py ausführen'},404)
+            except FileNotFoundError:self.respond_json({'error':'2D map missing: restore tactile_2d.html from the package'},404)
         elif self.path in ('/3d','/hand_twin_6dof.html'):
             try:self.send_data(Path(__file__).with_name('hand_twin_6dof.html').read_bytes(),200,'text/html; charset=utf-8')
-            except FileNotFoundError:self.respond_json({'error':'3D-Viewer fehlt'},404)
+            except FileNotFoundError:self.respond_json({'error':'3D viewer missing'},404)
         elif self.path in ('/','/index.html'):
             try:self.send_data(HTML.read_bytes(),200,'text/html; charset=utf-8')
-            except FileNotFoundError:self.respond_json({'error':'HTML-Datei nicht gefunden'},404)
+            except FileNotFoundError:self.respond_json({'error':'HTML file not found'},404)
         elif self.path in ('/api/state','/api/state/'):
             with LOCK: self.respond_json(dict(STATE))
         elif self.path == '/health':self.respond_json({'status':'ok','mode':'read-only-from-hand'})
@@ -108,10 +119,9 @@ class Handler(BaseHTTPRequestHandler):
             self.respond_json({'error':'Not found'},404);return
         try:
             length=int(self.headers.get('Content-Length','0'))
-            if not 1<=length<=65536:raise ValueError('JSON muss 1 bis 65536 Bytes umfassen')
+            if not 1<=length<=65536:raise ValueError('JSON must contain 1 to 65536 bytes')
             msg=json.loads(self.rfile.read(length))
             changes=normalize(msg)
-            changes.setdefault('simulated', None)
             with LOCK:
                 if 'angles' in changes and 'angles_set' not in changes:
                     changes['angles_set']=changes.pop('angles')
@@ -136,11 +146,11 @@ def main():
     ap.add_argument('--view',choices=['3d','tactile'],default='3d')
     args=ap.parse_args()
     if args.view=='tactile':HTML=TACTILE_HTML
-    if not 1<=args.port<=65535: ap.error('Ungültiger TCP-Port')
+    if not 1<=args.port<=65535: ap.error('Invalid TCP port')
     server=ThreadingHTTPServer(('127.0.0.1',args.port),Handler)
-    print(f'Hand-Viewer ({args.view}) geöffnet unter: http://127.0.0.1:{args.port}/',flush=True)
-    print(f'POST-Ziel: http://127.0.0.1:{args.port}/api/state (nur localhost)',flush=True)
-    print('Diese Schnittstelle sendet KEINE Motorbefehle.',flush=True)
+    print(f'Hand viewer ({args.view}) available at: http://127.0.0.1:{args.port}/',flush=True)
+    print(f'POST endpoint: http://127.0.0.1:{args.port}/api/state (localhost only)',flush=True)
+    print('This bridge does NOT send motor commands.',flush=True)
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:server.server_close()

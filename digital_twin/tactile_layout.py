@@ -77,7 +77,9 @@ def layout(vertices,faces,groups,fingers):
             cloud=(vertices[faces[masks[part]]].reshape(-1,3)-base)@axis
             low,high=np.quantile(cloud,[.05,.95])
             width,height=sizes['thumb'][zone]
-            along={'pad':low+(high-low)*.38,'mid':low+height/2+1,
+            # Root geometry is larger than the active pad: keep the pad on the
+            # shaft, below the extended bend collar, rather than on the mount.
+            along={'pad':-16.,'mid':low+height/2+1,
                    'nail':high-8-height/2,'tip':high-height/2-1}[zone]
             origin=base+axis*along
         else:distal=False;part='static';origin=palm_center.copy();origin[1]=0;width,height=40.,25.
