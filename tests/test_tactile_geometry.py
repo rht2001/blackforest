@@ -61,4 +61,28 @@ class TactileGeometryTests(unittest.TestCase):
         actual=hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
         self.assertEqual(actual,self.geometry['geometry_sha256'])
 
+    def test_oriented_rectangle_recovers_rotated_surface_edges(self):
+        rectangle=np.array([[-.01,-.006],[.01,-.006],[.01,.006],[-.01,.006]])
+        for angle in [0,.17,-.13,.6]:
+            rotation=np.array([[np.cos(angle),-np.sin(angle)],[np.sin(angle),np.cos(angle)]])
+            points=rectangle@rotation.T+np.array([.004,-.002])
+            fitted,basis,low,high=self.builder.sensor_rectangle(points)
+            self.assertAlmostEqual(fitted,angle,places=10)
+            self.assertAlmostEqual(np.prod(high-low),.02*.012,places=12)
+
+    def test_grid_rows_and_columns_follow_each_sensor_rectangle(self):
+        assets={v['link']:v for v in self.data['assets']['rh56_tactile_toolkit_left']}
+        for region in self.geometry['regions']:
+            visual=assets[region['link']]
+            inv=np.linalg.inv(self.builder.origin(visual['origin_xyz_m'],visual['origin_rpy_rad']))
+            cells={(c['row'],c['col']):c for c in region['cells']}
+            local=lambda row,col:(inv@np.r_[cells[row,col]['point_m'],1])[:2]
+            delta_col=local(0,1)-local(0,0)
+            delta_row=local(1,0)-local(0,0)
+            u,v=np.asarray(region['rectangle_axes_xy'])
+            self.assertAlmostEqual(float(delta_col@v),0,places=9)
+            self.assertAlmostEqual(float(delta_row@u),0,places=9)
+        little=next(r for r in self.geometry['regions']if r['key']=='little_pad')
+        self.assertGreater(abs(little['rectangle_angle_rad']),.05)
+
 if __name__=='__main__':unittest.main()

@@ -4,11 +4,14 @@ const P=require('../digital_twin/joint_pressure');
 const {chromium}=require(process.env.PLAYWRIGHT_PACKAGE||'playwright');
 (async()=>{const browser=await chromium.launch({channel:process.env.TEST_BROWSER_CHANNEL||(process.platform==='win32'?'msedge':undefined),headless:true,args:['--use-angle=swiftshader','--enable-unsafe-swiftshader']});try{
  const page=await browser.newPage({viewport:{width:1500,height:1000},acceptDownloads:true}),errors=[],methods=[];
+ // Keep telemetry age deterministic; stale/skew cases below set explicit ages.
+ // Timers and rendering continue normally even on a slow software GPU.
+ const telemetryTime=Date.now()/1000;await page.clock.setFixedTime(new Date(telemetryTime*1000));
  page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.url().startsWith('http'))methods.push(r.method())});
  let actualAge=0,pressureAge=0,offline=false,raw=[950,950,950,950,1000,1000],seq=0;
  const regions=Object.fromEntries(P.regions.map((r,i)=>{const matrix=Array.from({length:r.rows},()=>Array(r.cols).fill(0));matrix[Math.floor(r.rows/2)][Math.floor(r.cols/2)]=[100,1000,2500,3600][i%4];return[r.key,matrix]}));
  regions.little_tip=[[100,1000,2500],[0,0,0],[0,0,3500]];
- await page.route('http://127.0.0.1:18765/api/state',route=>{if(offline)return route.abort('connectionrefused');const now=Date.now()/1000;return route.fulfill({json:{seq:++seq,angles_act:raw,angles_set:Array(6).fill(0),force_act:[10,20,30,40,50,60],tactile_regions:regions,simulated:true,received_at:now,field_received_at:{angles_act:now-actualAge,angles_set:now,force_act:now,tactile_regions:now-pressureAge}}})});
+ await page.route('http://127.0.0.1:18765/api/state',route=>{if(offline)return route.abort('connectionrefused');const now=telemetryTime;return route.fulfill({json:{seq:++seq,angles_act:raw,angles_set:Array(6).fill(0),force_act:[10,20,30,40,50,60],tactile_regions:regions,simulated:true,received_at:now,field_received_at:{angles_act:now-actualAge,angles_set:now,force_act:now,tactile_regions:now-pressureAge}}})});
  await page.goto(pathToFileURL(path.resolve(__dirname,'../digital_twin/hand_twin_6dof.html')).href);
  await page.waitForFunction(()=>window.ProfileTwin?.snapshot().models.rh56_tactile_toolkit_left.raw[0]===950,null,{timeout:60000});
  const snap=()=>page.evaluate(()=>window.ProfileTwin.snapshot());
@@ -25,7 +28,11 @@ const {chromium}=require(process.env.PLAYWRIGHT_PACKAGE||'playwright');
  const before=(await snap()).taxels.find(c=>c.region==='index_tip').position_world_m;
  raw=[100,200,300,400,500,600];await page.waitForFunction(()=>window.ProfileTwin.snapshot().models.rh56_tactile_toolkit_left.raw[0]===100);assert.notDeepEqual((await snap()).taxels.find(c=>c.region==='index_tip').position_world_m,before);
  // A single cell changes while its region maximum and pose remain unchanged.
- regions.little_tip[0][0]=3200;await page.waitForFunction(()=>window.ProfileTwin.snapshot().taxels[0].value===3200);assert.equal((await snap()).pressure.little_tip.peak,3500);assert.deepEqual(await page.evaluate(()=>document.getElementById('profileScene0').data.find(t=>t.name==='Taxels').marker.rgb[0]),[1,0,0]);
+ regions.little_tip[0][0]=3200;
+ // Capture data and color atomically: a slower software renderer can cross
+ // the intentional freshness timeout between separate browser evaluations.
+ const stationary=await page.waitForFunction(()=>{const s=window.ProfileTwin.snapshot(),color=document.getElementById('profileScene0').data.find(t=>t.name==='Taxels').marker.rgb[0];return s.taxels[0].value===3200&&color[0]===1&&color[1]===0?{peak:s.pressure.little_tip.peak,color}:null});
+ const observed=await stationary.jsonValue();assert.equal(observed.peak,3500);assert.deepEqual(observed.color,[1,0,0]);
  pressureAge=10;await page.waitForFunction(()=>window.ProfileTwin.snapshot().taxels[0].value===null);assert.equal((await page.evaluate(()=>window.getContactPoints())).length,0);
  pressureAge=0;delete regions.index_tip;await page.waitForFunction(()=>window.ProfileTwin.snapshot().taxels[0].value===3200);state=await snap();assert.equal(state.taxels.filter(c=>c.region==='index_tip'&&c.value===null).length,9);assert.equal((await page.evaluate(()=>window.getContactCloud())).valid_cells,1053);
  actualAge=1;await page.waitForFunction(()=>!window.getContactCloud().valid);assert.equal((await page.evaluate(()=>window.getContactPoints())).length,0);

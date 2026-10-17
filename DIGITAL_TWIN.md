@@ -91,8 +91,10 @@ are required before trusting shape or collision estimates.
 
 ## Geometry, frames and remaining physical validation
 
-Each sensor field uses a regular grid within its own matching sensor STL XY bounds,
-inset by 12%. Positive-local-Z ray intersections put all 1,062 centres on the mesh
+Each sensor field uses a regular grid within a minimum-area oriented rectangle
+fitted to its own sensor STL, inset by 12%. The grid follows the sensor rectangle
+edges, including rotations inside the local mesh frame. Positive-local-Z ray
+intersections put all 1,062 centres on the mesh
 surface, with no projection misses. Surface normals come from those triangles.
 Row/column orientation follows the existing reference-view convention. This estimates
 electrode locations from sensor-body geometry; it is not measured electrode calibration.

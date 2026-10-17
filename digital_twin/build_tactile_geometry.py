@@ -1,7 +1,7 @@
 """Derive 1,062 approximate local taxel centres from the embedded Toolkit meshes.
 
-No external files/downloads or hardware access. Component mesh XY bounds with a
-12% inset approximate active areas. Ray intersections place centres on surfaces.
+No external files/downloads or hardware access. An oriented sensor-mesh rectangle
+with a 12% inset approximates active areas. Rays place centres on surfaces.
 The generated frame is always the sensor link, never another model's frame.
 """
 from pathlib import Path
@@ -30,6 +30,37 @@ def regions():
         yield f'thumb_{zone}',f'left_thumb_force_sensor_{n}',rows,cols
     yield 'palm','left_palm_force_sensor',8,14
 
+def sensor_rectangle(xy):
+    """Minimum-area convex-hull rectangle, with its U axis closest to local X.
+
+    Using the hull avoids PCA's dependence on mesh triangulation/vertex density.
+    Canonicalizing modulo 90 degrees retains the existing row/column axes.
+    """
+    points=sorted(set(map(tuple,xy)))
+    def cross(a,b,c):
+        return (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0])
+    lower=[]
+    for p in points:
+        while len(lower)>=2 and cross(lower[-2],lower[-1],p)<=0:lower.pop()
+        lower.append(p)
+    upper=[]
+    for p in reversed(points):
+        while len(upper)>=2 and cross(upper[-2],upper[-1],p)<=0:upper.pop()
+        upper.append(p)
+    hull=np.asarray(lower[:-1]+upper[:-1])
+    best=None
+    for edge in np.roll(hull,-1,axis=0)-hull:
+        angle=(math.atan2(edge[1],edge[0])+math.pi/4)%(math.pi/2)-math.pi/4
+        c,s=math.cos(angle),math.sin(angle)
+        basis=np.array([[c,-s],[s,c]])
+        projected=xy@basis
+        lo,hi=projected.min(axis=0),projected.max(axis=0)
+        area=float(np.prod(hi-lo))
+        if best is None or area<best[0]-1e-16:
+            best=(area,angle,basis,lo,hi)
+    if best is None or best[0]<=0:raise ValueError('Degenerate sensor rectangle')
+    return best[1:]
+
 def build(data):
     p=data['reference']['primary_profiles'][PROFILE]
     frames={p['root_link']:np.eye(4)}
@@ -51,11 +82,11 @@ def build(data):
         triangles=vertices[np.asarray(visual['indices']).reshape(-1,3)]
         visual_tf=origin(visual['origin_xyz_m'],visual['origin_rpy_rad'])
         zero_tf=base_inv@frames[link]@visual_tf
-        mirror_x=bool(reference_u@zero_tf[:3,0]<0)
-        mirror_y=bool(reference_v@zero_tf[:3,1]>0)
-        low,high=vertices.min(axis=0),vertices.max(axis=0)
-        lower=low[:2]+.12*(high-low)[:2]
-        upper=high[:2]-.12*(high-low)[:2]
+        angle,basis,low,high=sensor_rectangle(vertices[:,:2])
+        mirror_x=bool(reference_u@(zero_tf[:3,:2]@basis[:,0])<0)
+        mirror_y=bool(reference_v@(zero_tf[:3,:2]@basis[:,1])>0)
+        lower=low+.12*(high-low)
+        upper=high-.12*(high-low)
         a,b,c=triangles[:,0],triangles[:,1],triangles[:,2]
         den=(b[:,1]-c[:,1])*(a[:,0]-c[:,0])+(c[:,0]-b[:,0])*(a[:,1]-c[:,1])
         safe=np.where(abs(den)>1e-15,den,np.nan)
@@ -65,7 +96,7 @@ def build(data):
             uv=np.array([(col+.5)/cols,(row+.5)/rows])
             if mirror_x:uv[0]=1-uv[0]
             if mirror_y:uv[1]=1-uv[1]
-            x,y=lower+uv*(upper-lower)
+            x,y=(lower+uv*(upper-lower))@basis.T
             w0=((b[:,1]-c[:,1])*(x-c[:,0])+(c[:,0]-b[:,0])*(y-c[:,1]))/safe
             w1=((c[:,1]-a[:,1])*(x-c[:,0])+(a[:,0]-c[:,0])*(y-c[:,1]))/safe
             depth=w0*a[:,2]+w1*b[:,2]+(1-w0-w1)*c[:,2]
@@ -81,11 +112,12 @@ def build(data):
             cells.append({'wire_index':index,'row':row,'col':col,
                 'point_m':point.round(10).tolist(),'normal':normal.round(10).tolist()})
         result.append({'key':key,'link':link,'rows':rows,'cols':cols,'mirror_x':mirror_x,'mirror_y':mirror_y,
+            'rectangle_angle_rad':float(angle),'rectangle_axes_xy':basis.T.tolist(),
             'mesh':visual['mesh'],'mesh_geometry_sha256':hashlib.sha256(json.dumps(visual,sort_keys=True,separators=(',',':')).encode()).hexdigest(),
             'cells':cells})
     geometry={'schema_version':1,'profile':PROFILE,'reference_sha256':data['reference_sha256'],
         'units':'metres','point_frame':'region sensor link','total_cells':sum(len(r['cells'])for r in result),
-        'geometry_status':'APPROXIMATE_UNCALIBRATED','placement':'Sensor mesh XY bounds inset 12%, positive local-Z surface ray intersection',
+        'geometry_status':'APPROXIMATE_UNCALIBRATED','placement':'Oriented minimum-area sensor rectangle inset 12%, positive local-Z surface ray intersection',
         'orientation_status':'Reference-view row/column convention; verify on physical hand with single-cell activation',
         'regions':result}
     assert geometry['total_cells']==1062
