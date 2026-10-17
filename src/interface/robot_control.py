@@ -1,20 +1,22 @@
-
 import json
 import time
 from pymodbus.client import ModbusTcpClient
 import numpy as np
 from typing import Literal, Dict
 
-DEFAULT_MOVEMENT_SPEED = [100, 100, 100, 100, 100, 100]
-CLOSE_THRESHOLD = 800
+DEFAULT_MOVEMENT_SPEED = [400] * 6
+CLOSE_THRESHOLD = 400
+STATES = Literal["starting", "initialised", "moving", "steady_state", "opening"]
 
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 data_packet: tuple[int, int, int, int, int, int]
 from config.config_parameters import REGISTERS
+
+
 class RobotHandController:
     def __init__(self, ip="192.168.123.211", port=6000):
         """ Initialize a RobotHandController instance. Lightweight python wrapper for the Modbus TCP API to control the robot hand with descriptive function names.
-        
+
         Parameters
         ----------
         ip : str, optional
@@ -26,6 +28,7 @@ class RobotHandController:
         self.port = port
         self.sliders = []
         self.auto_mode_active = True
+        self.auto_contact_trigerred = False
         self.is_connected = False
         self.mock_angles = [1000, 1000, 1000, 1000, 1000, 1000]
 
@@ -76,8 +79,20 @@ class RobotHandController:
             ("Palm", 4900, 8, 14, "Palm", (-15, 0))
         ]
         self.sensor_offsets = {}
+        self.state: STATES = "starting"
         if self.is_connected:
-            self.set_default_speed()
+            self.startup()
+        else:
+            self.state = "initialised"
+            self.sliders = [1000] * 6
+
+    def startup(self):
+        self.set_default_speed()
+        # With this, we always start at fully open
+        self.send_command(value=[1000] * 6)
+        print("opened")
+        self.state = "initialised"
+        self.sliders = [1000] * 6
 
     def set_default_speed(self):
         if not self.is_connected:
@@ -97,10 +112,9 @@ class RobotHandController:
             if not res.isError():
                 values.extend(res.registers)
         return values
-    
+
     def close(self):
         """ Close the robot hand completely. """
-        # TODO: Is close the hand like this? Close fingers 0-3 to 0 and thumb to kind of randomly 234, 670?
         vals = [0, 0, 0, 0, 234, 670]
         self.send_angles(vals)
 
@@ -119,11 +133,11 @@ class RobotHandController:
         if not self.auto_mode_active:
             return False
 
-        # At least 3 sensor pixels must exceed 100
+        # At least 3 sensor pixels must exceed CLOSE_THRESHOLD
         if np.count_nonzero(matrix > CLOSE_THRESHOLD) >= 3:
             self.auto_mode_active = False  # Prevent further triggers
-            self.send_command(value=[0, 0, 0, 0, 1000, 1000])                   # Execute existing close function
-
+            self.send_command(value=[0, 0, 0, 0, 1000, 1000])  # Execute existing close function
+            self.auto_contact_trigerred = True
             print(f"Contact detected at {matrix[matrix > 0]}")
             return True
 
@@ -154,7 +168,7 @@ class RobotHandController:
             device_id=1
         )
 
-    def receive_data(self, type: DataTypes = "ANGLES"):
+    def read_command(self, type: DataTypes = "ANGLES"):
         if not self.is_connected:
             if type == "ANGLES":
                 return list(self.mock_angles)
@@ -165,6 +179,10 @@ class RobotHandController:
         print("Couldnt grab the data")
         return self.read_error()
 
+    def receive_data(self, type: DataTypes = "ANGLES"):
+        """Backward compatibility alias for read_command."""
+        return self.read_command(type=type)
+
     def read_current_angles(self):
         if not self.is_connected:
             return list(self.mock_angles)
@@ -174,7 +192,7 @@ class RobotHandController:
         return None
 
     def read_tactile_data(self):
-    # Max cells is 112 (Palm: 8 * 14 = 112)
+        # Max cells is 112 (Palm: 8 * 14 = 112)
         data_matrix = np.zeros((1, 17))
         all_points = np.zeros((112, 17))
 
@@ -191,10 +209,5 @@ class RobotHandController:
 
     def main(self):
         _, all_points = self.read_tactile_data()
-        self.close_on_contact(all_points)
-
-
-
-
-
-
+        auto_contact = self.close_on_contact(all_points)
+        current_pos = self.read_command()
