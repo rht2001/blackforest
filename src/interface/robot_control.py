@@ -257,11 +257,11 @@ class RobotHandController:
 
     def calibrate_offsets(self):
         """Calibrates baseline tactile sensor readings."""
-        print("Calibrating sensor offsets...")
-        time.sleep(1)
+        print("[RobotHandController] Calibrating sensor offsets...")
         for name, addr, h, w, key, rel in self.sensor_groups:
             data = self.safe_read(addr, h * w)
             self.sensor_offsets[name] = np.array(data) if data else np.zeros(h * w)
+        print("[RobotHandController] Sensor offsets calibrated successfully.")
 
     def close_on_contact(self) -> bool:
         """Triggers grip closure if tactile pressure exceeds contact threshold with impulse rejection."""
@@ -348,5 +348,6 @@ class RobotHandController:
     def main(self) -> DataDict:
         """Hardware acquisition entry point (alias for poll)."""
         return self.poll()
+
 
 
