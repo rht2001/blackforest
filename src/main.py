@@ -14,7 +14,7 @@ def main():
     """
     robot = RobotHandController(ip="192.168.123.210", port=6000)
     grasp_manager = GraspManager()
-    app = HandApp(robot)
+    app = HandApp(robot, grasp_manager=grasp_manager)
     db = RobotDatabase()
 
     is_running = True
