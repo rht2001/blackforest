@@ -124,7 +124,7 @@ class RobotHandController:
         """
         if type in self.send_addresses:
             address = self.send_addresses[type]
-        elif type in RegisterName:
+        elif type in REGISTERS.keys():
             address = REGISTERS[type]
         else:
             raise ValueError(f"Unknown command target: {type}")

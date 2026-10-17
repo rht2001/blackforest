@@ -81,7 +81,6 @@ class RobotDatabase:
             for col in self.columns
         }
 
-        # Check for state change condition and store in persistent DataFrame
         if data.get("state_change") is True and data.get("state") == "steady_state":
             self.state_changes_df.loc[self.current_index] = serialized_row
 
