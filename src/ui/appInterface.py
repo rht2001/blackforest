@@ -4,13 +4,15 @@ from PIL import Image, ImageTk
 import os
 import json
 import time
+from typing import Any
 from interface.robot_control import RobotHandController
 
 
 class HandApp(tk.Tk):
-    def __init__(self, robot: RobotHandController):
+    def __init__(self, robot: RobotHandController, grasp_manager: Any = None):
         super().__init__()
         self.robot = robot
+        self.grasp_manager = grasp_manager
 
         self.SAVE_FILE = "positions.json"
         self.pixel = 6
@@ -82,6 +84,7 @@ class HandApp(tk.Tk):
 
         tk.Button(bf, text="Open", command=self.open_hand).pack(side="left", padx=2)
         tk.Button(bf, text="Close", command=self.close_hand).pack(side="left", padx=2)
+        tk.Button(bf, text="Calibrate", command=self.calibrate_sensors).pack(side="left", padx=2)
         tk.Button(bf, text="Step +", command=self.step_plus).pack(side="left", padx=2)
         tk.Button(bf, text="Step -", command=self.step_minus).pack(side="left", padx=2)
 
@@ -107,6 +110,11 @@ class HandApp(tk.Tk):
         for s in self.sliders:
             s.set(1000)
         self.robot.open_hand()
+        if self.grasp_manager is not None:
+            self.grasp_manager.reset()
+
+    def calibrate_sensors(self):
+        self.robot.calibrate_offsets()
 
     def close_hand(self):
         vals = [0, 0, 0, 0, 234, 670]
