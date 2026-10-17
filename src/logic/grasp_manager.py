@@ -41,6 +41,9 @@ class GraspManager:
         self.reset_start_time: float = 0.0
         self.reset_end_time: float = 0.0
         self.contact_start_time: float = 0.0
+        self.contact_loss_start_time: float = 0.0
+        self.confirmed_total_force: float = 0.0
+        self.confirmed_forces: dict[str, float] = {}
         self.contact_triggered: bool = False
         self.contact_cleared: bool = True
         self.last_log_time: float = 0.0
@@ -63,9 +66,24 @@ class GraspManager:
         self.valid_positions = positions
         self.valid_tactile = tactile
 
-    def register_task_2_5_hook(self, hook: Callable[[Any, DataDict], None]) -> None:
-        """Registers callback for Roadmap Task 2.5 (probing thumb feature detection)."""
-        self.task_2_5_hook = hook
+    def reset(self, robot: Any = None) -> None:
+        """
+        Explicitly resets the grasp state machine to OPEN.
+        Clears settling and closing timers, and applies the reset cooldown.
+        If robot is provided, commands robot.open_hand().
+        """
+        if robot is not None:
+            robot.open_hand()
+        self.state = "open"
+        self.settle_start_time = None
+        self.closing_start_time = 0.0
+        self.contact_loss_start_time = 0.0
+        self.confirmed_total_force = 0.0
+        self.confirmed_forces = {}
+        self.reset_end_time = time.time()
+        self.contact_cleared = False
+        self.contact_triggered = False
+        print("[GraspManager] Manual reset -> State: OPEN (re-armed)")
 
     def check_contact_trigger(self, tactile_matrix: np.ndarray) -> bool:
         """
@@ -196,6 +214,11 @@ class GraspManager:
                 if settling_elapsed >= self.settle_duration:
                     self.state = "cylinder_confirmed"
                     state_changed = True
+                    self.confirmed_forces = {
+                        f: pad_pressures.get(f, 0.0) for f in ("Little", "Ring", "Middle", "Index")
+                    }
+                    self.confirmed_total_force = sum(self.confirmed_forces.values())
+                    self.contact_loss_start_time = 0.0
                     self.on_cylinder_confirmed(robot, data, diagnostics)
             else:
                 if (now - self.last_log_time) >= 0.35:
@@ -223,13 +246,90 @@ class GraspManager:
         # State: CYLINDER_CONFIRMED
         # ---------------------------------------------------------
         elif self.state == "cylinder_confirmed":
-            # Monitor grasp stability while holding confirmed state
-            if is_empty_grasp(finger_angles, pad_pressures):
-                print("[GraspManager] Object lost or dropped! Transitioning to RESETTING")
+            primary_pressures = {f: pad_pressures.get(f, 0.0) for f in ("Little", "Ring", "Middle", "Index")}
+            active_contact_fingers = sum(
+                1 for p in primary_pressures.values() if p >= self.pad_force_threshold
+            )
+            total_finger_force = sum(primary_pressures.values())
+
+            # Continuously track peak confirmed grasp force
+            if total_finger_force > self.confirmed_total_force:
+                self.confirmed_total_force = total_finger_force
+                for f, p in primary_pressures.items():
+                    self.confirmed_forces[f] = max(self.confirmed_forces.get(f, 0.0), p)
+
+            # Check retention of individual fingers relative to peak hold force (at least 35% of peak)
+            retained_fingers = sum(
+                1 for f, p in primary_pressures.items()
+                if p >= max(50.0, 0.35 * self.confirmed_forces.get(f, 0.0))
+            )
+
+            # Relative force drop threshold: drops below 45% of peak confirmed hold force, or below minimum floor
+            rel_force_threshold = max(100.0, 0.45 * self.confirmed_total_force)
+            force_dropped = bool(
+                (total_finger_force < rel_force_threshold) or (retained_fingers < 2)
+            )
+
+            # Periodic telemetry for clear real-time visibility during cylinder hold
+            if (now - self.last_log_time) >= 0.5:
+                print(
+                    f"[GraspManager] Cylinder hold active | "
+                    f"Angles: {finger_angles.tolist()} | "
+                    f"Active: {active_contact_fingers}/4 (Retained: {retained_fingers}/4) | "
+                    f"Total: {total_finger_force:.1f}g (Peak: {self.confirmed_total_force:.1f}g) | "
+                    f"Pressures: {dict((k, round(v, 1)) for k, v in primary_pressures.items())}"
+                )
+                self.last_log_time = now
+
+            # 1. Hand opened detection (UI button, manual sliders, or open release)
+            hand_opened = np.any(finger_angles > 350) or np.mean(finger_angles) > 250
+
+            # 2. Empty fist / object slipped out detection
+            # When the cylinder is removed, the commanded closed angles pull fingers into a fist (< 45)
+            is_empty_fist = bool(np.all(finger_angles < 45) or np.mean(finger_angles) < 38)
+
+            # 3. Palm crushed detection (fingers digging directly into palm with no cylinder)
+            palm_val = pad_pressures.get("Palm", 0.0)
+            is_palm_curled = bool(palm_val > 250.0 and np.mean(finger_angles) < 50)
+
+            if hand_opened:
+                print(f"[GraspManager] Hand opened (Angles: {finger_angles.tolist()}) -> Opening hand -> RESETTING")
                 self.state = "resetting"
                 self.reset_start_time = now
+                self.contact_loss_start_time = 0.0
                 state_changed = True
                 robot.open_hand()
+            elif is_empty_fist:
+                print(f"[GraspManager] Contact lost: Object dropped / fingers closed into fist (Angles: {finger_angles.tolist()}) -> Opening hand -> RESETTING")
+                self.state = "resetting"
+                self.reset_start_time = now
+                self.contact_loss_start_time = 0.0
+                state_changed = True
+                robot.open_hand()
+            elif is_palm_curled:
+                print(f"[GraspManager] Contact lost: Fingers curled into palm (Palm: {palm_val:.1f}g, Angles: {finger_angles.tolist()}) -> Opening hand -> RESETTING")
+                self.state = "resetting"
+                self.reset_start_time = now
+                self.contact_loss_start_time = 0.0
+                state_changed = True
+                robot.open_hand()
+            elif force_dropped:
+                if self.contact_loss_start_time == 0.0:
+                    self.contact_loss_start_time = now
+                elif (now - self.contact_loss_start_time) >= 0.15:
+                    print(
+                        f"[GraspManager] Contact lost: Tactile force dropped "
+                        f"(Total: {total_finger_force:.1f}g < {rel_force_threshold:.1f}g, "
+                        f"Retained: {retained_fingers}/4 fingers, Peak: {self.confirmed_total_force:.1f}g) -> Opening hand -> RESETTING"
+                    )
+                    self.state = "resetting"
+                    self.reset_start_time = now
+                    self.contact_loss_start_time = 0.0
+                    state_changed = True
+                    robot.open_hand()
+            else:
+                self.contact_loss_start_time = 0.0
+
 
         # ---------------------------------------------------------
         # State: RESETTING
