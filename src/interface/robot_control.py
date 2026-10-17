@@ -41,7 +41,13 @@ class RobotHandController:
                 "Thumb":  (420, 360),
                 "Palm":   (240, 520)
             }
-        self.results: DataDict
+        self.results: DataDict = {
+            "angles": np.zeros(6, dtype=int),
+            "forces": np.zeros(6, dtype=float),
+            "position": np.zeros(6, dtype=int),
+            "tactile_matrix": np.zeros((112, 17), dtype=float),
+            "tactile_mean_matrix": np.zeros((1, 17), dtype=float)
+        }
         try:
             self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
             if self.client.connect():
@@ -221,7 +227,7 @@ class RobotHandController:
             return res.registers
         return None
 
-    def read_tactile_data(self):
+    def read_tactile_data(self)->tuple[np.ndarray, np.ndarray]:
         # Max cells is 112 (Palm: 8 * 14 = 112)
         data_matrix = np.zeros((1, 17))
         all_points = np.zeros((112, 17))
@@ -239,7 +245,14 @@ class RobotHandController:
             all_points[0:len(raw), index] = matrix
 
         return data_matrix, all_points
-    def build_result_data(self, mean_matrix, all_points)->DataDict:
+    def build_result_data(self, mean_matrix: np.ndarray, all_points:np.ndarray)->DataDict:
+        self.results: DataDict = {
+            "angles": np.array(self.read_command("ANGLES")),
+            "forces": np.array(self.read_command("FORCES")),
+            "position": np.array(self.read_command("POSITION")),
+            "tactile_matrix": all_points,
+            "tactile_mean_matrix": mean_matrix
+        }
 
 
         pass
