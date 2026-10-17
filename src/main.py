@@ -3,6 +3,7 @@ import datetime
 import tkinter as tk
 from interface.robot_control import RobotHandController
 from interface.robot_dataset import RobotDatabase
+from logic.grasp_manager import GraspManager
 from ui.appInterface import HandApp
 STEP_TIME = 0.03
 def main():
@@ -12,6 +13,7 @@ def main():
     Runs continously for continuous polling of GUI.
     """
     robot = RobotHandController(ip="192.168.123.210", port=6000)
+    grasp_manager = GraspManager()
     app = HandApp(robot)
     db = RobotDatabase()
 
@@ -29,9 +31,11 @@ def main():
         try:
             start = time.monotonic()
 
-            app.main()
-            results_data = robot.main()
+            results_data = robot.poll()
+            results_data = grasp_manager.step(robot, results_data)
+            app.main(state=results_data.get("state"))
             db.main(data=results_data)
+
 
             elapsed = time.monotonic() - start
             time.sleep(max(STEP_TIME - elapsed, 0))
