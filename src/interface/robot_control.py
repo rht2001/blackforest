@@ -3,13 +3,13 @@ import time
 from pymodbus.client import ModbusTcpClient
 import numpy as np
 from typing import Literal
-from config.config_parameters import REGISTERS, DataDict, default_results, STATES
+from config.config_parameters import RegisterName, DataDict, default_results, STATES, REGISTERS
 DEFAULT_MOVEMENT_SPEED = [400] * 6
 
 
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 
-
+DEFAULT_FORCE = 3000
 CLOSE_THRESHOLD = 50
 IMPULSE_REJECTION_WAIT_TIME = 0.25
 
@@ -115,7 +115,7 @@ class RobotHandController:
     # Unified Command Bus (read_command / send_command)
     # ==========================================
 
-    def send_command(self, value: list[int], type: DataTypes | str = "ANGLES") -> bool:
+    def send_command(self, value: list[int], type: DataTypes | RegisterName = "ANGLES") -> bool:
         """
         Unified write access point for commands and register settings.
         `type` can be a standard data category ('ANGLES', 'FORCES', 'POSITION')
@@ -123,7 +123,7 @@ class RobotHandController:
         """
         if type in self.send_addresses:
             address = self.send_addresses[type]
-        elif type in REGISTERS:
+        elif type in RegisterName:
             address = REGISTERS[type]
         else:
             raise ValueError(f"Unknown command target: {type}")
@@ -201,6 +201,8 @@ class RobotHandController:
             self.calibrate_offsets()
         print("[RobotHandController] Hand opened and ready.")
         self.state = "initialised"
+        self.send_command(type="DEFAULT_FORCE_SET", value=[3000]*6)
+
 
     def set_default_speed(self):
         """Sets the default speed for all 6 DOFs."""
@@ -369,7 +371,7 @@ class RobotHandController:
                 #self.confirm_grip(valid_positions, valid_tactile, mean_matrix=mean_matrix)
 
         self.angle_array = current_pos
-        self.state_change = True if self.state == current_state else False
+        self.state_change = True if self.state != current_state else False
         self.build_result_data()
         return self.results
 
