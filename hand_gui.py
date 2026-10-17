@@ -18,5 +18,5 @@ if __name__ == "__main__":
     while is_running:
         app.main()
         robot.main()
-
+        #TODO: Threading, if time allows
         time.sleep(0.03)  # ~30 FPS
