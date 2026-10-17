@@ -26,28 +26,25 @@ def main():
         is_running = False
         app.destroy()
         db.on_close()
+        publisher.close()
 
     app.protocol("WM_DELETE_WINDOW", on_close)
 
-    try:
-        while is_running:
-            try:
-                start = time.monotonic()
 
-                app.main()
-                results_data = robot.main()
-                db.main(data=results_data)
-                if publisher is not None:
-                    publisher.submit(robot_snapshot(robot, results_data))
+    while is_running:
+        try:
+            start = time.monotonic()
 
-                elapsed = time.monotonic() - start
-                time.sleep(max(STEP_TIME - elapsed, 0))
-            except tk.TclError:
-                break
-    finally:
-        if publisher is not None:
-            publisher.close()
+            app.main()
+            results_data = robot.main()
+            db.main(data=results_data)
+            if publisher is not None:
+                publisher.submit(robot_snapshot(robot, results_data))
 
+            elapsed = time.monotonic() - start
+            time.sleep(max(STEP_TIME - elapsed, 0))
+        except tk.TclError:
+            break
 
 if __name__ == "__main__":
     main()
