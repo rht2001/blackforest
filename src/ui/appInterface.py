@@ -51,6 +51,17 @@ class HandApp(tk.Tk):
         self.canvas.pack()
 
     def setup_ui(self):
+        self.state_label = tk.Label(
+            self.left_frame,
+            text="STATE: INITIALISED",
+            font=("Helvetica", 13, "bold"),
+            fg="#0055ff",
+            relief="groove",
+            padx=10,
+            pady=4,
+        )
+        self.state_label.pack(fill="x", pady=5)
+
         names = ["Little Finger", "Ring Finger", "Middle Finger", "Index Finger", "Thumb Bend", "Thumb Rot"]
 
         for i in range(6):
@@ -205,10 +216,18 @@ class HandApp(tk.Tk):
                 fill="blue"
             )
 
-    def main(self):
+    def update_state_display(self, state: str):
+        if hasattr(self, "state_label"):
+            self.state_label.config(text=f"STATE: {state.upper()}")
+            self.title(f"Hand Controller - [{state.upper()}]")
+
+    def main(self, state: str | None = None):
+        if state:
+            self.update_state_display(state)
         self.draw()
         try:
             self.update_idletasks()
             self.update()
         except tk.TclError:
             pass
+
