@@ -12,6 +12,7 @@ DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 
 CLOSE_THRESHOLD = 50
 IMPULSE_REJECTION_WAIT_TIME = 0.25
+GRIP_ANGLE_THRESHOLD = 10  # Threshold for detecting if the hand is in a gripping position (0-1000 scale)
 
 class RobotHandController:
     def __init__(self, ip: str = "192.168.123.211", port: int = 6000, mock: bool = False):
@@ -321,11 +322,13 @@ class RobotHandController:
         mean_matrix, all_points = self.read_tactile_data()
         auto_contact = self.close_on_contact(all_points)
         current_pos = np.array(self.read_command())
+        #print(f"Current Position: {current_pos}, Auto Contact Triggered: {auto_contact}")
 
-        if np.all(current_pos[:4] < 100):
+        if np.any(current_pos[:4] < GRIP_ANGLE_THRESHOLD):
             self.state = "resetting"
             print("nothing detected: opening the hand")
             self.write_data("ANGLES", [1000] * 6)
+            self.auto_mode_active = True
             time.sleep(1)
 
 
@@ -334,12 +337,13 @@ class RobotHandController:
             self.state = "moving"
 
         if self.state == "moving":
+        # TODO: Steady state detection only polls between two consecutive readings, which may not be sufficient for robust detection. Consider implementing a more sophisticated method that tracks the last N readings and checks for stability over that window.
 
             diff = np.abs(self.angle_array - np.array(current_pos))
             if np.all(diff < 2):
                 self.state = "steady_state"
                 print("steady state is achieved, trying to check position")
-                self.check_position_thing()
+                #self.check_position_thing()
 
 
 
