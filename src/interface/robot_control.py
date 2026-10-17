@@ -315,7 +315,7 @@ class RobotHandController:
         }
 
 
-    def confirm_grip(self,valid_positions:np.ndarray, valid_tactile:np.ndarray,mean_matrix, state: PhysicalState, angle_tolerance: int = 100, min_contact_fingers: int = 3) -> tuple[bool, str]:
+    def confirm_grip(self,valid_positions:np.ndarray, valid_tactile:np.ndarray,mean_matrix, angle_tolerance: int = 100, min_contact_fingers: int = 3) -> tuple[bool, str]:
 
         finger_angles = self.angle_array[0:4]  # Little, Ring, Middle, Index
 

@@ -21,6 +21,7 @@ def main():
         nonlocal is_running
         is_running = False
         app.destroy()
+        db.on_close()
 
     app.protocol("WM_DELETE_WINDOW", on_close)
 
