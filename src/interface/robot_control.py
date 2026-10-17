@@ -32,6 +32,7 @@ class RobotHandController:
         self.auto_contact_trigerred = False
         self.is_connected = False
         self.mock_angles = [1000, 1000, 1000, 1000, 1000, 1000]
+        self.client: ModbusTcpClient|None
 
         try:
             self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
