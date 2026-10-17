@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 from build_tactile_geometry import build
+from build_sensor_objects import build as build_sensor_objects
 
 ROOT=Path(__file__).resolve().parent
 BEGIN='<!-- JOINT PROFILES BEGIN -->'
@@ -24,10 +25,11 @@ def main():
     if digest!=data['reference_sha256']:
         raise ValueError('Reference changed: verify matching geometry before rebuilding')
     data['tactile_geometry']=build(data)
+    data['sensor_objects']=build_sensor_objects()
     (ROOT/'tactile_geometry.json').write_text(json.dumps(data['tactile_geometry'],indent=2)+'\n',encoding='utf-8')
     packed=json.dumps(data,separators=(',',':')).replace('</','<\\/')
     scripts='\n'.join((ROOT/name).read_text(encoding='utf-8') for name in
-        ['joint_pressure.js','joint_kinematics.js','tactile_points.js','joint_profiles_ui.js'])
+        ['joint_pressure.js','joint_kinematics.js','tactile_points.js','sensor_objects.js','joint_profiles_ui.js'])
     extension='\n'.join([BEGIN,'<style>',(ROOT/'joint_profiles.css').read_text(encoding='utf-8'),'</style>',
         (ROOT/'joint_profiles_panel.html').read_text(encoding='utf-8'),
         '<script id="jointProfileData" type="application/json">'+packed+'</script>',

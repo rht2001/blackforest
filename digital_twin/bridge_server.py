@@ -9,6 +9,7 @@ No third-party dependencies. Listens ONLY on 127.0.0.1.
 """
 from __future__ import annotations
 import argparse
+from copy import deepcopy
 import json
 import math
 import threading
@@ -21,6 +22,9 @@ from tactile_layout import REGIONS
 FIELDS = ('angles', 'angles_set', 'angles_act', 'force_act', 'position_act', 'tactile', 'tactile_regions', 'tactile_means', 'source', 'simulated')
 STATE = {'angles_set': None, 'angles_act': None, 'force_act': None, 'tactile': {}, 'tactile_regions': {}, 'field_received_at': {}, 'received_at': 0, 'seq': 0}
 LOCK = threading.Lock()
+TAXELS = []
+TAXELS_RECEIVED_AT = 0
+TAXEL_IDS = {f'{key}:{i}' for key, (rows, cols) in REGIONS.items() for i in range(rows*cols)}
 HTML = Path(__file__).with_name('hand_twin_6dof.html')
 TACTILE_HTML = Path(__file__).with_name('tactile_2d.html')
 
@@ -101,7 +105,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_data(json.dumps(data,ensure_ascii=False,allow_nan=False).encode('utf-8'),code)
     def do_OPTIONS(self):self.send_data(b'',204)
     def do_GET(self):
-        if self.path in ('/tactile','/tactile/','/tactile_2d.html'):
+        if self.path in ('/api/taxels', '/api/taxels/'):
+            with LOCK:
+                points = deepcopy(TAXELS) if 0 <= time.time()-TAXELS_RECEIVED_AT <= 4 else []
+            self.respond_json(points)
+        elif self.path in ('/tactile','/tactile/','/tactile_2d.html'):
             try:self.send_data(TACTILE_HTML.read_bytes(),200,'text/html; charset=utf-8')
             except FileNotFoundError:self.respond_json({'error':'2D map missing: restore tactile_2d.html from the package'},404)
         elif self.path in ('/3d','/hand_twin_6dof.html'):
@@ -115,6 +123,9 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == '/health':self.respond_json({'status':'ok','mode':'read-only-from-hand'})
         else:self.respond_json({'error':'Not found'},404)
     def do_POST(self):
+        if self.path in ('/api/taxels', '/api/taxels/'):
+            self.receive_taxels()
+            return
         if self.path not in ('/api/state','/api/state/'):
             self.respond_json({'error':'Not found'},404);return
         try:
@@ -138,6 +149,33 @@ class Handler(BaseHTTPRequestHandler):
             self.respond_json({'ok':True,'seq':seq})
         except (ValueError,UnicodeDecodeError,json.JSONDecodeError) as exc:
             self.respond_json({'ok':False,'error':str(exc)},400)
+
+    def receive_taxels(self):
+        """Cache viewer positions/pressure; never recompute FK or alter telemetry."""
+        global TAXELS, TAXELS_RECEIVED_AT
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            if not 1 <= length <= 524288:
+                raise ValueError('Taxel JSON must contain 1 to 524288 bytes')
+            points = json.loads(self.rfile.read(length))
+            if not isinstance(points, list) or len(points) != len(TAXEL_IDS):
+                raise ValueError('Expected all 1062 taxel positions')
+            for p in points:
+                if not isinstance(p, dict) or set(p) != {'id', 'x', 'y', 'z', 'pressure'} or not isinstance(p['id'], str):
+                    raise ValueError('Expected {id,x,y,z,pressure} for each taxel')
+                if any(isinstance(p[k], bool) or not isinstance(p[k], (int, float)) or not math.isfinite(p[k]) for k in ('x', 'y', 'z')):
+                    raise ValueError('Taxel coordinates must be finite numbers')
+                value = p['pressure']
+                if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 4095):
+                    raise ValueError('Pressure must be null or a finite number in 0..4095')
+            if {p['id'] for p in points} != TAXEL_IDS:
+                raise ValueError('Taxel IDs are missing, duplicated, or unknown')
+            with LOCK:
+                TAXELS = points
+                TAXELS_RECEIVED_AT = time.time()
+            self.respond_json({'ok': True})
+        except (ValueError, UnicodeDecodeError) as exc:
+            self.respond_json({'error': str(exc)}, 400)
 
 def main():
     global HTML

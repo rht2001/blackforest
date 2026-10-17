@@ -151,3 +151,60 @@ Tests cover the HTTP publisher path, XML-vs-JavaScript FK, all sensor surfaces,
 deterministic geometry hashes, exact point counts/wiring, individual-cell colors,
 moving frames/normals, base-frame invariance, weighted centres, exports, thresholds,
 stale/skewed data, disconnects and demos. No test connects to physical hardware.
+# Shared taxel positions
+
+The viewer shares the positions of its existing 1,062 model points. There is
+no second kinematics implementation in Python. Each record contains only
+`{id, x, y, z, pressure}`, in **left_base_link metres**, before display transforms
+and marker lift. Pressure uses the twin's calibrated sensor counts (0..4095),
+or `null` for missing/stale readings. Zero is a valid reading. IDs use
+`region:wire_index`, matching existing sensor data.
+
+Inside the twin use `window.getTaxelPositions()`. Other programs can request
+GET `http://127.0.0.1:18765/api/taxels`, or use this helper from `src`:
+
+```python
+from taxel_coordinates import get_taxel_positions
+points = get_taxel_positions()
+```
+
+From the repository root use `from src.taxel_coordinates import get_taxel_positions`.
+The viewer sends the latest cached positions at most five times per second
+when positions or pressure change, and once per second otherwise. The bridge only stores
+and relays that list; `/api/state` and hardware control remain unchanged.
+The viewer must be open. If no viewer publishes for four seconds, GET returns
+`[]`. Reload the viewer and restart the bridge after updating.
+
+These are the displayed model positions, including manual/demo and held poses;
+they do not certify fresh hardware feedback. Existing contact-cloud functions
+retain their pressure and feedback validity checks. Electrode placement and
+joint mappings still need real-hand validation.
+
+# Movable sensor objects
+
+The **Sensor objects** controls display the repository's `documents/VEGABAR_29_STL.stl`
+and `documents/VEGABAR_38.stl` as separate, colored objects. Select a sensor, change
+X/Y/Z in millimetres or RX/RY/RZ in degrees, or hold **Shift and drag** in the scene
+to translate the selected sensor in the camera plane. Ordinary dragging still
+rotates the camera. Each sensor has its own visibility, reset, and focus controls;
+placements survive a reload in this browser.
+
+Position refers to the center of the STL bounding box, in the hand's
+`left_base_link` frame. Rotation uses Rz(RZ) × Ry(RY) × Rx(RX), about that center.
+`window.getSensorObjects()` returns the two placements in metres/radians.
+STL coordinates are interpreted as millimetres (STL itself is unitless): source
+extents are approximately 36 × 119 × 36 mm for VEGABAR 29 and 68 × 162 × 63 mm
+for VEGABAR 38. Check these dimensions against the actual parts before using
+them for metric contact estimation.
+
+`build_sensor_objects.py` embeds indexed meshes with the original triangle
+topology and source hashes when `rebuild_joint_viewer.py` runs. It explicitly
+converts STL-local millimetres to centered mesh-local metres, then each object's
+pose places it in the hand base before the common camera/display transform.
+The objects are visual geometry for placement; physical collision response and
+automatic contact/pressure simulation are future work.
+
+Tests: `tests/test_sensor_objects.py` checks mesh provenance, dimensions, units,
+triangles, and embedded data. `tests/test_sensor_objects_browser.js` checks
+independent placement/rotation, visibility, persistence, shift-drag, reset, and
+the existing hand/taxel behavior.

@@ -9,6 +9,21 @@
  <button id="exportContactCloud" class="small-button">Export activated points</button>
  <p class="muted">Point positions are mesh-based approximations pending physical calibration.</p>
  <details><summary>Pressure readings</summary><div id="pressureRegions" class="pressure-readings"></div></details>
+ <details id="sensorObjectsPanel" open><summary>Sensor objects</summary>
+  <label>Selected sensor <select id="sensorObjectSelect" aria-label="Selected sensor"></select></label>
+  <label><input id="sensorObjectVisible" type="checkbox" checked> Show selected sensor</label>
+  <div class="object-transform" aria-label="Sensor position in millimetres">
+   <label>X (mm)<input id="sensorObjectX" type="number" step="1" min="-1000" max="1000"></label>
+   <label>Y (mm)<input id="sensorObjectY" type="number" step="1" min="-1000" max="1000"></label>
+   <label>Z (mm)<input id="sensorObjectZ" type="number" step="1" min="-1000" max="1000"></label>
+   <label>RX (°)<input id="sensorObjectRX" type="number" step="5" min="-360" max="360"></label>
+   <label>RY (°)<input id="sensorObjectRY" type="number" step="5" min="-360" max="360"></label>
+   <label>RZ (°)<input id="sensorObjectRZ" type="number" step="5" min="-360" max="360"></label>
+  </div>
+  <p class="muted">Shift + drag in the scene to move the selected sensor. Coordinates use the hand base. Positions are saved in this browser.</p>
+  <button id="sensorObjectFocus" class="small-button">Focus sensor</button>
+  <button id="sensorObjectReset" class="small-button">Reset sensor</button>
+ </details>
 </div>
 <section id="profileWorkspace" class="single" aria-label="Live hand and pressure visualization">
  <article id="profileCard0" class="profile-card"><div class="profile-caption"><h2>Hand twin</h2><p id="profileStatus0" class="profile-status">Connecting to telemetry…</p></div><div id="profileScene0" class="profile-scene"></div><pre id="profileAngles0" class="profile-angles"></pre></article>
