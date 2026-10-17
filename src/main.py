@@ -11,7 +11,7 @@ def main():
     Initializes the robot hand controller as access point of the TCP protocol and starts the Tkinter GUI application.
     Runs continously for continuous polling of GUI.
     """
-    robot = RobotHandController(ip="192.168.123.211", port=6000)
+    robot = RobotHandController(ip="192.168.123.210", port=6000)
     app = HandApp(robot)
     db = RobotDatabase()
 

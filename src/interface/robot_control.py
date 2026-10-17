@@ -12,6 +12,7 @@ DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 
 CLOSE_THRESHOLD = 50
 IMPULSE_REJECTION_WAIT_TIME = 0.25
+GRIP_ANGLE_THRESHOLD = 10  # Threshold for detecting if the hand is in a gripping position (0-1000 scale)
 
 class RobotHandController:
     def __init__(self, ip: str = "192.168.123.211", port: int = 6000, mock: bool = False):
@@ -228,6 +229,7 @@ class RobotHandController:
         self.auto_mode_active = True
         self.auto_contact_trigerred = False
         self.contact_start_time = 0.0
+        time.sleep(0.5)  # Allow time for the hand to open before further commands
 
     def close_hand(self):
         """Closes hand to standard grasp position and disarms automatic grip detection."""
@@ -235,6 +237,7 @@ class RobotHandController:
         self.auto_mode_active = False
         self.auto_contact_trigerred = False
         self.contact_start_time = 0.0
+        time.sleep(0.5)  # Allow time for the hand to close before further commands
 
     def calibrate_offsets(self):
         """Calibrates baseline tactile sensor readings."""
@@ -349,22 +352,19 @@ class RobotHandController:
         auto_contact = self.close_on_contact()
         current_pos = np.array(self.read_command())
 
-        if np.all(current_pos[:4] < 100):
-            print(current_pos)
-            self.state = "resetting"
-            print("nothing detected: opening the hand")
-            self.write_data("ANGLES", [1000] * 6)
-            time.sleep(1)
-
         if auto_contact:
             self.state = "moving"
 
         if self.state == "moving":
+        # TODO: Steady state detection only polls between two consecutive readings, which may not be sufficient for robust detection. Consider implementing a more sophisticated method that tracks the last N readings and checks for stability over that window.
 
             diff = np.abs(self.angle_array - np.array(current_pos))
             if np.all(diff < 2):
                 self.state = "steady_state"
                 print("steady state is achieved, trying to check position")
+
+                # TODO: READ valid_positions and valid_tactile here after steady state is achieved.
+
 
                 #self.confirm_grip(valid_positions, valid_tactile, mean_matrix=mean_matrix)
 
