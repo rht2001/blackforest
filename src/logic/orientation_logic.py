@@ -20,7 +20,28 @@ SENSOR_LENGTH_M: float = 0.100        # 100 mm total sensor length (-50 mm to +5
 SENSOR_HALF_LENGTH_M: float = 0.050   # +50 mm at sensor head (+x_sensor), -50 mm at tail (-x_sensor)
 SENSOR_MAX_DIAMETER_M: float = 0.030  # 30 mm diameter at x_sensor = +50 mm (+0.050 m)
 SENSOR_MIN_DIAMETER_M: float = 0.020  # 20 mm diameter at x_sensor = -50 mm (-0.050 m)
+SENSOR_ORIGIN_Z_REF_M: float = 0.0125 # Sensor centerline z-height at origin (12.5 mm mid-radius)
 CLAMP_LOCAL_X_TO_SENSOR: bool = False # Set True to clamp extrapolated x_local to [-0.05, +0.05]
+
+# TODO: Verify and tune 2D Circle & 360-degree Roll sweep constants
+CIRCLE_RADIUS_M: float = 0.010            # 10 mm circle radius
+CIRCLE_CENTER_X_OFFSET_M: float = 0.070   # 70 mm to the right (+x_sensor) of sensor origin
+CIRCLE_CENTER_Y_OFFSET_M: float = -0.015  # Arbitrary lateral offset ("some distance to the right")
+CIRCLE_CENTER_Z_OFFSET_M: float = 0.000   # Arbitrary local z offset of circle center
+CIRCLE_YAW_OFFSET_DEG: float = 30.0       # +30 degrees yaw relative to sensor origin
+CIRCLE_NUM_POINTS: int = 100              # 100 equally distributed points on the circle
+ROLL_NUM_ORIENTATIONS: int = 360          # 360 discrete roll orientations (0..359 deg about x_sensor)
+
+# TODO: Verify and tune Thumb Arc Plane fitting & taxel deletion constants
+THUMB_SURFACE_TAXEL_KEYS: tuple[str, ...] = (
+    "thumb_pad",
+    "thumb_mid",
+    "thumb_tip",
+)
+THUMB_ARC_LONGITUDINAL_SAMPLES: int = 35  # Uniform samples from start to end of thumb arc
+THUMB_ARC_LATERAL_SAMPLES: int = 16       # Uniform samples across thumb width plane
+THUMB_TAXEL_DELETE_RADIUS_M: float = 0.0025  # Radius (2.5 mm) around real taxels to delete from arc plane
+THUMB_ARC_MAX_RADIUS_M: float = 2.0       # Max radius cap before treating arc as near-flat polynomial
 
 # Nail Yaw Constants
 NAIL_SENSOR_NAMES: tuple[str, str, str, str] = (
@@ -61,7 +82,8 @@ THUMB_STABILITY_THRESHOLD: float = 2.0    # Max delta on BOTH angles[4] and angl
 THUMB_SAME_STATION_THRESHOLD: float = 2.0 # While |angles[5] - prev_probe_angle_5| <= 2.0, same probe
 THUMB_SHALLOW_ANGLE_THRESHOLD: float = 45.0  # Steady angles[4] > this -> shallow (Sensor 1); else deep (Sensor 2)
 THUMB_PROB_TEMPERATURE: float = 5.0       # Softness parameter for logistic confidence scoring
-NUM_PROBE_STEPS: int = 5                  # Total number of thumb probes to collect
+NUM_PROBE_STEPS: int = 2                  # Total number of thumb probes to collect (2 probes for roll)
+ROLL_REQUIRED_PROBES: int = 2             # Number of probes required to trigger roll estimation
 SAFETY_SKIP_TICKS: int = 1                # Number of initial ticks to skip completely in thumb_probing
 
 
@@ -111,24 +133,44 @@ class NailMaxContactPoint:
 @dataclass(frozen=True)
 class SensorOriginEstimation:
     valid: bool
-    origin_xy_ref: Optional[NDArray[np.float64]]      # (2,) [X_origin, Y_origin] in palm frame (meters)
-    sensor_heading_rad: Optional[float]               # Signed heading of +x_sensor in palm xy-plane
+    origin_xy_ref: Optional[NDArray[np.float64]]          # (2,) [X_origin, Y_origin] in palm frame (meters)
+    origin_xyz_ref: Optional[NDArray[np.float64]]         # (3,) [X_origin, Y_origin, Z_origin] in palm frame (meters)
+    sensor_heading_rad: Optional[float]                   # Signed heading of +x_sensor in palm xy-plane
     sensor_heading_deg: Optional[float]
     sensor_x_axis_unit_xy: Optional[NDArray[np.float64]]  # (2,) [cos(heading), sin(heading)]
     sensor_y_axis_unit_xy: Optional[NDArray[np.float64]]  # (2,) [-sin(heading), cos(heading)]
-    index_contact_ref: Optional[NDArray[np.float64]]  # (3,) [x, y, z] of max-force Index Nail taxel
-    index_local_x_m: Optional[float]                  # Extrapolated x_sensor offset (meters) at Index Nail
+    sensor_x_axis_3d: Optional[NDArray[np.float64]]       # (3,) unit vector of +x_sensor in palm frame
+    sensor_y_axis_3d: Optional[NDArray[np.float64]]       # (3,) unit vector of +y_sensor in palm frame
+    sensor_z_axis_3d: Optional[NDArray[np.float64]]       # (3,) unit vector of +z_sensor in palm frame
+    index_contact_ref: Optional[NDArray[np.float64]]      # (3,) [x, y, z] of max-force Index Nail taxel
+    index_local_x_m: Optional[float]                      # Extrapolated x_sensor offset (meters) at Index Nail
     nail_max_points: dict[str, NailMaxContactPoint] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class ThumbProbeStep:
-    probe_number: int          # 1 to 5
+    probe_number: int          # 1 to NUM_PROBE_STEPS
     tick_recorded: int         # Tick index within thumb_probing when settled
     x_position_angle: float    # angles[5]: thumb position along sweep axis
     inward_angle: float        # angles[4]: thumb inward penetration angle
     is_shallow: bool           # True if inward_angle > THUMB_SHALLOW_ANGLE_THRESHOLD
     sensor_1_Step_prob: float  # Logistic confidence for Sensor 1 on this single step
+    thumb_comparison_points_ref: Optional[NDArray[np.float64]] = None  # (M, 3) fitted arc plane minus taxels
+    fitted_arc_radius_m: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class RollEstimation:
+    valid: bool
+    best_roll_deg: Optional[float]                        # Winning orientation (0..359 deg) about x_sensor
+    best_roll_rad: Optional[float]
+    min_mean_distance_m: Optional[float]                  # Lowest mean distance across Probe 1 and Probe 2
+    probe_1_min_distance_m: Optional[float]               # Min distance for Probe 1 at winning orientation
+    probe_2_min_distance_m: Optional[float]               # Min distance for Probe 2 at winning orientation
+    probe_1_closest_circle_pt_ref: Optional[NDArray[np.float64]] = None  # (3,) global point on circle for Probe 1
+    probe_2_closest_circle_pt_ref: Optional[NDArray[np.float64]] = None  # (3,) global point on circle for Probe 2
+    orientation_mean_distances_m: Optional[NDArray[np.float64]] = None   # (360,) mean distance per roll angle
+    best_circle_points_ref: Optional[NDArray[np.float64]] = None         # (100, 3) global circle points at best roll
 
 
 @dataclass
@@ -148,6 +190,7 @@ class EstimatorOutput:
     taper: Optional[TaperEstimation] = None
     yaw: Optional[YawEstimation] = None
     origin: Optional[SensorOriginEstimation] = None
+    roll: Optional[RollEstimation] = None
     probes: list[ThumbProbeStep] = field(default_factory=list)
     decision: SensorDecision = field(default_factory=SensorDecision)
 
@@ -157,9 +200,9 @@ class EstimatorOutput:
 # ============================================================================
 class TactilePoseAndSensorEstimator:
     """
-    State-driven controller that estimates 4-DOF cylinder/sensor alignment cues
-    (Palm taper, Finger Nail yaw, Sensor local origin & axes) and classifies
-    Sensor 1 vs. Sensor 2 via a 5-step thumb probing routine.
+    State-driven controller that estimates 6-DOF cylinder/sensor alignment cues
+    (with z and pitch locked -> 4 active DOFs: x, y, yaw, and roll) and classifies
+    Sensor 1 vs. Sensor 2 via thumb probing.
     """
 
     # States permitted to execute on consecutive ticks without a state transition
@@ -272,7 +315,7 @@ class TactilePoseAndSensorEstimator:
         2. Evaluates the concatenated 12x32 Nail matrix to determine yaw tilt.
         3. Extracts the max-force BaseTaxel on each of the 4 finger nails and uses
            the Index Nail z-height + taper geometry to resolve the sensor's local
-           coordinate origin and axes in the palm reference frame.
+           coordinate origin and 3D axes in the palm reference frame.
         """
         self.output.taper = self._calculate_palm_taper()
         self.output.yaw = self._calculate_nail_yaw()
@@ -287,13 +330,16 @@ class TactilePoseAndSensorEstimator:
         kinematics: Optional[TactileHandKinematics],
     ) -> None:
         """
-        Executes on every tick while in 'thumb_probing' until 5 probes are collected:
+        Executes on every tick while in 'thumb_probing' until NUM_PROBE_STEPS (2)
+        probes are collected:
         - Tick 0: Skips completely for safety.
         - Tick 1: Captures initial baseline thumb angles [angles[4], angles[5]].
         - Tick 2+: Checks if both thumb angles settled within THUMB_STABILITY_THRESHOLD (2.0).
-          While angles[5] stays within THUMB_SAME_STATION_THRESHOLD (2.0) of the last
-          recorded probe, holds off recording. Once at a new steady station, records
-          the probe and updates Sensor 1 vs Sensor 2 probabilities on completion.
+          When settled at a new station:
+            1. Fits the 2D plane + circular arc to the current thumb taxels and
+               deletes the actual taxel coordinates to obtain the thumb comparison points.
+            2. Updates Sensor 1 vs Sensor 2 probabilities.
+            3. Once 2 probes are recorded, executes the 360-degree Roll optimization.
         """
         if len(self.output.probes) >= NUM_PROBE_STEPS:
             return
@@ -340,13 +386,13 @@ class TactilePoseAndSensorEstimator:
         ):
             return
 
-        # 6. Record validated steady probe step
+        # 6. Build the fitted thumb circular-arc plane and delete taxel coordinates
+        thumb_comp_pts, fitted_radius = self._build_thumb_arc_comparison_points(kinematics)
+
+        # 7. Record validated steady probe step
         probe_num = len(self.output.probes) + 1
         is_shallow = inward_angle > THUMB_SHALLOW_ANGLE_THRESHOLD
 
-        # Smooth logistic probability for this single probe:
-        # > 0.5 when inward_angle > THUMB_SHALLOW_ANGLE_THRESHOLD (Sensor 1)
-        # < 0.5 when inward_angle < THUMB_SHALLOW_ANGLE_THRESHOLD (Sensor 2)
         z = (inward_angle - THUMB_SHALLOW_ANGLE_THRESHOLD) / THUMB_PROB_TEMPERATURE
         step_s1_prob = float(1.0 / (1.0 + np.exp(-np.clip(z, -50.0, 50.0))))
 
@@ -357,6 +403,8 @@ class TactilePoseAndSensorEstimator:
             inward_angle=inward_angle,
             is_shallow=is_shallow,
             sensor_1_Step_prob=step_s1_prob,
+            thumb_comparison_points_ref=thumb_comp_pts,
+            fitted_arc_radius_m=fitted_radius,
         )
         self.output.probes.append(probe_step)
 
@@ -364,18 +412,24 @@ class TactilePoseAndSensorEstimator:
         self._latched_station_angle = pos_angle
         self._station_is_latched = True
 
-        # 7. Update classification (marks complete when 5th probe arrives)
+        # 8. Update sensor classification
         self._update_sensor_decision()
 
+        # 9. Once 2 probes are done, compute the 360-degree Roll estimation
+        if len(self.output.probes) >= ROLL_REQUIRED_PROBES:
+            self.output.roll = self._calculate_sensor_roll()
+
     def _execute_probing_complete(self) -> None:
-        """Finalizes sensor classification if transitioning out of probing."""
+        """Finalizes sensor classification and roll estimation if transitioning out of probing."""
         self._update_sensor_decision(force_complete=True)
+        if self.output.roll is None and len(self.output.probes) >= ROLL_REQUIRED_PROBES:
+            self.output.roll = self._calculate_sensor_roll()
 
     def _execute_resetting(self) -> None:
         self._full_reset()
 
     # ------------------------------------------------------------------------
-    # CORE COMPUTATION: PALM TAPER, NAIL YAW & SENSOR ORIGIN (X, Y)
+    # CORE COMPUTATION: PALM TAPER, NAIL YAW & SENSOR ORIGIN (X, Y, Z)
     # ------------------------------------------------------------------------
     def _calculate_palm_taper(self) -> TaperEstimation:
         """
@@ -386,7 +440,6 @@ class TactilePoseAndSensorEstimator:
         """
         palm = self._get_validated_matrix(PALM_SENSOR_NAME, PALM_SHAPE)
 
-        # Clean non-finite values and apply noise floor
         clean_palm = np.where(np.isfinite(palm), palm, 0.0).astype(np.float64)
         active_palm = np.where(clean_palm >= PALM_FORCE_NOISE_FLOOR, clean_palm, 0.0)
 
@@ -405,20 +458,16 @@ class TactilePoseAndSensorEstimator:
                 active_taxel_count=active_count,
             )
 
-        # Column force profile across the 14 columns (left to right = +x)
         col_forces = np.mean(active_palm, axis=0)  # shape (14,)
         col_indices = np.arange(PALM_SHAPE[1], dtype=np.float64)
 
-        # Linear least-squares fit: col_force = slope * col_idx + intercept
         slope = float(np.polyfit(col_indices, col_forces, 1)[0])
 
         if abs(slope) <= PALM_SLOPE_EPSILON:
             direction: Literal["+x", "-x", "flat"] = "flat"
         elif slope < 0.0:
-            # Force decreases from left to right -> -x taper
             direction = "-x"
         else:
-            # Force increases from left to right -> +x taper
             direction = "+x"
 
         return TaperEstimation(
@@ -435,12 +484,6 @@ class TactilePoseAndSensorEstimator:
         Concatenates the 4 finger nail matrices (Little, Ring, Middle, Index)
         into a single 12x32 matrix, zeros values below NAIL_FORCE_THRESHOLD,
         and fits a force-weighted line from left to right to estimate yaw tilt.
-
-        Coordinate convention:
-        - Columns 0..31 run left-to-right (+x: Little to Index).
-        - Matrix rows 0..11 run top-to-bottom. Therefore, a line sloping UP
-          from left to right has a positive cartesian_slope (dy/dx > 0) and a
-          negative matrix_row_slope (d_row/d_col < 0).
         """
         nail_blocks = [
             self._get_validated_matrix(name, SINGLE_NAIL_SHAPE)
@@ -452,11 +495,9 @@ class TactilePoseAndSensorEstimator:
                 f"Combined nail matrix has shape {combined.shape}, expected {COMBINED_NAIL_SHAPE}."
             )
 
-        # Clean non-finite entries and apply strict thresholding
         clean_combined = np.where(np.isfinite(combined), combined, 0.0)
         thresholded = np.where(clean_combined >= NAIL_FORCE_THRESHOLD, clean_combined, 0.0)
 
-        # Compute column-wise total force and force-weighted row centroids
         col_weights = np.sum(thresholded, axis=0)  # shape (32,)
         active_col_mask = col_weights > 0.0
         active_cols = np.nonzero(active_col_mask)[0]
@@ -490,16 +531,13 @@ class TactilePoseAndSensorEstimator:
             )
 
         row_indices = np.arange(COMBINED_NAIL_SHAPE[0], dtype=np.float64)[:, np.newaxis]
-        # Force-weighted row centroid per active column
         weighted_row_sums = np.sum(thresholded[:, active_cols] * row_indices, axis=0)
         row_centroids = weighted_row_sums / col_weights[active_cols]
 
-        # Weighted linear regression: row_centroid = matrix_row_slope * col + intercept
         x_cols = active_cols.astype(np.float64)
         w = col_weights[active_cols]
         matrix_row_slope = float(np.polyfit(x_cols, row_centroids, 1, w=w)[0])
 
-        # Convert matrix row slope (downward positive) to Cartesian y-up slope (+y is palm -> tip)
         cartesian_slope = -matrix_row_slope
         yaw_rad = float(np.arctan(cartesian_slope))
         yaw_deg = float(np.degrees(yaw_rad))
@@ -530,8 +568,8 @@ class TactilePoseAndSensorEstimator:
         yaw: Optional[YawEstimation],
     ) -> SensorOriginEstimation:
         """
-        Resolves the sensor's local coordinate system origin (X_origin, Y_origin)
-        and axes in the palm reference frame using the Index Nail max-force taxel
+        Resolves the sensor's local coordinate system 3D origin (X_origin, Y_origin, Z_origin)
+        and orthonormal 3D axes in the palm reference frame using the Index Nail max-force taxel
         and sensor taper geometry.
         """
         if kinematics is None or not kinematics.base_taxels:
@@ -539,10 +577,14 @@ class TactilePoseAndSensorEstimator:
             return SensorOriginEstimation(
                 valid=False,
                 origin_xy_ref=None,
+                origin_xyz_ref=None,
                 sensor_heading_rad=None,
                 sensor_heading_deg=None,
                 sensor_x_axis_unit_xy=None,
                 sensor_y_axis_unit_xy=None,
+                sensor_x_axis_3d=None,
+                sensor_y_axis_3d=None,
+                sensor_z_axis_3d=None,
                 index_contact_ref=None,
                 index_local_x_m=None,
                 nail_max_points={},
@@ -570,10 +612,14 @@ class TactilePoseAndSensorEstimator:
             return SensorOriginEstimation(
                 valid=False,
                 origin_xy_ref=None,
+                origin_xyz_ref=None,
                 sensor_heading_rad=None,
                 sensor_heading_deg=None,
                 sensor_x_axis_unit_xy=None,
                 sensor_y_axis_unit_xy=None,
+                sensor_x_axis_3d=None,
+                sensor_y_axis_3d=None,
+                sensor_z_axis_3d=None,
                 index_contact_ref=None,
                 index_local_x_m=None,
                 nail_max_points=nail_max_points,
@@ -593,19 +639,31 @@ class TactilePoseAndSensorEstimator:
 
         heading_deg = float(np.degrees(heading_rad))
 
-        u_x = np.array([np.cos(heading_rad), np.sin(heading_rad)], dtype=np.float64)
-        u_y = np.array([-np.sin(heading_rad), np.cos(heading_rad)], dtype=np.float64)
+        u_x_2d = np.array([np.cos(heading_rad), np.sin(heading_rad)], dtype=np.float64)
+        u_y_2d = np.array([-np.sin(heading_rad), np.cos(heading_rad)], dtype=np.float64)
+
+        u_x_3d = np.array([np.cos(heading_rad), np.sin(heading_rad), 0.0], dtype=np.float64)
+        u_y_3d = np.array([-np.sin(heading_rad), np.cos(heading_rad), 0.0], dtype=np.float64)
+        u_z_3d = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 
         index_xy_ref = index_contact.position_ref[:2]
-        origin_xy_ref = index_xy_ref - (index_local_x_m * u_x)
+        origin_xy_ref = index_xy_ref - (index_local_x_m * u_x_2d)
+        origin_xyz_ref = np.array(
+            [origin_xy_ref[0], origin_xy_ref[1], SENSOR_ORIGIN_Z_REF_M],
+            dtype=np.float64,
+        )
 
         return SensorOriginEstimation(
             valid=True,
             origin_xy_ref=origin_xy_ref,
+            origin_xyz_ref=origin_xyz_ref,
             sensor_heading_rad=heading_rad,
             sensor_heading_deg=heading_deg,
-            sensor_x_axis_unit_xy=u_x,
-            sensor_y_axis_unit_xy=u_y,
+            sensor_x_axis_unit_xy=u_x_2d,
+            sensor_y_axis_unit_xy=u_y_2d,
+            sensor_x_axis_3d=u_x_3d,
+            sensor_y_axis_3d=u_y_3d,
+            sensor_z_axis_3d=u_z_3d,
             index_contact_ref=index_contact.position_ref.copy(),
             index_local_x_m=index_local_x_m,
             nail_max_points=nail_max_points,
@@ -666,6 +724,361 @@ class TactilePoseAndSensorEstimator:
             max_force=max_force,
             position_ref=np.asarray(matched_taxel.position, dtype=np.float64),
             normal_ref=np.asarray(matched_taxel.normal, dtype=np.float64),
+        )
+
+    # ------------------------------------------------------------------------
+    # CORE COMPUTATION: THUMB ARC FITTING & 360-DEGREE ROLL ESTIMATION
+    # ------------------------------------------------------------------------
+    def _build_thumb_arc_comparison_points(
+        self,
+        kinematics: Optional[TactileHandKinematics],
+    ) -> tuple[Optional[NDArray[np.float64]], Optional[float]]:
+        """
+        Builds the thumb comparison surface for the current probe posture:
+        1. Extracts the 3D positions of the thumb taxels from `kinematics.base_taxels`.
+        2. Finds the 2D plane and longitudinal limits (beginning to end of thumb taxels)
+           via SVD, and fits a circular arc directly to the thumb taxel profile.
+        3. Uniformly samples 3D points across that fitted circular arc plane.
+        4. Deletes all points on the arc plane that lie within `THUMB_TAXEL_DELETE_RADIUS_M`
+           of the actual thumb taxel coordinates, leaving only the un-instrumented
+           thumb surface points.
+        """
+        if kinematics is None or not kinematics.base_taxels:
+            logger.warning("Cannot build thumb arc plane: kinematics or base_taxels is missing.")
+            return None, None
+
+        # Collect inner thumb surface taxels (pad, mid, tip); fallback to any thumb taxel if empty
+        thumb_taxels = [
+            bt for bt in kinematics.base_taxels
+            if bt.key in THUMB_SURFACE_TAXEL_KEYS
+        ]
+        if len(thumb_taxels) < 3:
+            thumb_taxels = [
+                bt for bt in kinematics.base_taxels
+                if "thumb" in bt.key.lower() or "thumb" in bt.link.lower()
+            ]
+
+        if len(thumb_taxels) < 3:
+            logger.warning("Not enough thumb taxels (%d) to fit an arc plane.", len(thumb_taxels))
+            return None, None
+
+        taxel_positions = np.array([bt.position for bt in thumb_taxels], dtype=np.float64)  # (N, 3)
+        taxel_normals = np.array([bt.normal for bt in thumb_taxels], dtype=np.float64)      # (N, 3)
+
+        # 1. Principal axes of the thumb taxel cloud via SVD
+        centroid = np.mean(taxel_positions, axis=0)
+        centered = taxel_positions - centroid
+        _, _, vt = np.linalg.svd(centered, full_matrices=False)
+
+        e_long = vt[0]   # Longitudinal axis: beginning -> end of thumb taxels
+        e_lat = vt[1]    # Lateral width axis across the 2D plane of the thumb
+        e_norm = vt[2]   # Out-of-plane curvature/normal axis
+
+        # Orient e_norm consistently with the average taxel normal
+        mean_normal = np.mean(taxel_normals, axis=0)
+        if np.dot(e_norm, mean_normal) < 0.0:
+            e_norm = -e_norm
+
+        # Ensure right-handed local basis (e_long, e_lat, e_norm)
+        if np.dot(np.cross(e_long, e_lat), e_norm) < 0.0:
+            e_lat = -e_lat
+
+        # Project thumb taxels into local (u_long, v_lat, w_norm) coordinates
+        u_coords = centered @ e_long
+        v_coords = centered @ e_lat
+        w_coords = centered @ e_norm
+
+        # 2. Fit a circular arc to (u_coords, w_coords) from the beginning to the end of the taxels
+        u_samples, w_samples, fitted_radius = self._fit_2d_circular_arc(
+            u_coords=u_coords,
+            w_coords=w_coords,
+            num_samples=THUMB_ARC_LONGITUDINAL_SAMPLES,
+        )
+
+        # 3. Extrude the fitted circular arc across the lateral width limits [v_min, v_max]
+        v_min, v_max = float(np.min(v_coords)), float(np.max(v_coords))
+        v_samples = np.linspace(v_min, v_max, THUMB_ARC_LATERAL_SAMPLES, dtype=np.float64)
+
+        # Meshgrid over longitudinal arc samples and lateral width samples
+        u_grid, v_grid = np.meshgrid(u_samples, v_samples, indexing="ij")
+        w_grid = np.broadcast_to(w_samples[:, np.newaxis], u_grid.shape)
+
+        # Map local grid back to global 3D palm reference coordinates: shape (L * W, 3)
+        arc_plane_points = (
+            centroid
+            + np.outer(u_grid.ravel(), e_long)
+            + np.outer(v_grid.ravel(), e_lat)
+            + np.outer(w_grid.ravel(), e_norm)
+        )
+
+        # 4. Delete the actual taxel coordinates from the generated arc plane
+        # Compute distance from every arc-plane point (G, 3) to every thumb taxel (N, 3)
+        diffs = arc_plane_points[:, np.newaxis, :] - taxel_positions[np.newaxis, :, :]
+        min_dist_to_taxel = np.min(np.linalg.norm(diffs, axis=-1), axis=1)
+
+        keep_mask = min_dist_to_taxel > THUMB_TAXEL_DELETE_RADIUS_M
+        comparison_points = arc_plane_points[keep_mask]
+
+        # Safety fallback if the exclusion radius was set too wide and deleted all points
+        if comparison_points.size == 0:
+            logger.warning(
+                "All generated thumb arc points were within THUMB_TAXEL_DELETE_RADIUS_M=%.4f m; "
+                "retaining the farthest 25%% of arc points as fallback.",
+                THUMB_TAXEL_DELETE_RADIUS_M,
+            )
+            cutoff = float(np.percentile(min_dist_to_taxel, 75.0))
+            comparison_points = arc_plane_points[min_dist_to_taxel >= cutoff]
+
+        return comparison_points, fitted_radius
+
+    @staticmethod
+    def _fit_2d_circular_arc(
+        u_coords: NDArray[np.float64],
+        w_coords: NDArray[np.float64],
+        num_samples: int,
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64], float]:
+        """
+        Fits a 2D circular arc `(u - u_c)^2 + (w - w_c)^2 = R^2` directly to the
+        thumb taxel coordinates `(u_coords, w_coords)` between the start (`u_min`)
+        and end (`u_max`) of the thumb taxels.
+
+        Uses the algebraic Kåsa circle fit:
+            A*u + B*w + C = u^2 + w^2,  where (u_c, w_c) = (A/2, B/2), R = sqrt(u_c^2 + w_c^2 + C).
+        If the thumb taxels are nearly collinear (radius > THUMB_ARC_MAX_RADIUS_M),
+        smoothly falls back to a 2nd-order parabolic arc fit.
+        """
+        u_min, u_max = float(np.min(u_coords)), float(np.max(u_coords))
+
+        design_mat = np.column_stack([u_coords, w_coords, np.ones_like(u_coords)])
+        rhs = u_coords**2 + w_coords**2
+
+        try:
+            coeffs, _, rank, _ = np.linalg.lstsq(design_mat, rhs, rcond=None)
+            u_c = 0.5 * float(coeffs[0])
+            w_c = 0.5 * float(coeffs[1])
+            r_sq = u_c**2 + w_c**2 + float(coeffs[2])
+            radius = float(np.sqrt(max(r_sq, 0.0)))
+        except np.linalg.LinAlgError:
+            rank = 0
+            u_c, w_c, radius = 0.0, 0.0, np.inf
+
+        span = max(u_max - u_min, 1e-6)
+        if rank == 3 and (0.25 * span) <= radius <= THUMB_ARC_MAX_RADIUS_M:
+            # Find the start and end points along the fitted circle corresponding to u_min and u_max
+            idx_start = int(np.argmin(u_coords))
+            idx_end = int(np.argmax(u_coords))
+
+            theta_start = float(np.arctan2(w_coords[idx_start] - w_c, u_coords[idx_start] - u_c))
+            theta_end = float(np.arctan2(w_coords[idx_end] - w_c, u_coords[idx_end] - u_c))
+
+            # Unwrap angular difference so we always traverse the short arc through the thumb taxels
+            delta_theta = float(np.arctan2(np.sin(theta_end - theta_start), np.cos(theta_end - theta_start)))
+            thetas = np.linspace(theta_start, theta_start + delta_theta, num_samples, dtype=np.float64)
+
+            u_arc = u_c + radius * np.cos(thetas)
+            w_arc = w_c + radius * np.sin(thetas)
+            return u_arc, w_arc, radius
+
+        # Fallback for near-collinear taxel profiles: 2nd-order polynomial arc fit
+        poly_coeffs = np.polyfit(u_coords, w_coords, 2)
+        u_arc = np.linspace(u_min, u_max, num_samples, dtype=np.float64)
+        w_arc = np.polyval(poly_coeffs, u_arc)
+        approx_curvature = abs(2.0 * float(poly_coeffs[0]))
+        eff_radius = (1.0 / approx_curvature) if approx_curvature > 1e-6 else float("inf")
+        return u_arc, w_arc, eff_radius
+
+    @staticmethod
+    def _generate_local_tilted_circle() -> NDArray[np.float64]:
+        """
+        Generates 100 equally distributed points on a 2D circle of radius `CIRCLE_RADIUS_M` (10 mm),
+        whose plane is tilted by `CIRCLE_YAW_OFFSET_DEG` (+30 deg positive yaw) relative to the
+        sensor origin, and whose center sits at:
+            [CIRCLE_CENTER_X_OFFSET_M (+70 mm), CIRCLE_CENTER_Y_OFFSET_M, CIRCLE_CENTER_Z_OFFSET_M]
+        in the sensor's local coordinate system (prior to the 360-deg x-axis roll sweep).
+
+        Returns:
+            NDArray of shape (CIRCLE_NUM_POINTS, 3) in sensor local coordinates.
+        """
+        angles = np.linspace(0.0, 2.0 * np.pi, CIRCLE_NUM_POINTS, endpoint=False, dtype=np.float64)
+
+        # 2D circle parameterization (x_plane = R*cos(a), y_plane = 0, z_plane = R*sin(a))
+        # tilted by +30 degrees yaw around the sensor's z-axis:
+        yaw_rad = np.radians(CIRCLE_YAW_OFFSET_DEG)
+        cos_yaw = float(np.cos(yaw_rad))
+        sin_yaw = float(np.sin(yaw_rad))
+
+        local_x = CIRCLE_CENTER_X_OFFSET_M + (CIRCLE_RADIUS_M * np.cos(angles) * cos_yaw)
+        local_y = CIRCLE_CENTER_Y_OFFSET_M + (CIRCLE_RADIUS_M * np.cos(angles) * sin_yaw)
+        local_z = CIRCLE_CENTER_Z_OFFSET_M + (CIRCLE_RADIUS_M * np.sin(angles))
+
+        return np.column_stack([local_x, local_y, local_z])
+
+    def _compute_global_circle_orientations(
+        self,
+        origin: SensorOriginEstimation,
+    ) -> NDArray[np.float64]:
+        """
+        Rotates the 100 local circle points across all 360 roll orientations (0..359 deg)
+        about the sensor's local x-axis, then transforms each point into the global
+        palm reference coordinate system.
+
+        Returns:
+            NDArray of shape (360, 100, 3) containing the global 3D coordinates of each
+            circle point for every roll orientation.
+        """
+        if (
+            origin.origin_xyz_ref is None
+            or origin.sensor_x_axis_3d is None
+            or origin.sensor_y_axis_3d is None
+            or origin.sensor_z_axis_3d is None
+        ):
+            raise ValueError("SensorOriginEstimation must have valid 3D origin and basis vectors.")
+
+        base_circle_local = self._generate_local_tilted_circle()  # shape (100, 3)
+        lx = base_circle_local[:, 0]  # (100,)
+        ly = base_circle_local[:, 1]  # (100,)
+        lz = base_circle_local[:, 2]  # (100,)
+
+        roll_deg = np.arange(ROLL_NUM_ORIENTATIONS, dtype=np.float64)  # (360,)
+        roll_rad = np.radians(roll_deg)
+        cos_r = np.cos(roll_rad)[:, np.newaxis]  # (360, 1)
+        sin_r = np.sin(roll_rad)[:, np.newaxis]  # (360, 1)
+
+        # Rotate about the sensor's local x-axis: R_x(roll)
+        rx_local = np.broadcast_to(lx[np.newaxis, :], (ROLL_NUM_ORIENTATIONS, CIRCLE_NUM_POINTS))
+        ry_local = (cos_r * ly[np.newaxis, :]) - (sin_r * lz[np.newaxis, :])
+        rz_local = (sin_r * ly[np.newaxis, :]) + (cos_r * lz[np.newaxis, :])
+
+        # Stack into (360, 100, 3) in sensor local coordinates
+        rotated_local = np.stack([rx_local, ry_local, rz_local], axis=-1)
+
+        # Transform to global palm reference frame:
+        # P_global = origin_xyz_ref + x_local * u_x + y_local * u_y + z_local * u_z
+        basis_matrix = np.column_stack(
+            [origin.sensor_x_axis_3d, origin.sensor_y_axis_3d, origin.sensor_z_axis_3d]
+        )  # shape (3, 3), columns are local axes in global coordinates
+
+        global_orientations = origin.origin_xyz_ref + (rotated_local @ basis_matrix.T)
+        return global_orientations  # shape (360, 100, 3)
+
+    @staticmethod
+    def _min_distances_per_orientation(
+        global_circle_orientations: NDArray[np.float64],
+        thumb_points_ref: NDArray[np.float64],
+    ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
+        """
+        For each of the 360 orientations, computes the Euclidean distance from every
+        point of the 100-point circle to every point on the thumb comparison surface,
+        and returns the minimum distance (and winning circle point index) per orientation.
+
+        Args:
+            global_circle_orientations: shape (360, 100, 3)
+            thumb_points_ref: shape (M, 3)
+
+        Returns:
+            min_dists: shape (360,)
+            best_circle_point_indices: shape (360,)
+        """
+        # Pairwise squared Euclidean distance via ||c - t||^2 = ||c||^2 + ||t||^2 - 2 c.t
+        c_sq = np.sum(global_circle_orientations**2, axis=-1, keepdims=True)  # (360, 100, 1)
+        t_sq = np.sum(thumb_points_ref**2, axis=-1)[np.newaxis, np.newaxis, :]  # (1, 1, M)
+        cross_term = np.matmul(global_circle_orientations, thumb_points_ref.T)  # (360, 100, M)
+
+        dist_sq = np.maximum(c_sq + t_sq - (2.0 * cross_term), 0.0)
+        dists = np.sqrt(dist_sq)  # (360, 100, M)
+
+        # Minimum distance to the thumb for each (orientation, circle_point): shape (360, 100)
+        min_dist_per_circle_pt = np.min(dists, axis=-1)
+
+        # Pick the circle point with the lowest distance for each orientation: shape (360,)
+        best_circle_pt_idx = np.argmin(min_dist_per_circle_pt, axis=-1)
+        orientation_min_dists = min_dist_per_circle_pt[
+            np.arange(global_circle_orientations.shape[0]), best_circle_pt_idx
+        ]
+        return orientation_min_dists, best_circle_pt_idx
+
+    def _calculate_sensor_roll(self) -> RollEstimation:
+        """
+        Evaluates all 360 roll orientations of the 100-point sensor circle against
+        the fitted thumb comparison surfaces from Probe 1 and Probe 2, and selects
+        the orientation with the lowest mean minimum distance across both probes.
+        """
+        origin = self.output.origin
+        if origin is None or not origin.valid or origin.origin_xyz_ref is None:
+            logger.warning("Cannot calculate sensor roll: sensor origin is not valid.")
+            return RollEstimation(
+                valid=False,
+                best_roll_deg=None,
+                best_roll_rad=None,
+                min_mean_distance_m=None,
+                probe_1_min_distance_m=None,
+                probe_2_min_distance_m=None,
+            )
+
+        if len(self.output.probes) < ROLL_REQUIRED_PROBES:
+            logger.warning(
+                "Cannot calculate sensor roll: need %d probes, have %d.",
+                ROLL_REQUIRED_PROBES,
+                len(self.output.probes),
+            )
+            return RollEstimation(
+                valid=False,
+                best_roll_deg=None,
+                best_roll_rad=None,
+                min_mean_distance_m=None,
+                probe_1_min_distance_m=None,
+                probe_2_min_distance_m=None,
+            )
+
+        probe_1 = self.output.probes[0]
+        probe_2 = self.output.probes[1]
+
+        if (
+            probe_1.thumb_comparison_points_ref is None
+            or probe_1.thumb_comparison_points_ref.size == 0
+            or probe_2.thumb_comparison_points_ref is None
+            or probe_2.thumb_comparison_points_ref.size == 0
+        ):
+            logger.warning("Cannot calculate sensor roll: Probe 1 or Probe 2 has no thumb comparison points.")
+            return RollEstimation(
+                valid=False,
+                best_roll_deg=None,
+                best_roll_rad=None,
+                min_mean_distance_m=None,
+                probe_1_min_distance_m=None,
+                probe_2_min_distance_m=None,
+            )
+
+        # 1. Compute global coordinates for all 100 circle points across all 360 orientations
+        global_orientations = self._compute_global_circle_orientations(origin)  # (360, 100, 3)
+
+        # 2. Compute lowest distances for Probe 1 and Probe 2 at each of the 360 orientations
+        p1_min_dists, p1_best_pt_idx = self._min_distances_per_orientation(
+            global_orientations, probe_1.thumb_comparison_points_ref
+        )
+        p2_min_dists, p2_best_pt_idx = self._min_distances_per_orientation(
+            global_orientations, probe_2.thumb_comparison_points_ref
+        )
+
+        # 3. Mean of Probe 1 and Probe 2 minimum distances per orientation
+        mean_dists = 0.5 * (p1_min_dists + p2_min_dists)  # shape (360,)
+
+        # 4. Select the orientation with the lowest mean distance
+        best_idx = int(np.argmin(mean_dists))
+        best_roll_deg = float(best_idx)
+        best_roll_rad = float(np.radians(best_roll_deg))
+
+        return RollEstimation(
+            valid=True,
+            best_roll_deg=best_roll_deg,
+            best_roll_rad=best_roll_rad,
+            min_mean_distance_m=float(mean_dists[best_idx]),
+            probe_1_min_distance_m=float(p1_min_dists[best_idx]),
+            probe_2_min_distance_m=float(p2_min_dists[best_idx]),
+            probe_1_closest_circle_pt_ref=global_orientations[best_idx, int(p1_best_pt_idx[best_idx])].copy(),
+            probe_2_closest_circle_pt_ref=global_orientations[best_idx, int(p2_best_pt_idx[best_idx])].copy(),
+            orientation_mean_distances_m=mean_dists,
+            best_circle_points_ref=global_orientations[best_idx].copy(),
         )
 
     # ------------------------------------------------------------------------
@@ -746,6 +1159,7 @@ class TactilePoseAndSensorEstimator:
         if clear_recorded_probes:
             self.output.probes.clear()
             self.output.decision = SensorDecision()
+            self.output.roll = None
 
     def _full_reset(self) -> None:
         self.output = EstimatorOutput(current_state=self.output.current_state)
