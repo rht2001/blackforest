@@ -1,5 +1,6 @@
 import json
 import time
+import threading
 from pymodbus.client import ModbusTcpClient
 import numpy as np
 from typing import Literal
@@ -9,10 +10,12 @@ DEFAULT_MOVEMENT_SPEED = [400] * 6
 
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 
-DEFAULT_FORCE = 3000
+DEFAULT_FORCE = 2000
 CLOSE_THRESHOLD = 50
 IMPULSE_REJECTION_WAIT_TIME = 0.25
 GRIP_ANGLE_THRESHOLD = 10  # Threshold for detecting if the hand is in a gripping position (0-1000 scale)
+SAFE_ANGLE_MIN = 5  # Soft limit: avoid driving linear actuators into mechanical hard close stops
+SAFE_ANGLE_MAX = 995  # Soft limit: avoid driving linear actuators into mechanical hard open stops
 
 class RobotHandController:
     def __init__(self, ip: str = "192.168.123.211", port: int = 6000, mock: bool = False):
@@ -21,6 +24,7 @@ class RobotHandController:
         """
         self.ip = ip
         self.port = port
+        self.lock = threading.Lock()
         self.client: ModbusTcpClient | None = None
         self.auto_mode_active = True
         self.auto_contact_trigerred = False
@@ -31,6 +35,7 @@ class RobotHandController:
         self.mock_angles = [1000] * 6
         self.last_sensor_data: dict[str, np.ndarray] = {}
         self.last_all_points = np.zeros((112, 17))
+        self.last_tactile_read_time: float = 0.0
         self.offsets = {
                 "Little": (150, 120),
                 "Ring":   (230, 110),
@@ -41,18 +46,6 @@ class RobotHandController:
             }
 
         self.results: DataDict = default_results
-
-        try:
-            self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
-            print(f"[RobotHandController] Attempting connection to {self.ip}:{self.port}...")
-            if self.client.connect():
-                self.is_connected = True
-                print(f"[RobotHandController] Connected to hand at {self.ip}:{self.port}")
-            else:
-                print(f"[RobotHandController] Could not reach {self.ip}:{self.port}. Running in simulation/disconnected mode.")
-        except Exception as e:
-            print(f"[RobotHandController] Connection error ({e}). Running in simulation/disconnected mode.")
-            self.client = None
 
         self.send_addresses = {
             "ANGLES": 1486,
@@ -116,10 +109,7 @@ class RobotHandController:
         else:
             self.state = "initialised"
 
-    # ==========================================
     # Unified Command Bus (read_command / send_command)
-    # ==========================================
-
     def send_command(self, value: list[int], type: DataTypes | RegisterName = "ANGLES") -> bool:
         """
         Unified write access point for commands and register settings.
@@ -132,15 +122,24 @@ class RobotHandController:
             address = REGISTERS[type]
         else:
             raise ValueError(f"Unknown command target: {type}")
-
+        # QUESTION: Why is this here
         if type in ("ANGLES", "ANGLE_SET"):
-            self.current_angles = list(value)
-            self.mock_angles = list(value)
+            clamped_vals = []
+            for index, send_value in enumerate(value):
+                if send_value == 65535 or send_value == -1:
+                    clamped_vals.append(65535)
+                else:
+                    cv = max(SAFE_ANGLE_MIN, min(SAFE_ANGLE_MAX, int(send_value)))
+                    clamped_vals.append(cv)
+                    self.current_angles[index] = cv
+                    self.mock_angles[index] = cv
+            value = clamped_vals
 
         if not self.is_connected or self.client is None:
             return True
 
-        res = self.client.write_registers(address=address, values=value, device_id=1)
+        with self.lock:
+            res = self.client.write_registers(address=address, values=value, device_id=1)
         return not res.isError()
 
     def read_command(self, type: DataTypes | str = "ANGLES", count: int = 6) -> list[int]:
@@ -161,11 +160,16 @@ class RobotHandController:
                 return list(self.current_angles)
             return [0] * count
 
-        res = self.client.read_holding_registers(address=address, count=count, device_id=1)
+        with self.lock:
+            res = self.client.read_holding_registers(address=address, count=count, device_id=1)
         if not res.isError():
-            if type in ("ANGLES", "ANGLE_ACT"):
-                self.current_angles = list(res.registers)
-            return list(res.registers)
+            vals = list(res.registers)
+            if type in ("FORCES", "FORCE_ACT"):
+                # Convert raw unsigned 16-bit registers to signed int16 (-4000 to 4000g)
+                vals = [(v if v < 32768 else v - 65536) for v in vals]
+            elif type in ("ANGLES", "ANGLE_ACT"):
+                self.current_angles = vals
+            return vals
 
         print(f"[RobotHandController] Failed to read {type} from address {address}")
         return [0] * count
@@ -185,20 +189,18 @@ class RobotHandController:
 
         values = []
         for i in range(0, length, 120):
-            res = self.client.read_holding_registers(
-                address=addr + i,
-                count=min(120, length - i),
-                device_id=1,
-            )
+            with self.lock:
+                res = self.client.read_holding_registers(
+                    address=addr + i,
+                    count=min(120, length - i),
+                    device_id=1,
+                )
             if not res.isError():
                 values.extend(res.registers)
         return values
 
-    # ==========================================
-    # High-Level Semantic Facades
-    # ==========================================
-
-    def startup(self, max_force: int = 1500):
+    # High-level semantic facades
+    def startup(self, max_force: int = DEFAULT_FORCE):
         """Initializes speed, force limit, opens hand, and calibrates offsets on startup."""
         self.set_default_speed()
         self.set_max_force(max_force)
@@ -208,7 +210,7 @@ class RobotHandController:
         print(f"[RobotHandController] Hand opened and ready (max force: {max_force}g).")
         self.state = "initialised"
 
-    def set_max_force(self, force_g: int = 1500) -> bool:
+    def set_max_force(self, force_g: int = DEFAULT_FORCE) -> bool:
         """
         Sets the maximum gripping force threshold for all 6 DOFs (range: 100 - 3000g).
         Writes to both active FORCES register (1498) and DEFAULT_FORCE_SET register (1044).
@@ -223,9 +225,21 @@ class RobotHandController:
         """Sets the default speed for all 6 DOFs."""
         return self.send_command(DEFAULT_MOVEMENT_SPEED, "DEFAULT_SPEED_SET")
 
+    def set_speeds(self, speeds: list[int]) -> bool:
+        """Sets target joint speed for all 6 DOFs (0-1000)."""
+        return self.send_command(speeds, "SPEED_SET")
+
+    def clear_errors(self) -> bool:
+        """Clears active clearable motor error flags via CLEAR_ERROR (reg 1004)."""
+        return self.send_command([1], "CLEAR_ERROR")
+
     def set_angles(self, angles: list[int]) -> bool:
-        """Sets target angles for all 6 DOFs (0=closed, 1000=open)."""
-        return self.send_command(angles, "ANGLES")
+        """Sets target angles for all 6 DOFs (5=closed, 995=open, -1=hold). Clamped to safe soft limits."""
+        encoded = [
+            (65535 if (a == -1 or a == 65535) else max(SAFE_ANGLE_MIN, min(SAFE_ANGLE_MAX, int(a))))
+            for a in angles
+        ]
+        return self.send_command(encoded, "ANGLES")
 
     def get_angles(self) -> list[int]:
         """Reads actual joint angles for all 6 DOFs."""
@@ -239,8 +253,13 @@ class RobotHandController:
         """Reads actual force values for all 6 DOFs."""
         return self.read_command("FORCES")
 
+    def get_errors(self) -> list[int]:
+        """Reads motor error codes for all 6 DOFs (reg 1606)."""
+        return self.read_command("ERROR")
+
     def open_hand(self):
         """Opens all fingers fully (angle 1000) and re-arms automatic grip detection."""
+        self.clear_errors()
         self.set_angles([1000] * 6)
         self.auto_mode_active = True
         self.auto_contact_trigerred = False
@@ -255,13 +274,19 @@ class RobotHandController:
         self.contact_start_time = 0.0
         time.sleep(0.5)  # Allow time for the hand to close before further commands
 
+    def calibrate_forces(self) -> bool:
+        """Zeroes actuator force sensors via GESTURE_FORCE_CLB (reg 1009). Hand must be fully open."""
+        print("[RobotHandController] Calibrating actuator force sensors (GESTURE_FORCE_CLB)...")
+        return self.send_command([1], "GESTURE_FORCE_CLB")
+
     def calibrate_offsets(self):
-        """Calibrates baseline tactile sensor readings."""
-        print("Calibrating sensor offsets...")
-        time.sleep(1)
+        """Calibrates baseline tactile sensor readings and tares force sensors."""
+        print("[RobotHandController] Calibrating sensor offsets...")
         for name, addr, h, w, key, rel in self.sensor_groups:
             data = self.safe_read(addr, h * w)
             self.sensor_offsets[name] = np.array(data) if data else np.zeros(h * w)
+        self.calibrate_forces()
+        print("[RobotHandController] Sensor offsets calibrated successfully.")
 
     def close_on_contact(self) -> bool:
         """Triggers grip closure if tactile pressure exceeds contact threshold with impulse rejection."""
@@ -320,6 +345,7 @@ class RobotHandController:
 
         self.last_sensor_data = raw_cache
         self.last_all_points = all_points
+        self.last_tactile_read_time = time.time()
         return data_matrix, all_points
 
     def build_result_data(self) -> DataDict:
@@ -332,9 +358,10 @@ class RobotHandController:
             "tactile_mean_matrix": self.mean_matrix,
             "state": self.state,
             "state_change": self.state_change,
+            "slip_detected": False,
+            "slipping_contacts": [],
         }
         return self.results
-
     def poll(self) -> DataDict:
         """
         Pure hardware polling method.
@@ -348,5 +375,6 @@ class RobotHandController:
     def main(self) -> DataDict:
         """Hardware acquisition entry point (alias for poll)."""
         return self.poll()
+
 
 

@@ -12,7 +12,12 @@ wheels/
 uv.lock
 
 *.csv
+<<<<<<< HEAD
 
 # Local CAD matching results and dependency cache
 sensor_identification_demo/
 .uv-cache/
+=======
+*.png 
+.mypy_cache/
+>>>>>>> main
