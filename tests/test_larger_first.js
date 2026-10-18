@@ -16,3 +16,12 @@ assert.equal(candidates.sort(compare)[0][0], 'SENSOR_B');
 result.placement_candidate = 'SENSOR_A';
 assert.equal(candidates.sort(compare)[0][0], 'SENSOR_A');
 console.log('PASS larger-first viewer selection and collision feedback');
+
+const reduced = context.module.exports.render({status:'complete',result:{contacts:80,fits:{SENSOR_A:{
+  compatible:true,inlier_fraction:.5,input_contact_points:80,scored_contact_points:8,
+  input_hand_points:20,hand_constraints_checked:1,hand_collision_count:0,point_spacing_mm:2
+}}}});
+assert.ok(reduced.includes('4 / 8'));
+assert.ok(reduced.includes('Checked 8 / 80 contact points'));
+assert.ok(reduced.includes('1 / 20 hand limits'));
+console.log('PASS representative counts and retained-contact inlier denominator');

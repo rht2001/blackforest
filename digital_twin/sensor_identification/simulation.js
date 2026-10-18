@@ -46,6 +46,7 @@
    metric('Contact error (RMS)',mm(fit.rmse_mm))+metric('Worst contact error',mm(fit.max_error_mm))+
    metric('Contacts in tolerance',within)+metric('Max hand penetration',mm(fit.hand_limit_max_mm))+metric('Hand limits exceeded',Number.isInteger(fit.hand_collision_count)?fit.hand_collision_count+' / '+fit.hand_constraints_checked:'—')+'</dl><p class="fit-small">Allowed: contact '+escape(mm(fit.contact_tolerance_mm))+' · hand '+escape(mm(fit.hand_tolerance_mm))+'</p>'+
    (Number.isInteger(fit.input_contact_points)?'<p class="fit-small">Checked '+escape(fit.scored_contact_points)+' / '+escape(fit.input_contact_points)+' contact points · '+escape(fit.hand_constraints_checked)+' / '+escape(fit.input_hand_points)+' hand limits · spacing '+escape(mm(fit.point_spacing_mm))+'</p>':'')+
+   (Number.isInteger(fit.pressure_direction_patches)?'<p class="fit-small">Pressure direction: '+escape(fit.pressure_direction_patches)+(fit.pressure_direction_patches?' local patches guide orientation.':' reliable local patches; orientation uses contact positions.')+'</p>':'')+
    reasons.map(reason=>'<p class="fit-reason">'+escape(reason)+'</p>').join('')+poseBox(name,fit,context)+'</details>';
  }
  function render(state,explanation='',now=Date.now()/1000,context={}){
@@ -171,13 +172,13 @@
 
         <div id="csvControls" hidden><label>Use CSV as <select id="csvScope"><option value="run">Whole probing run</option><option value="row">Single row</option></select></label>
 
-        <div id="runControls"><label>Run <select id="historyRun"></select></label><label>Contacts <select id="runRegions"><option value="all">All hand regions</option><option value="thumb">Thumb only</option></select></label><label>Point spacing (mm) <input id="runVoxel" type="number" min="0.1" max="10" step="0.1" value="1"></label><button id="buildRun">Build run point cloud</button><p class="hint">Keeps the first contact patch for each closing finger. Thumb probing and palm contacts use all valid recorded poses. Coordinates assume the object stays fixed relative to the hand base.</p></div>
+        <div id="runControls"><label>Run <select id="historyRun"></select></label><label>Contacts <select id="runRegions"><option value="all">All hand regions</option><option value="thumb">Thumb only</option></select></label><label>Point spacing (mm) <input id="runVoxel" type="number" min="0.1" max="10" step="0.1" value="1"></label><button id="buildRun">Build run point cloud</button><p class="hint">Keeps the first contact patch for each closing finger. Finger surface limits use each finger’s most closed recorded pose. Thumb probing and palm contacts use all valid recorded poses. Coordinates assume the object stays fixed relative to the hand base.</p></div>
 
         <div id="rowControls" hidden><label>CSV row <input id="historyRow" type="number" value="1" min="1"></label><div class="data-actions"><button id="historyPrev">Previous</button><button id="historyNext">Next</button></div></div><p id="historyRowInfo" class="hint"></p></div>
 
         <button id="downloadRun" hidden>Save run point cloud JSON</button>
 
-        <div id="runLayers" hidden><label><input id="runShowLimits" type="checkbox" checked> Show hand-space limits</label><p class="hint"><span style="color:#b88aff">Purple: hand surfaces</span> · <span style="color:#58bfff">Blue: inactive taxels</span> · <span style="color:#94a3b8">Gray: pressure unknown</span>. Bright pressure colors mark active contacts. Each limit follows its recorded hand pose.</p></div>
+        <div id="runLayers" hidden><label><input id="runShowAxes" type="checkbox" checked> Show coordinate frame</label><p class="hint"><span style="color:#ff595e">X</span> · <span style="color:#49d17d">Y</span> · <span style="color:#58a6ff">Z</span> · left_base_link · origin (0, 0, 0) · arrows 40 mm</p><label><input id="runShowLimits" type="checkbox" checked> Show hand-space limits</label><p class="hint"><span style="color:#b88aff">Purple: hand surfaces</span> · <span style="color:#58bfff">Blue: inactive taxels</span> · <span style="color:#94a3b8">Gray: pressure unknown</span>. Bright pressure colors mark active contacts. Each limit follows its recorded hand pose.</p></div>
 
         <p id="historyStatus" class="hint">Choose a file to preview it before estimating.</p>
 
@@ -414,11 +415,26 @@
 
       const traces=[layer(limits.filter(p=>p.kind==='inactive_taxel'),[.35,.75,1],3,visible),layer(limits.filter(p=>p.kind==='unknown_taxel'),[.58,.64,.72],2,visible),layer(limits.filter(p=>!['inactive_taxel','unknown_taxel'].includes(p.kind)),[.72,.54,1],3,visible),layer(points,null,5,true)];
 
+      // Run points are already in left_base_link metres; draw the base axes in mm.
+      const axes=['X','Y','Z'].map((name,axis)=>{
+        const vertices=[],origin=[0,0,0],end=[0,0,0];end[axis]=40;
+        vertices.push(origin,end);
+        for(const perpendicular of [0,1,2].filter(k=>k!==axis))for(const sign of [-1,1]){
+          const wing=end.slice();wing[axis]-=4;wing[perpendicular]=sign*2.5;vertices.push(end,wing);
+        }
+        const color=[[1,89/255,94/255],[73/255,209/255,125/255],[88/255,166/255,1]][axis];
+        return {name:'Global '+name,type:'scatter3d',mode:'lines',xray:true,visible:$('runShowAxes').checked,
+          x:vertices.map(p=>p[0]),y:vertices.map(p=>p[1]),z:vertices.map(p=>p[2]),marker:{rgb:vertices.map(()=>color)}};
+      });
+      traces.push(...axes);
+
       if(!runPlot)runPlot=await HandRenderer.create('runCloudScene',traces);
 
-      else await HandRenderer.restyle(runPlot,{'x':traces.map(t=>t.x),'y':traces.map(t=>t.y),'z':traces.map(t=>t.z),'visible':traces.map(t=>t.visible),'marker.rgb':traces.map(t=>t.marker.rgb||null),'marker.color':traces.map(t=>t.marker.color)},[0,1,2,3]);
+      else await HandRenderer.restyle(runPlot,{'x':traces.map(t=>t.x),'y':traces.map(t=>t.y),'z':traces.map(t=>t.z),'visible':traces.map(t=>t.visible),'marker.rgb':traces.map(t=>t.marker.rgb||null),'marker.color':traces.map(t=>t.marker.color)},traces.map((_,i)=>i));
 
-      const shown=visible?[...points,...limits]:points.length?points:limits;
+      const shown=[...(visible?[...points,...limits]:points.length?points:limits)];
+      if($('runShowAxes').checked)for(const trace of axes)trace.x.forEach((x,i)=>shown.push({x:x/1000,y:trace.y[i]/1000,z:trace.z[i]/1000}));
+      if(!shown.length)return;
 
       const center=['x','y','z'].map(k=>shown.reduce((s,p)=>s+p[k]*1000,0)/shown.length);
 
@@ -429,6 +445,7 @@
     }
 
     $('runShowLimits').onchange=()=>{if(runFrame)drawRun()};
+    $('runShowAxes').onchange=()=>{if(runFrame)drawRun()};
 
     async function acceptRun(frame){
 
@@ -572,7 +589,11 @@
 
     function display(state){
 
-      if(state.estimator_revision!=='collision_roll_v4')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
+      if(state.estimator_revision!=='pressure_directions_v5')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
+      if(!fittedFrame&&state.estimate_frame){
+        fittedFrame=state.estimate_frame;
+        fittedThreshold=state.estimate_threshold??200;
+      }
       paintFeedback(state);
 
       running=state.status==='running';updateReady();clearTimeout(pollTimer);
@@ -681,7 +702,7 @@
 
         if(!check.ok)throw Error(backend.error||'Could not reach estimator');
 
-        if(backend.estimator_revision!=='collision_roll_v4')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
+        if(backend.estimator_revision!=='pressure_directions_v5')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
 
         const response=await fetch(base+'/api/identification',{method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(15000),body:JSON.stringify({mode:'current',frame:frozen,threshold,tolerance_mm:tolerance,hand_tolerance_mm:handTolerance,point_spacing_mm:pointSpacing,quick_preview:$('estimateQuality').value==='quick',input_label:label})});
 

@@ -12,7 +12,7 @@ from .classifier import IdentificationConfig, identify_sensor
 from .demo import synthetic_points, write_viewer
 from .geometry import load_candidates
 
-ESTIMATOR_REVISION = 'collision_roll_v4'
+ESTIMATOR_REVISION = 'pressure_directions_v5'
 
 
 class IdentificationService:
@@ -75,6 +75,10 @@ class IdentificationService:
                                estimator_revision=ESTIMATOR_REVISION, quick_preview=config.quick_preview,
                                progress=dict(stage='queued', updated_at=time.time()),
                                started_at=time.time(), input_label=str(request.get('input_label', mode))[:256])
+            if mode == 'current':
+                # Preserve the exact capture used to fit, including its frozen hand pose.
+                self._state['estimate_frame'] = copy.deepcopy(request['frame'])
+                self._state['estimate_threshold'] = config.pressure_threshold
             self._report = None
             state = copy.deepcopy(self._state)
         worker = threading.Thread(target=self._run, args=(copy.deepcopy(request), config),

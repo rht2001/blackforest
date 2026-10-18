@@ -23,6 +23,17 @@ const {chromium}=require(process.env.PLAYWRIGHT_PACKAGE||'playwright');
   await page.waitForFunction(()=>document.getElementById('receivedRunStatus').textContent.includes('Captured run ready'),null,{timeout:60000});
   assert.equal(await page.locator('#dataHistory').getAttribute('aria-selected'),'true');
   await page.waitForFunction(()=>document.querySelector('#runCloudScene')._renderer,null,{timeout:60000});
+  const axes=()=>page.evaluate(()=>document.querySelector('#runCloudScene').data.filter(t=>/^Global [XYZ]$/.test(t.name)));
+  const frameAxes=await axes();assert.equal(frameAxes.length,3);
+  frameAxes.forEach((trace,axis)=>{
+    assert.equal(trace.visible,true);assert.equal(trace.mode,'lines');
+    assert.deepEqual(['x','y','z'].map(k=>trace[k][0]),[0,0,0]);
+    assert.deepEqual(['x','y','z'].map(k=>trace[k][1]),[0,1,2].map(k=>k===axis?40:0));
+  });
+  await page.uncheck('#runShowAxes');assert.ok((await axes()).every(t=>!t.visible));
+  await page.check('#runShowAxes');assert.ok((await axes()).every(t=>t.visible));
+  await page.uncheck('#runShowLimits');assert.ok((await axes()).every(t=>t.visible));
+  await page.check('#runShowLimits');
   assert.equal(await page.locator('#estimateButton').isEnabled(),true);
   const downloadPromise=page.waitForEvent('download');await page.click('#downloadRun');
   const download=await downloadPromise,cloud=JSON.parse(fs.readFileSync(await download.path(),'utf8'));
