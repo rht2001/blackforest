@@ -360,3 +360,6 @@ class HandApp(tk.Tk):
         except tk.TclError:
             pass
 
+
+from ui.dashboardInterface import FullscreenHandApp  # noqa: E402, F401
+
