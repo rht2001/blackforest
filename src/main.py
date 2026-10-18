@@ -42,7 +42,7 @@ def main():
             app.main(state=grasp_results.get("state"), data=grasp_results)
             db.main(data=grasp_results)
             if publisher is not None:
-                publisher.submit(robot_snapshot(robot, results_data))
+                publisher.submit(robot_snapshot(robot, grasp_results))
 
 
             elapsed = time.monotonic() - start
