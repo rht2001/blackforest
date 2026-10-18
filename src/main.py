@@ -7,6 +7,8 @@ from interface.robot_dataset import RobotDatabase
 from logic.grasp_manager import GraspManager
 from ui.appInterface import HandApp
 from logic.twin_publisher import TwinPublisher, robot_snapshot
+from logic.orientation_logic import TactilePoseAndSensorEstimator
+from digital_twin.extract_tectile import reframe_to_palm_taxel
 STEP_TIME = 0.03
 def main():
     """
@@ -18,6 +20,8 @@ def main():
     robot = RobotHandController(ip="192.168.123.210", port=6000)
     grasp_manager = GraspManager()
     app = HandApp(robot, grasp_manager=grasp_manager)
+    geometric_tafel_positions = reframe_to_palm_taxel()
+    orientation_check = TactilePoseAndSensorEstimator(robot)
     db = RobotDatabase()
     publisher = TwinPublisher("http://127.0.0.1:18765/api/state")
 
@@ -39,7 +43,10 @@ def main():
 
             results_data = robot.poll()
             grasp_results = grasp_manager.step(robot, results_data)
+            robot.results = grasp_results
             app.main(state=grasp_results.get("state"), data=grasp_results)
+            geometric_tafel_positions = reframe_to_palm_taxel()
+            orientation_check.main(kinematics=geometric_tafel_positions)
             db.main(data=grasp_results)
             if publisher is not None:
                 publisher.submit(robot_snapshot(robot, grasp_results))
