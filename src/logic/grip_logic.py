@@ -26,14 +26,13 @@ PRIMARY_FINGERS = ["Little", "Ring", "Middle", "Index"]
 def extract_all_sensor_pressures(
     mean_matrix: np.ndarray,
     tactile_matrix: np.ndarray | None = None,
-    cell_threshold: float = 35.0,
+    cell_threshold: float = 50.0,
 ) -> dict[str, float]:
     """
     Extracts effective contact pressure for all 17 sensor groups.
-    If tactile_matrix is provided, evaluates active contact cells (> cell_threshold)
-    to match the UI visualizer and avoid zero-cell dilution.
+    Requires at least 2 active cells (> cell_threshold) to confirm true physical contact,
+    matching the UI visualizer and completely rejecting single-taxel noise/drift.
     """
-    flat_mean = np.asarray(mean_matrix).flatten()
     pressures: dict[str, float] = {}
 
     for idx, name in enumerate(SENSOR_NAMES):
@@ -42,27 +41,34 @@ def extract_all_sensor_pressures(
             active_cells = col[col > cell_threshold]
             if len(active_cells) >= 2:
                 pressures[name] = float(np.mean(active_cells))
-            elif len(col) > 0 and np.max(col) > cell_threshold:
-                pressures[name] = float(np.max(col))
             else:
-                pressures[name] = float(flat_mean[idx]) if idx < len(flat_mean) else 0.0
+                pressures[name] = 0.0
         else:
-            pressures[name] = float(flat_mean[idx]) if idx < len(flat_mean) else 0.0
+            pressures[name] = 0.0
 
     return pressures
+
+
+CYLINDER_FINGER_SENSORS: dict[str, str] = {
+    "Little": "Little Nail",
+    "Ring": "Ring Nail",
+    "Middle": "Middle Nail",
+    "Index": "Index Nail",
+}
 
 
 def get_finger_pressures(
     all_pressures: dict[str, float],
 ) -> dict[str, float]:
     """
-    Computes effective contact pressure per finger by taking the maximum
-    pressure across all sensor groups on that finger (Tip, Nail, Pad).
+    Computes effective cylindrical contact pressure per finger.
+    Focuses on the Nail sensors which physically establish contact
+    with the cylinder during closed curls, plus Palm.
     """
     finger_pressures: dict[str, float] = {}
-    for finger, indices in FINGER_SENSORS.items():
-        sensor_names = [SENSOR_NAMES[i] for i in indices if i < len(SENSOR_NAMES)]
-        finger_pressures[finger] = max((all_pressures.get(s, 0.0) for s in sensor_names), default=0.0)
+    for finger, sensor_name in CYLINDER_FINGER_SENSORS.items():
+        finger_pressures[finger] = float(all_pressures.get(sensor_name, 0.0))
+    finger_pressures["Palm"] = float(all_pressures.get("Palm", 0.0))
     return finger_pressures
 
 
@@ -70,7 +76,7 @@ def get_pad_pressures(
     mean_matrix: np.ndarray,
     tactile_matrix: np.ndarray | None = None,
 ) -> dict[str, float]:
-    """Backward-compatibility facade returning finger-level contact pressures."""
+    """Backward-compatibility facade returning finger Nail and Palm contact pressures."""
     all_p = extract_all_sensor_pressures(mean_matrix, tactile_matrix)
     return get_finger_pressures(all_p)
 
@@ -79,27 +85,32 @@ def is_empty_grasp(
     finger_angles: np.ndarray,
     finger_pressures: dict[str, float],
     empty_angle_threshold: int = 60,
-    min_contact_pressure: float = 25.0,
+    min_contact_pressure: float = 60.0,
 ) -> bool:
     """
-    Returns True only if the hand closed into an empty fist:
-    all fingers reached near bottom without detecting contact.
-    If any finger is held open by an object (angle > 120), it is not an empty grasp.
+    Returns True only if the hand closed into an empty fist without contact:
+    fingers reached near bottom AND tactile sensors confirm NO object is present.
+    If tactile sensors detect active contact (>=2 fingers or total force >= 250g),
+    it is never an empty grasp regardless of finger angles.
     """
     angles = np.asarray(finger_angles)[:4]
+    palm_pressure = finger_pressures.get("Palm", 0.0)
+
     active_fingers = sum(
         1 for f in PRIMARY_FINGERS if finger_pressures.get(f, 0.0) >= min_contact_pressure
     )
+    total_force = sum(finger_pressures.get(f, 0.0) for f in PRIMARY_FINGERS) + palm_pressure
 
-    if active_fingers >= 2:
+    # If tactile sensors detect significant contact, an object is present
+    if active_fingers >= 2 or total_force >= 250.0:
         return False
 
-    # Empty if all 4 fingers closed to fist (< 60)
-    if np.all(angles < empty_angle_threshold) and active_fingers == 0:
+    # Empty fist: all fingers curled low (< 60) AND no tactile contact
+    if np.all(angles < empty_angle_threshold) and active_fingers == 0 and total_force < 100.0:
         return True
 
-    # Empty if average angle is near bottom (< 50) and no finger contact
-    if np.mean(angles) < 50 and active_fingers == 0:
+    # Empty fist: mean angle at bottom (< 35) with at most 1 weak contact and low total force
+    if np.mean(angles) < 35 and active_fingers <= 1 and total_force < 100.0:
         return True
 
     return False
@@ -113,7 +124,7 @@ def confirm_grip(
     valid_tactile: np.ndarray | None = None,
     angle_tolerance: int = 75,
     min_active_pads: int = 3,
-    pad_force_threshold: float = 40.0,
+    pad_force_threshold: float = 60.0,
     force_spread_ratio: float = 6.0,
     min_grasp_angle: int = 50,
     pos_tolerance: float = 0.15,
