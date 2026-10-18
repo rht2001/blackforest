@@ -78,7 +78,7 @@ stateDiagram-v2
 ## Project Structure
 
 ```text
-blackforest/
+haptiq/
 ├── src/
 │   ├── main.py                      # 30ms real-time control loop & application entry point
 │   ├── config/
@@ -123,7 +123,7 @@ blackforest/
 1. Clone the repository:
    ```bash
    git clone <repository-url>
-   cd blackforest
+   cd haptiq
    ```
 
 2. Install dependencies and create the virtual environment using `uv`:
@@ -142,7 +142,8 @@ Run the main control loop and Tkinter user interface:
 ```bash
 uv run python src/main.py
 ```
-or ```bash
+or
+```bash
 uv run haptiq
 ```
 
