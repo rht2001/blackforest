@@ -126,9 +126,13 @@ def build(data):
 
 def main():
     html=(ROOT/'hand_twin_6dof.html').read_text(encoding='utf-8')
-    data=json.loads(re.search(r'<script id="jointProfileData" type="application/json">(.*?)</script>',html,re.S).group(1))
-    geometry=build(data)
-    (ROOT/'tactile_geometry.json').write_text(json.dumps(geometry,indent=2)+'\n',encoding='utf-8')
-    print(f"Built {geometry['total_cells']} cells on {len(geometry['regions'])} sensor meshes; zero projection misses.")
+    needed_thing = re.search(r'<script id="jointProfileData" type="application/json">(.*?)</script>',html,re.S)
+    if needed_thing is not None:
+        needed_thing_what = needed_thing.group(1)
+
+        data=json.loads(needed_thing_what)
+        geometry=build(data)
+        (ROOT/'tactile_geometry.json').write_text(json.dumps(geometry,indent=2)+'\n',encoding='utf-8')
+        print(f"Built {geometry['total_cells']} cells on {len(geometry['regions'])} sensor meshes; zero projection misses.")
 
 if __name__=='__main__':main()

@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "digital_twin"))
 from logic.twin_publisher import REGIONS, TwinPublisher, robot_snapshot, twin_payload
-import bridge_server as bridge
+import digital_twin.bridge_server as bridge
 import main as app_main
 
 

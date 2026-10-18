@@ -18,7 +18,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
 
-from tactile_layout import REGIONS
+from digital_twin.tactile_layout import REGIONS
 
 FIELDS = ('angles', 'angles_set', 'angles_act', 'force_act', 'position_act', 'tactile', 'tactile_regions', 'tactile_means', 'source', 'simulated')
 STATE = {'angles_set': None, 'angles_act': None, 'force_act': None, 'tactile': {}, 'tactile_regions': {}, 'field_received_at': {}, 'received_at': 0, 'seq': 0}

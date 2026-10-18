@@ -191,7 +191,7 @@ class RobotHandController:
         print(f"[RobotHandController] Failed to read {type} from address {address}")
         return [0] * count
 
-    def write_data(self, target: DataTypes | str, values: list[int]) -> bool:
+    def write_data(self, target: DataTypes | RegisterName, values: list[int]) -> bool:
         """Compatibility wrapper for send_command."""
         return self.send_command(value=values, type=target)
 
