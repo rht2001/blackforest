@@ -15,6 +15,13 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # CONSTANTS & THRESHOLDS
 # ============================================================================
+# TODO: Verify and tune physical sensor taper geometry constants
+SENSOR_LENGTH_M: float = 0.100        # 100 mm total sensor length (-50 mm to +50 mm)
+SENSOR_HALF_LENGTH_M: float = 0.050   # +50 mm at sensor head (+x_sensor), -50 mm at tail (-x_sensor)
+SENSOR_MAX_DIAMETER_M: float = 0.030  # 30 mm diameter at x_sensor = +50 mm (+0.050 m)
+SENSOR_MIN_DIAMETER_M: float = 0.020  # 20 mm diameter at x_sensor = -50 mm (-0.050 m)
+CLAMP_LOCAL_X_TO_SENSOR: bool = False # Set True to clamp extrapolated x_local to [-0.05, +0.05]
+
 # Nail Yaw Constants
 NAIL_SENSOR_NAMES: tuple[str, str, str, str] = (
     "Little Nail",
@@ -22,6 +29,15 @@ NAIL_SENSOR_NAMES: tuple[str, str, str, str] = (
     "Middle Nail",
     "Index Nail",
 )
+
+# Maps robot.matrices sensor names -> (BaseTaxel.key, BaseTaxel.link) from regions()
+NAIL_TAXEL_REGION_MAP: dict[str, tuple[str, str]] = {
+    "Little Nail": ("little_nail", "left_little_force_sensor_2"),
+    "Ring Nail": ("ring_nail", "left_ring_force_sensor_2"),
+    "Middle Nail": ("middle_nail", "left_middle_force_sensor_2"),
+    "Index Nail": ("index_nail", "left_index_force_sensor_2"),
+}
+
 SINGLE_NAIL_SHAPE: tuple[int, int] = (12, 8)
 COMBINED_NAIL_SHAPE: tuple[int, int] = (12, 32)
 NAIL_FORCE_THRESHOLD: float = 15.0        # Taxels below this are zeroed out
@@ -49,11 +65,9 @@ NUM_PROBE_STEPS: int = 5                  # Total number of thumb probes to coll
 SAFETY_SKIP_TICKS: int = 1                # Number of initial ticks to skip completely in thumb_probing
 
 
-#TODO : Maybe import data clsses from here
-
-from digital_twin.extract_tectile import reframe_to_palm_taxel, TactileHandKinematics
+# TODO : Maybe import data classes from here
+from digital_twin.extract_tectile import reframe_to_palm_taxel, TactileHandKinematics, BaseTaxel
 from interface.robot_control import RobotHandController
-
 
 
 # ============================================================================
@@ -83,6 +97,31 @@ class YawEstimation:
 
 
 @dataclass(frozen=True)
+class NailMaxContactPoint:
+    sensor_name: str
+    taxel_key: str
+    taxel_link: str
+    row: int
+    col: int
+    max_force: float
+    position_ref: NDArray[np.float64]  # (3,) [x, y, z] in palm reference frame (meters)
+    normal_ref: NDArray[np.float64]    # (3,) [nx, ny, nz] in palm reference frame
+
+
+@dataclass(frozen=True)
+class SensorOriginEstimation:
+    valid: bool
+    origin_xy_ref: Optional[NDArray[np.float64]]      # (2,) [X_origin, Y_origin] in palm frame (meters)
+    sensor_heading_rad: Optional[float]               # Signed heading of +x_sensor in palm xy-plane
+    sensor_heading_deg: Optional[float]
+    sensor_x_axis_unit_xy: Optional[NDArray[np.float64]]  # (2,) [cos(heading), sin(heading)]
+    sensor_y_axis_unit_xy: Optional[NDArray[np.float64]]  # (2,) [-sin(heading), cos(heading)]
+    index_contact_ref: Optional[NDArray[np.float64]]  # (3,) [x, y, z] of max-force Index Nail taxel
+    index_local_x_m: Optional[float]                  # Extrapolated x_sensor offset (meters) at Index Nail
+    nail_max_points: dict[str, NailMaxContactPoint] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ThumbProbeStep:
     probe_number: int          # 1 to 5
     tick_recorded: int         # Tick index within thumb_probing when settled
@@ -108,6 +147,7 @@ class EstimatorOutput:
     current_state: Optional[STATES] = None
     taper: Optional[TaperEstimation] = None
     yaw: Optional[YawEstimation] = None
+    origin: Optional[SensorOriginEstimation] = None
     probes: list[ThumbProbeStep] = field(default_factory=list)
     decision: SensorDecision = field(default_factory=SensorDecision)
 
@@ -118,8 +158,8 @@ class EstimatorOutput:
 class TactilePoseAndSensorEstimator:
     """
     State-driven controller that estimates 4-DOF cylinder/sensor alignment cues
-    (Palm taper, Finger Nail yaw) and classifies Sensor 1 vs. Sensor 2 via a
-    5-step thumb probing routine.
+    (Palm taper, Finger Nail yaw, Sensor local origin & axes) and classifies
+    Sensor 1 vs. Sensor 2 via a 5-step thumb probing routine.
     """
 
     # States permitted to execute on consecutive ticks without a state transition
@@ -141,8 +181,7 @@ class TactilePoseAndSensorEstimator:
     # ------------------------------------------------------------------------
     def main(
         self,
-        kinematics: Optional[TactileHandKinematics]| None =None,
-
+        kinematics: Optional[TactileHandKinematics] | None = None,
     ) -> EstimatorOutput:
         """
         Main loop callback invoked on every iteration from the external runner.
@@ -177,14 +216,15 @@ class TactilePoseAndSensorEstimator:
         elif resolved_state == "steady_state":
             self._execute_steady_state()
         elif resolved_state == "cylinder_confirmed":
-            self._execute_cylinder_confirmed()
+            self._execute_cylinder_confirmed(kinematics)
         elif resolved_state == "thumb_probing":
             self._execute_thumb_probing(kinematics)
         elif resolved_state == "probing_complete":
             self._execute_probing_complete()
         elif resolved_state == "resetting":
             self._execute_resetting()
-
+        else:
+            raise ValueError(f"Unhandled state received: {resolved_state!r}")
 
         self.previous_state = resolved_state
         return self.output
@@ -222,14 +262,25 @@ class TactilePoseAndSensorEstimator:
     def _execute_steady_state(self) -> None:
         pass
 
-    def _execute_cylinder_confirmed(self) -> None:
+    def _execute_cylinder_confirmed(
+        self,
+        kinematics: Optional[TactileHandKinematics],
+    ) -> None:
         """
         Executes once upon entering 'cylinder_confirmed':
         1. Evaluates the 8x14 Palm tactile matrix to determine force taper (+x / -x).
         2. Evaluates the concatenated 12x32 Nail matrix to determine yaw tilt.
+        3. Extracts the max-force BaseTaxel on each of the 4 finger nails and uses
+           the Index Nail z-height + taper geometry to resolve the sensor's local
+           coordinate origin and axes in the palm reference frame.
         """
         self.output.taper = self._calculate_palm_taper()
         self.output.yaw = self._calculate_nail_yaw()
+        self.output.origin = self._calculate_sensor_origin(
+            kinematics=kinematics,
+            taper=self.output.taper,
+            yaw=self.output.yaw,
+        )
 
     def _execute_thumb_probing(
         self,
@@ -324,7 +375,7 @@ class TactilePoseAndSensorEstimator:
         self._full_reset()
 
     # ------------------------------------------------------------------------
-    # CORE COMPUTATION: PALM TAPER & NAIL YAW
+    # CORE COMPUTATION: PALM TAPER, NAIL YAW & SENSOR ORIGIN (X, Y)
     # ------------------------------------------------------------------------
     def _calculate_palm_taper(self) -> TaperEstimation:
         """
@@ -472,6 +523,151 @@ class TactilePoseAndSensorEstimator:
             thresholded_matrix=thresholded,
         )
 
+    def _calculate_sensor_origin(
+        self,
+        kinematics: Optional[TactileHandKinematics],
+        taper: Optional[TaperEstimation],
+        yaw: Optional[YawEstimation],
+    ) -> SensorOriginEstimation:
+        """
+        Resolves the sensor's local coordinate system origin (X_origin, Y_origin)
+        and axes in the palm reference frame using the Index Nail max-force taxel
+        and sensor taper geometry.
+        """
+        if kinematics is None or not kinematics.base_taxels:
+            logger.warning("Kinematics with base_taxels is required to calculate sensor origin.")
+            return SensorOriginEstimation(
+                valid=False,
+                origin_xy_ref=None,
+                sensor_heading_rad=None,
+                sensor_heading_deg=None,
+                sensor_x_axis_unit_xy=None,
+                sensor_y_axis_unit_xy=None,
+                index_contact_ref=None,
+                index_local_x_m=None,
+                nail_max_points={},
+            )
+
+        taxel_by_key: dict[tuple[str, int, int], BaseTaxel] = {}
+        taxel_by_link: dict[tuple[str, int, int], BaseTaxel] = {}
+        for bt in kinematics.base_taxels:
+            taxel_by_key[(bt.key, int(bt.row), int(bt.col))] = bt
+            taxel_by_link[(bt.link, int(bt.row), int(bt.col))] = bt
+
+        nail_max_points: dict[str, NailMaxContactPoint] = {}
+        for sensor_name in NAIL_SENSOR_NAMES:
+            contact_pt = self._extract_max_nail_taxel(
+                sensor_name=sensor_name,
+                taxel_by_key=taxel_by_key,
+                taxel_by_link=taxel_by_link,
+            )
+            if contact_pt is not None:
+                nail_max_points[sensor_name] = contact_pt
+
+        index_contact = nail_max_points.get("Index Nail")
+        if index_contact is None:
+            logger.warning("Index Nail has no valid active taxel or matching BaseTaxel.")
+            return SensorOriginEstimation(
+                valid=False,
+                origin_xy_ref=None,
+                sensor_heading_rad=None,
+                sensor_heading_deg=None,
+                sensor_x_axis_unit_xy=None,
+                sensor_y_axis_unit_xy=None,
+                index_contact_ref=None,
+                index_local_x_m=None,
+                nail_max_points=nail_max_points,
+            )
+
+        z_index_ref = float(index_contact.position_ref[2])
+        index_local_x_m = self._extrapolate_local_x_from_z(z_index_ref)
+
+        base_yaw_rad = yaw.yaw_rad if (yaw is not None and yaw.valid and yaw.yaw_rad is not None) else 0.0
+
+        if taper is not None and taper.valid and taper.direction == "-x":
+            heading_rad = float(
+                np.arctan2(np.sin(base_yaw_rad + np.pi), np.cos(base_yaw_rad + np.pi))
+            )
+        else:
+            heading_rad = float(base_yaw_rad)
+
+        heading_deg = float(np.degrees(heading_rad))
+
+        u_x = np.array([np.cos(heading_rad), np.sin(heading_rad)], dtype=np.float64)
+        u_y = np.array([-np.sin(heading_rad), np.cos(heading_rad)], dtype=np.float64)
+
+        index_xy_ref = index_contact.position_ref[:2]
+        origin_xy_ref = index_xy_ref - (index_local_x_m * u_x)
+
+        return SensorOriginEstimation(
+            valid=True,
+            origin_xy_ref=origin_xy_ref,
+            sensor_heading_rad=heading_rad,
+            sensor_heading_deg=heading_deg,
+            sensor_x_axis_unit_xy=u_x,
+            sensor_y_axis_unit_xy=u_y,
+            index_contact_ref=index_contact.position_ref.copy(),
+            index_local_x_m=index_local_x_m,
+            nail_max_points=nail_max_points,
+        )
+
+    @staticmethod
+    def _extrapolate_local_x_from_z(z_height_m: float) -> float:
+        mid_diameter_m = 0.5 * (SENSOR_MAX_DIAMETER_M + SENSOR_MIN_DIAMETER_M)
+        diameter_span_m = SENSOR_MAX_DIAMETER_M - SENSOR_MIN_DIAMETER_M
+        if np.isclose(diameter_span_m, 0.0):
+            raise ValueError("SENSOR_MAX_DIAMETER_M and SENSOR_MIN_DIAMETER_M cannot be equal.")
+
+        taper_rate = diameter_span_m / SENSOR_LENGTH_M
+        x_local_m = float((z_height_m - mid_diameter_m) / taper_rate)
+
+        if CLAMP_LOCAL_X_TO_SENSOR:
+            x_local_m = float(np.clip(x_local_m, -SENSOR_HALF_LENGTH_M, SENSOR_HALF_LENGTH_M))
+
+        return x_local_m
+
+    def _extract_max_nail_taxel(
+        self,
+        sensor_name: str,
+        taxel_by_key: dict[tuple[str, int, int], BaseTaxel],
+        taxel_by_link: dict[tuple[str, int, int], BaseTaxel],
+    ) -> Optional[NailMaxContactPoint]:
+        mat = self._get_validated_matrix(sensor_name, SINGLE_NAIL_SHAPE)
+        clean_mat = np.where(np.isfinite(mat), mat, -np.inf).astype(np.float64)
+
+        flat_idx = int(np.argmax(clean_mat))
+        max_row, max_col = np.unravel_index(flat_idx, SINGLE_NAIL_SHAPE)
+        max_force = float(clean_mat[max_row, max_col])
+
+        if not np.isfinite(max_force) or max_force < NAIL_FORCE_THRESHOLD:
+            return None
+
+        region_key, region_link = NAIL_TAXEL_REGION_MAP[sensor_name]
+        r, c = int(max_row), int(max_col)
+
+        matched_taxel = (
+            taxel_by_key.get((region_key, r, c))
+            or taxel_by_link.get((region_link, r, c))
+            or taxel_by_key.get((sensor_name, r, c))
+        )
+        if matched_taxel is None:
+            logger.warning(
+                "Could not find BaseTaxel for %s at (row=%d, col=%d) [key=%r, link=%r].",
+                sensor_name, r, c, region_key, region_link,
+            )
+            return None
+
+        return NailMaxContactPoint(
+            sensor_name=sensor_name,
+            taxel_key=matched_taxel.key,
+            taxel_link=matched_taxel.link,
+            row=r,
+            col=c,
+            max_force=max_force,
+            position_ref=np.asarray(matched_taxel.position, dtype=np.float64),
+            normal_ref=np.asarray(matched_taxel.normal, dtype=np.float64),
+        )
+
     # ------------------------------------------------------------------------
     # CORE COMPUTATION: SENSOR 1 VS SENSOR 2 CLASSIFICATION
     # ------------------------------------------------------------------------
@@ -507,8 +703,6 @@ class TactilePoseAndSensorEstimator:
     # ------------------------------------------------------------------------
     # INTERNAL VALIDATION & RESET HELPERS
     # ------------------------------------------------------------------------
-
-
     def _get_validated_matrix(
         self,
         sensor_name: str,
