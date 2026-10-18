@@ -17,7 +17,7 @@ def main():
 
     robot = RobotHandController(ip="192.168.123.210", port=6000)
     grasp_manager = GraspManager()
-    app = HandApp(robot)
+    app = HandApp(robot, grasp_manager=grasp_manager)
     db = RobotDatabase()
     publisher = TwinPublisher("http://127.0.0.1:18765/api/state")
 
@@ -39,7 +39,7 @@ def main():
 
             results_data = robot.poll()
             grasp_results = grasp_manager.step(robot, results_data)
-            app.main(state=grasp_results.get("state"))
+            app.main(state=grasp_results.get("state"), data=grasp_results)
             db.main(data=grasp_results)
             if publisher is not None:
                 publisher.submit(robot_snapshot(robot, grasp_results))

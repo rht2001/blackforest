@@ -4,13 +4,15 @@ from PIL import Image, ImageTk
 import os
 import json
 import time
+from typing import Any
 from interface.robot_control import RobotHandController
 
 
 class HandApp(tk.Tk):
-    def __init__(self, robot: RobotHandController):
+    def __init__(self, robot: RobotHandController, grasp_manager: Any = None):
         super().__init__()
         self.robot = robot
+        self.grasp_manager = grasp_manager
 
         self.SAVE_FILE = "positions.json"
         self.pixel = 6
@@ -60,7 +62,20 @@ class HandApp(tk.Tk):
             padx=10,
             pady=4,
         )
-        self.state_label.pack(fill="x", pady=5)
+        self.state_label.pack(fill="x", pady=(5, 2))
+
+        self.slip_banner = tk.Label(
+            self.left_frame,
+            text="Grip: Stable",
+            font=("Helvetica", 11, "bold"),
+            fg="#2e7d32",
+            bg="#f0f0f0",
+            relief="groove",
+            padx=10,
+            pady=3,
+        )
+        self.slip_banner.pack(fill="x", pady=(0, 6))
+        self.current_slipping_contacts: list[str] = []
 
         names = ["Little Finger", "Ring Finger", "Middle Finger", "Index Finger", "Thumb Bend", "Thumb Rot"]
 
@@ -82,6 +97,8 @@ class HandApp(tk.Tk):
 
         tk.Button(bf, text="Open", command=self.open_hand).pack(side="left", padx=2)
         tk.Button(bf, text="Close", command=self.close_hand).pack(side="left", padx=2)
+        tk.Button(bf, text="Probe Thumb", command=self.restart_probing).pack(side="left", padx=2)
+        tk.Button(bf, text="Calibrate", command=self.calibrate_sensors).pack(side="left", padx=2)
         tk.Button(bf, text="Step +", command=self.step_plus).pack(side="left", padx=2)
         tk.Button(bf, text="Step -", command=self.step_minus).pack(side="left", padx=2)
 
@@ -107,12 +124,24 @@ class HandApp(tk.Tk):
         for s in self.sliders:
             s.set(1000)
         self.robot.open_hand()
+        if self.grasp_manager is not None:
+            self.grasp_manager.reset()
+        self.update_slip_display(False, [])
+
+    def calibrate_sensors(self):
+        self.robot.calibrate_offsets()
 
     def close_hand(self):
         vals = [0, 0, 0, 0, 234, 670]
         for i in range(6):
             self.sliders[i].set(vals[i])
         self.robot.close_hand()
+
+    def restart_probing(self):
+        """Triggers or restarts thumb probing on demand."""
+        if self.grasp_manager is not None:
+            self.grasp_manager.restart_probing(self.robot)
+
     def step_plus(self):
         for s in self.sliders:
             s.set(min(1000, s.get() + 20))
@@ -208,20 +237,62 @@ class HandApp(tk.Tk):
             force = np.mean(matrix[active])
             size = int(3 + force / 200)
 
+            is_slipping = name in getattr(self, "current_slipping_contacts", [])
+            circle_color = "#ff2222" if is_slipping else "#0055ff"
+            outline_color = "#ffcc00" if is_slipping else ""
+
             self.canvas.create_oval(
                 x0 + cx * self.pixel,
                 y0 + cy * self.pixel,
                 x0 + cx * self.pixel + size,
                 y0 + cy * self.pixel + size,
-                fill="blue"
+                fill=circle_color,
+                outline=outline_color,
+                width=2 if is_slipping else 0,
             )
 
     def update_state_display(self, state: str):
         if hasattr(self, "state_label"):
-            self.state_label.config(text=f"STATE: {state.upper()}")
+            state_lower = state.lower()
+            fg_color = "#0055ff"
+            if state_lower == "cylinder_confirmed":
+                fg_color = "#008800"
+            elif state_lower == "thumb_probing":
+                fg_color = "#8b5cf6"
+            elif state_lower == "probing_complete":
+                fg_color = "#059669"
+            elif state_lower == "resetting":
+                fg_color = "#e11d48"
+
+            self.state_label.config(text=f"STATE: {state.upper()}", fg=fg_color)
             self.title(f"Hand Controller - [{state.upper()}]")
 
-    def main(self, state: str | None = None):
+    def update_slip_display(self, slip_detected: bool, slipping_contacts: list[str]):
+        if not hasattr(self, "slip_banner"):
+            return
+        self.current_slipping_contacts = slipping_contacts
+        if slip_detected and slipping_contacts:
+            contact_str = ", ".join(slipping_contacts)
+            self.slip_banner.config(
+                text=f"⚠️ SLIP DETECTED: {contact_str}",
+                fg="#ffffff",
+                bg="#d32f2f",
+            )
+        else:
+            self.slip_banner.config(
+                text="Grip: Stable",
+                fg="#2e7d32",
+                bg="#f0f0f0",
+            )
+
+    def main(self, state: str | None = None, data: Any = None):
+        if data is not None:
+            if state is None:
+                state = data.get("state")
+            self.update_slip_display(
+                data.get("slip_detected", False),
+                data.get("slipping_contacts", []),
+            )
         if state:
             self.update_state_display(state)
         self.draw()
