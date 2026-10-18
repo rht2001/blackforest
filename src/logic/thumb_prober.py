@@ -33,7 +33,7 @@ class ThumbProber:
     ):
         # Rotation steps (reduced to 4 steps: omits 400 and 250 to minimize scan time, soft-limit at 995)
         self.rotation_steps = (
-            rotation_steps if rotation_steps is not None else [995, 850, 700, 550]
+            rotation_steps if rotation_steps is not None else [995, 850, 700]
         )
         self.retract_bend = retract_bend
         self.min_bend = min_bend
@@ -44,6 +44,8 @@ class ThumbProber:
         self.thumb_speed = thumb_speed
 
         self.results: list[dict[str, Any]] = []
+        self.classification: str = "none"
+        self.summary: dict[str, Any] = {}
         self.is_active: bool = False
         self.is_finished: bool = False
         self._stop_event = threading.Event()
@@ -54,6 +56,8 @@ class ThumbProber:
         """Stops any running scan, clears results, and restores hand defaults."""
         self.stop()
         self.results.clear()
+        self.classification = "none"
+        self.summary = {}
         self.is_active = False
         self.is_finished = False
 
@@ -74,6 +78,8 @@ class ThumbProber:
         """Launches the probing routine in a dedicated worker thread."""
         self.stop()
         self.results.clear()
+        self.classification = "probing"
+        self.summary = {}
         self.is_active = True
         self.is_finished = False
         self._stop_event.clear()
@@ -86,6 +92,15 @@ class ThumbProber:
             name="ThumbProberThread",
         )
         self._thread.start()
+
+    @staticmethod
+    def _get_tactile_points(robot: Any) -> np.ndarray:
+        """Reuses fresh tactile matrix from main poll loop to avoid concurrent Modbus contention."""
+        last_t = getattr(robot, "last_tactile_read_time", 0.0)
+        if (time.time() - last_t) < 0.15 and hasattr(robot, "last_all_points"):
+            return np.array(robot.last_all_points, copy=True)
+        _, bp = robot.read_tactile_data()
+        return bp
 
     def _retract_and_wait(self, robot: Any, timeout: float = 2.0) -> bool:
         """
@@ -161,10 +176,70 @@ class ThumbProber:
 
         # 2. Thumb actuator force delta check (catches physical resistance against object)
         delta_force = current_thumb_force - baseline_thumb_force
-        if delta_force >= 35.0:
+        if delta_force >= 65.0:
             return True, "Thumb Force Sensor", 0.0, 0.0, round(delta_force, 1)
+        if current_thumb_force >= 120.0 and delta_force >= 25.0:
+            return True, "Thumb Force Sensor", 0.0, 0.0, round(current_thumb_force, 1)
 
         return False, "", 0.0, 0.0, 0.0
+
+    def classify_results(
+        self, blocked_at_start: bool = False, blocked_bend: int | None = None
+    ) -> tuple[str, dict[str, Any]]:
+        """
+        Distinguishes VEGABAR 38 (early contact at shallow bend >= 700) from
+        VEGABAR 29 (no contact or deep flexion contact at bend < 700).
+        """
+        if blocked_at_start:
+            self.classification = "VEGABAR 38"
+            self.summary = {
+                "sensor_type": "VEGABAR 38",
+                "mean_bend": float(blocked_bend if blocked_bend is not None else 850.0),
+                "mean_force": float(self.low_force_limit),
+                "object_hits": len(self.rotation_steps),
+            }
+            return self.classification, self.summary
+
+        if not self.results:
+            self.classification = "VEGABAR 29"
+            self.summary = {
+                "sensor_type": "VEGABAR 29",
+                "mean_bend": float(self.min_bend),
+                "mean_force": 0.0,
+                "object_hits": 0,
+            }
+            return self.classification, self.summary
+
+        bends = [float(r.get("bend_angle", 0.0)) for r in self.results]
+        forces = [float(r.get("contact_force", 0.0)) for r in self.results]
+        mean_bend = float(np.mean(bends))
+        mean_force = float(np.mean(forces))
+
+        # A step is a VEGABAR 38 object hit if contact occurs at bend_angle >= 600
+        # with real resistance (force >= 50g, tactile pad touch, preload, or very early stop >= 700).
+        # Contacts below bend_angle < 600 (e.g. 514-564 free-air drift or 262 bottom-out) are VEGABAR 29.
+        object_hits = 0
+        for r in self.results:
+            bend_val = float(r.get("bend_angle", 0.0))
+            force_val = float(r.get("contact_force", 0.0))
+            rest_val = float(r.get("resting_force", 0.0))
+            is_tactile = r.get("sensor_name", "Thumb Force Sensor") != "Thumb Force Sensor"
+
+            if bend_val >= 600.0 and (force_val >= 50.0 or bend_val >= 700.0 or is_tactile or rest_val >= 45.0):
+                object_hits += 1
+
+        if object_hits >= 2 or (object_hits >= 1 and mean_bend >= 650.0):
+            self.classification = "VEGABAR 38"
+        else:
+            self.classification = "VEGABAR 29"
+
+        self.summary = {
+            "sensor_type": self.classification,
+            "mean_bend": round(mean_bend, 1),
+            "mean_force": round(mean_force, 1),
+            "object_hits": object_hits,
+        }
+        return self.classification, self.summary
 
     def _run_probe_routine(self, robot: Any) -> None:
         """
@@ -172,6 +247,8 @@ class ThumbProber:
         Outer loop: Rotation (only rotated after verified full retraction)
         Inner loop: Flexion
         """
+        blocked_at_start = False
+        thumb_bend_angle: int | None = None
         try:
             print("[ThumbProber] Starting probing routine...")
             robot.clear_errors()
@@ -187,6 +264,7 @@ class ThumbProber:
 
             # 2. Blockage detection: triggers ONLY if thumb physically failed to reach extension
             if not retracted or (thumb_bend_angle is not None and thumb_bend_angle < 880):
+                blocked_at_start = True
                 errors = robot.get_errors() if hasattr(robot, "get_errors") else []
                 thumb_bend_err = errors[4] if len(errors) > 4 else 0
                 thumb_rot_err = errors[5] if len(errors) > 5 else 0
@@ -197,7 +275,7 @@ class ThumbProber:
                     err_desc.append(f"Rot Error: 0x{thumb_rot_err:04X}")
                 err_msg = ", ".join(err_desc) if err_desc else "Mechanical obstruction / stall"
                 print(
-                    f"[ThumbProber] ⚠️ Thumb is blocked at start "
+                    f"[ThumbProber] WARNING: Thumb is blocked at start "
                     f"(Actual Bend={thumb_bend_angle} < 880, Status: {err_msg}). Aborting scan."
                 )
                 return
@@ -222,7 +300,7 @@ class ThumbProber:
                 base_points_samples = []
                 force_samples = []
                 for _ in range(3):
-                    _, bp = robot.read_tactile_data()
+                    bp = self._get_tactile_points(robot)
                     base_points_samples.append(bp)
                     f = robot.get_forces()
                     if len(f) > 4:
@@ -253,7 +331,7 @@ class ThumbProber:
                     actual_bend = actual_angles[4] if len(actual_angles) > 4 else bend
                     actual_rot = actual_angles[5] if len(actual_angles) > 5 else rot
 
-                    _, curr_points = robot.read_tactile_data()
+                    curr_points = self._get_tactile_points(robot)
                     curr_forces = robot.get_forces()
                     thumb_f = float(curr_forces[4]) if len(curr_forces) > 4 else 0.0
 
@@ -270,6 +348,7 @@ class ThumbProber:
                             "cop_u": cx,
                             "cop_v": cy,
                             "contact_force": f_val,
+                            "resting_force": round(baseline_thumb_force, 1),
                         }
                         self.results.append(record)
                         print(
@@ -287,6 +366,16 @@ class ThumbProber:
                 self._retract_and_wait(robot, timeout=2.0)
 
         finally:
+            if not self._stop_event.is_set():
+                sensor_label, summary = self.classify_results(
+                    blocked_at_start=blocked_at_start,
+                    blocked_bend=thumb_bend_angle,
+                )
+                print(
+                    f"[ThumbProber] Classification: {sensor_label} "
+                    f"(Mean Bend={summary.get('mean_bend')}, Mean Force={summary.get('mean_force')}g, "
+                    f"Object Hits={summary.get('object_hits')}/{len(self.rotation_steps)})"
+                )
             # Return thumb to full extension, restore standard speeds & forces
             robot.clear_errors()
             self._retract_and_wait(robot, timeout=2.0)

@@ -12,5 +12,5 @@ wheels/
 uv.lock
 
 *.csv
-
+*.png 
 .mypy_cache/

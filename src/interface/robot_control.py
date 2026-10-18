@@ -35,7 +35,7 @@ class RobotHandController:
         self.mock_angles = [1000] * 6
         self.last_sensor_data: dict[str, np.ndarray] = {}
         self.last_all_points = np.zeros((112, 17))
-        self.set_max_force(DEFAULT_FORCE)
+        self.last_tactile_read_time: float = 0.0
         self.offsets = {
                 "Little": (150, 120),
                 "Ring":   (230, 110),
@@ -46,18 +46,6 @@ class RobotHandController:
             }
 
         self.results: DataDict = default_results
-
-        try:
-            self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
-            print(f"[RobotHandController] Attempting connection to {self.ip}:{self.port}...")
-            if self.client.connect():
-                self.is_connected = True
-                print(f"[RobotHandController] Connected to hand at {self.ip}:{self.port}")
-            else:
-                print(f"[RobotHandController] Could not reach {self.ip}:{self.port}. Running in simulation/disconnected mode.")
-        except Exception as e:
-            print(f"[RobotHandController] Connection error ({e}). Running in simulation/disconnected mode.")
-            self.client = None
 
         self.send_addresses = {
             "ANGLES": 1486,
@@ -212,7 +200,7 @@ class RobotHandController:
         return values
 
     # High-level semantic facades
-    def startup(self, max_force: int = 1500):
+    def startup(self, max_force: int = DEFAULT_FORCE):
         """Initializes speed, force limit, opens hand, and calibrates offsets on startup."""
         self.set_default_speed()
         self.set_max_force(max_force)
@@ -222,7 +210,7 @@ class RobotHandController:
         print(f"[RobotHandController] Hand opened and ready (max force: {max_force}g).")
         self.state = "initialised"
 
-    def set_max_force(self, force_g: int = 1500) -> bool:
+    def set_max_force(self, force_g: int = DEFAULT_FORCE) -> bool:
         """
         Sets the maximum gripping force threshold for all 6 DOFs (range: 100 - 3000g).
         Writes to both active FORCES register (1498) and DEFAULT_FORCE_SET register (1044).
@@ -357,6 +345,7 @@ class RobotHandController:
 
         self.last_sensor_data = raw_cache
         self.last_all_points = all_points
+        self.last_tactile_read_time = time.time()
         return data_matrix, all_points
 
     def build_result_data(self) -> DataDict:

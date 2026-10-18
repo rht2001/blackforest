@@ -74,8 +74,20 @@ class HandApp(tk.Tk):
             padx=10,
             pady=3,
         )
-        self.slip_banner.pack(fill="x", pady=(0, 6))
+        self.slip_banner.pack(fill="x", pady=(0, 2))
         self.current_slipping_contacts: list[str] = []
+
+        self.probe_banner = tk.Label(
+            self.left_frame,
+            text="SENSOR: NOT PROBED",
+            font=("Helvetica", 12, "bold"),
+            fg="#555555",
+            bg="#f0f0f0",
+            relief="groove",
+            padx=10,
+            pady=4,
+        )
+        self.probe_banner.pack(fill="x", pady=(0, 6))
 
         names = ["Little Finger", "Ring Finger", "Middle Finger", "Index Finger", "Thumb Bend", "Thumb Rot"]
 
@@ -127,6 +139,7 @@ class HandApp(tk.Tk):
         if self.grasp_manager is not None:
             self.grasp_manager.reset()
         self.update_slip_display(False, [])
+        self.update_probe_display("none", {})
 
     def calibrate_sensors(self):
         self.robot.calibrate_offsets()
@@ -274,7 +287,7 @@ class HandApp(tk.Tk):
         if slip_detected and slipping_contacts:
             contact_str = ", ".join(slipping_contacts)
             self.slip_banner.config(
-                text=f"⚠️ SLIP DETECTED: {contact_str}",
+                text=f"SLIP DETECTED: {contact_str}",
                 fg="#ffffff",
                 bg="#d32f2f",
             )
@@ -285,6 +298,46 @@ class HandApp(tk.Tk):
                 bg="#f0f0f0",
             )
 
+    def update_probe_display(
+        self,
+        probe_state: str,
+        probe_summary: dict | None = None,
+        state: str | None = None,
+    ):
+        if not hasattr(self, "probe_banner"):
+            return
+        summary = probe_summary or {}
+        state_lower = (state or "").lower()
+
+        if state_lower == "thumb_probing" or probe_state == "probing":
+            self.probe_banner.config(
+                text="PROBING THUMB...",
+                fg="#ffffff",
+                bg="#6d28d9",
+            )
+        elif probe_state == "VEGABAR 38":
+            mean_bend = summary.get("mean_bend", 0.0)
+            mean_force = summary.get("mean_force", 0.0)
+            self.probe_banner.config(
+                text=f"SENSOR: VEGABAR 38 (Bend: {mean_bend:.0f}, Force: {mean_force:.0f}g)",
+                fg="#ffffff",
+                bg="#15803d",
+            )
+        elif probe_state == "VEGABAR 29":
+            mean_bend = summary.get("mean_bend", 0.0)
+            mean_force = summary.get("mean_force", 0.0)
+            self.probe_banner.config(
+                text=f"SENSOR: VEGABAR 29 (Bend: {mean_bend:.0f}, Force: {mean_force:.0f}g)",
+                fg="#ffffff",
+                bg="#0369a1",
+            )
+        else:
+            self.probe_banner.config(
+                text="SENSOR: NOT PROBED",
+                fg="#555555",
+                bg="#f0f0f0",
+            )
+
     def main(self, state: str | None = None, data: Any = None):
         if data is not None:
             if state is None:
@@ -292,6 +345,11 @@ class HandApp(tk.Tk):
             self.update_slip_display(
                 data.get("slip_detected", False),
                 data.get("slipping_contacts", []),
+            )
+            self.update_probe_display(
+                data.get("probe_state", "none"),
+                data.get("probe_summary", {}),
+                state=state,
             )
         if state:
             self.update_state_display(state)
