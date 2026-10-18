@@ -163,8 +163,10 @@ class ThumbProber:
             active_cells = delta[delta >= 15.0]
             sum_active = float(np.sum(active_cells))
 
-            # Trigger on robust touch: single cell >= 30g, or multiple cells >= 45g total
-            if max_cell >= 30.0 or (len(active_cells) >= 2 and sum_active >= 45.0):
+            # Trigger on robust touch: single cell >= 30g (45g on Thumb Mid to reject joint crease),
+            # or multiple cells >= 45g total
+            min_single_cell = 45.0 if name == "Thumb Mid" else 30.0
+            if max_cell >= min_single_cell or (len(active_cells) >= 2 and sum_active >= 45.0):
                 grid = delta.reshape(h, w)
                 active_mask = grid >= 15.0
                 weights = grid[active_mask]
@@ -216,19 +218,24 @@ class ThumbProber:
         mean_force = float(np.mean(forces))
 
         # A step is a VEGABAR 38 object hit if contact occurs at bend_angle >= 600
-        # with real resistance (force >= 50g, tactile pad touch, preload, or very early stop >= 700).
+        # with real resistance (force >= 50g, tactile pad touch >= 45g, or preload).
         # Contacts below bend_angle < 600 (e.g. 514-564 free-air drift or 262 bottom-out) are VEGABAR 29.
         object_hits = 0
         for r in self.results:
             bend_val = float(r.get("bend_angle", 0.0))
             force_val = float(r.get("contact_force", 0.0))
             rest_val = float(r.get("resting_force", 0.0))
-            is_tactile = r.get("sensor_name", "Thumb Force Sensor") != "Thumb Force Sensor"
+            s_name = r.get("sensor_name", "Thumb Force Sensor")
+            is_tactile = s_name != "Thumb Force Sensor"
 
-            if bend_val >= 600.0 and (force_val >= 50.0 or bend_val >= 700.0 or is_tactile or rest_val >= 45.0):
+            # Ignore isolated low-force (<45g) Thumb Mid crease touches
+            if s_name == "Thumb Mid" and force_val < 45.0:
+                continue
+
+            if bend_val >= 600.0 and (force_val >= 50.0 or (is_tactile and force_val >= 45.0) or rest_val >= 45.0):
                 object_hits += 1
 
-        if object_hits >= 2 or (object_hits >= 1 and mean_bend >= 650.0):
+        if object_hits >= 2 or (object_hits == 1 and mean_bend >= 700.0 and mean_force >= 65.0):
             self.classification = "VEGABAR 38"
         else:
             self.classification = "VEGABAR 29"
