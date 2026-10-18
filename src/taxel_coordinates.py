@@ -8,7 +8,10 @@ import json
 from urllib.request import ProxyHandler, build_opener
 
 
-def get_taxel_positions(base_url='http://127.0.0.1:18765', *, timeout=1):
+def get_taxel_positions(base_url='http://127.0.0.1:18765', *, timeout=1, after=None):
     """Read all 1062 displayed taxel positions and pressures. No FK or polling."""
-    with build_opener(ProxyHandler({})).open(base_url.rstrip('/')+'/api/taxels', timeout=timeout) as response:
+    url = base_url.rstrip('/') + '/api/taxels'
+    if after is not None:
+        url += '?after=' + str(float(after))
+    with build_opener(ProxyHandler({})).open(url, timeout=timeout) as response:
         return json.load(response)

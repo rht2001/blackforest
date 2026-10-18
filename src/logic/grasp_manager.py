@@ -8,7 +8,7 @@ from logic.grip_logic import confirm_grip, is_empty_grasp, get_pad_pressures
 class GraspManager:
     """
     Orchestrates the robot hand grasp lifecycle:
-    OPEN -> CLOSING -> SETTLING (1.0s continuous confirmation) -> CYLINDER_CONFIRMED.
+    OPEN -> CLOSING -> THUMB_CLOSING -> SETTLING (1.0s continuous confirmation) -> CYLINDER_CONFIRMED.
     Transitions to RESETTING whenever an empty grasp or abort occurs.
     """
 
@@ -23,6 +23,7 @@ class GraspManager:
         impulse_wait_time: float = 0.35,
         min_closing_time: float = 0.7,
         reset_cooldown: float = 1.5,
+        on_grasp_closed: Callable[[], None] | None = None,
     ):
         self.settle_duration = settle_duration
         self.settle_timeout = settle_timeout
@@ -33,6 +34,11 @@ class GraspManager:
         self.impulse_wait_time = impulse_wait_time
         self.min_closing_time = min_closing_time
         self.reset_cooldown = reset_cooldown
+        self.on_grasp_closed = on_grasp_closed
+        self.fingers_stable_since: float | None = None
+        self.thumb_start_time = 0.0
+        self.thumb_stable_since: float | None = None
+        self.thumb_initial_angles = np.array([1000, 1000])
 
         self.state: STATES = "open"
         self.last_angles: np.ndarray = np.array([1000] * 6)
@@ -122,6 +128,13 @@ class GraspManager:
         """
         now = time.time()
         current_angles = np.asarray(data["angles"])
+        if (current_angles.shape != (6,) or not np.all(np.isfinite(current_angles))
+                or np.any(current_angles < 0) or np.any(current_angles > 1000)):
+            self.fingers_stable_since = None
+            self.thumb_stable_since = None
+            data["state"] = self.state
+            data["state_change"] = False
+            return data
         finger_angles = current_angles[:4]
         mean_matrix = np.asarray(data["tactile_mean_matrix"])
         tactile_matrix = np.asarray(data["tactile_matrix"])
@@ -141,9 +154,13 @@ class GraspManager:
                 print("[GraspManager] Contact triggered -> State: CLOSING (latching fingers 0-3, thumb open)")
                 self.state = "closing"
                 self.closing_start_time = now
+                self.fingers_stable_since = None
                 state_changed = True
-                # Latch fingers 0-3 only; thumb stays completely open (1000, 1000)
-                robot.set_angles([0, 0, 0, 0, 1000, 1000])
+                # Close fingers first; the thumb follows after they stop moving.
+                if robot.set_angles([0, 0, 0, 0, 1000, 1000]) is False:
+                    self.state = "resetting"
+                    self.reset_start_time = now
+                    robot.open_hand()
 
         # ---------------------------------------------------------
         # State: CLOSING
@@ -153,18 +170,61 @@ class GraspManager:
 
             # Only evaluate steady state once physical motion has had time to start and slow down
             has_moved = np.any(finger_angles < 900)
-            motion_halted = np.all(diff < 3) and (closing_elapsed >= self.min_closing_time) and has_moved
+            motion_halted = np.all(diff[:4] < 3) and (closing_elapsed >= self.min_closing_time) and has_moved
 
             if motion_halted:
-                # Transition directly to settling to let compliance and tactile pressure develop
+                if self.fingers_stable_since is None:
+                    self.fingers_stable_since = now
+            else:
+                self.fingers_stable_since = None
+
+            if self.fingers_stable_since is not None and now - self.fingers_stable_since >= 0.3:
+                # Retain the finger closing targets and use the existing standard thumb pose.
+                if robot.set_angles([0, 0, 0, 0, 234, 670]) is False:
+                    self.state = "resetting"
+                    self.reset_start_time = now
+                    robot.open_hand()
+                else:
+                    self.state = "thumb_closing"
+                    self.thumb_start_time = now
+                    self.thumb_initial_angles = current_angles[4:6].copy()
+                    self.thumb_stable_since = None
+                    print("[GraspManager] Fingers stopped -> closing thumb")
+                state_changed = True
+
+        # ---------------------------------------------------------
+        # State: THUMB_CLOSING
+        # ---------------------------------------------------------
+        elif self.state == "thumb_closing":
+            elapsed = now - self.thumb_start_time
+            thumb = current_angles[4:6]
+            # A thumb can stop against an object before reaching its requested pose.
+            responded = np.all((np.abs(thumb - self.thumb_initial_angles) >= 3)
+                               | (np.abs(thumb - [234, 670]) < 10))
+            stable = responded and np.all(diff[4:6] < 3) and elapsed >= self.min_closing_time
+            if stable:
+                if self.thumb_stable_since is None:
+                    self.thumb_stable_since = now
+            else:
+                self.thumb_stable_since = None
+
+            if self.thumb_stable_since is not None and now - self.thumb_stable_since >= 0.3:
                 self.state = "settling"
                 self.settle_start_time = now
                 self.last_log_time = now
                 state_changed = True
-                print(
-                    f"[GraspManager] Hand motion stabilized (Angles: {finger_angles.tolist()}). "
-                    f"Beginning stabilization & grip verification -> SETTLING"
-                )
+                if self.on_grasp_closed is not None:
+                    try:
+                        self.on_grasp_closed()
+                    except Exception as exc:
+                        print(f"[GraspManager] Taxel capture failed: {exc}")
+                print("[GraspManager] Thumb settled -> SETTLING")
+            elif elapsed >= self.settle_timeout:
+                print("[GraspManager] Thumb closure timed out -> RESETTING")
+                self.state = "resetting"
+                self.reset_start_time = now
+                state_changed = True
+                robot.open_hand()
 
         # ---------------------------------------------------------
         # State: SETTLING (Continuous verification with settle_timeout)
@@ -252,7 +312,7 @@ class GraspManager:
 
 
 
-        self.last_angles = current_angles
+        self.last_angles = current_angles.copy()
         data["state"] = self.state
         data["state_change"] = (initial_state != self.state) or state_changed
         return data

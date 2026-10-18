@@ -83,6 +83,7 @@ STATES = Literal[
     "initialised",
     "open",
     "closing",
+    "thumb_closing",
     "settling",
     "steady_state",
     "cylinder_confirmed",

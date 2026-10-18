@@ -16,6 +16,7 @@ import threading
 import time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
+from urllib.parse import urlsplit, parse_qs
 
 from tactile_layout import REGIONS
 
@@ -105,9 +106,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_data(json.dumps(data,ensure_ascii=False,allow_nan=False).encode('utf-8'),code)
     def do_OPTIONS(self):self.send_data(b'',204)
     def do_GET(self):
-        if self.path in ('/api/taxels', '/api/taxels/'):
+        url = urlsplit(self.path)
+        if url.path in ('/api/taxels', '/api/taxels/'):
+            try:
+                after = float(parse_qs(url.query).get('after', ['0'])[0])
+                if not math.isfinite(after):
+                    raise ValueError('Invalid after timestamp')
+            except ValueError:
+                self.respond_json({'error': 'Invalid after timestamp'}, 400)
+                return
             with LOCK:
-                points = deepcopy(TAXELS) if 0 <= time.time()-TAXELS_RECEIVED_AT <= 4 else []
+                fresh = 0 <= time.time()-TAXELS_RECEIVED_AT <= 4 and TAXELS_RECEIVED_AT > after
+                points = deepcopy(TAXELS) if fresh else []
             self.respond_json(points)
         elif self.path in ('/tactile','/tactile/','/tactile_2d.html'):
             try:self.send_data(TACTILE_HTML.read_bytes(),200,'text/html; charset=utf-8')

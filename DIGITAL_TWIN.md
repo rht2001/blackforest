@@ -208,3 +208,73 @@ Tests: `tests/test_sensor_objects.py` checks mesh provenance, dimensions, units,
 triangles, and embedded data. `tests/test_sensor_objects_browser.js` checks
 independent placement/rotation, visibility, persistence, shift-drag, reset, and
 the existing hand/taxel behavior.
+
+### Automatic thumb closure and grasp CSV
+
+The automatic contact grasp closes the four fingers first. Once their motion
+stops, it commands the standard thumb bend/rotation pose (234, 670), keeping
+the finger targets closed. After the thumb has responded and remained stable
+for 0.3 seconds (with the existing minimum closing delay), it queues one capture
+and continues the existing grip verification. A failed thumb command or motion
+timeout resets the hand without saving a completed closure.
+
+Each completed automatic closure writes `grasp_captures/grasp_<UTC timestamp>_<id>.csv`
+relative to the repository. Columns are exactly `id,x,y,z,pressure`, one row per
+taxel (1062 rows). Coordinates remain in `left_base_link` metres; pressure is
+calibrated sensor counts. Unavailable pressure is an empty CSV field, not zero.
+Capture is independent of cylinder classification, so a completed closure can
+be recorded even if subsequent grip verification fails. Manual slider and Close
+button commands keep their existing behavior.
+
+Keep the bridge and 3D viewer open. Restart the bridge and controller after this
+update. CSV capture runs in a background worker and requires a viewer update
+received after thumb settling (`GET /api/taxels?after=<Unix seconds>`). This
+prevents reuse of an earlier cached pose; it is a viewer snapshot, not a
+hardware-synchronized measurement. If no fresh update arrives within three
+seconds, capture reports `CSV not saved` and leaves no empty CSV. Robot polling
+continues even when the viewer, bridge, or output directory is unavailable.
+CSV files are already excluded by the repository's `*.csv` ignore rule.
+
+### View saved JSON captures
+
+In the 3D viewer, open **Saved captures → Open contact JSON files** and select
+one or more `hand_contact_cloud*.json` exports. Choose a capture in the list:
+
+- **Hand + contacts** reconstructs its saved angles and calibration and shows
+  the stored pressure points. Contacts are visible through the hand surface.
+- **Point cloud only** hides the hand and objects and includes all 1,062 taxel
+  positions when the saved pose is compatible. Stored active points keep their
+  pressure colors; the other positions are reconstructed from the saved angles,
+  calibration and matching geometry, and appear gray. Their pressure values
+  were not stored and remain unknown. **Show non-active taxels** toggles them.
+  Rotate and zoom normally; **Reset view** fits the visible points and axes.
+
+Historical values do not expire. The saved filename, capture time and contact
+count identify the active file. These exports contain activated points above
+the export threshold, not all 1062 sensor readings. Missing pressure values
+are not inferred. The threshold is fixed while replaying; the contact-centre checkbox
+still works. Sensor objects are hidden because the export does not store their
+poses. Import multiple files to compare captures, and use **Return to live**
+(or the normal Live/Manual buttons) to exit replay. Reopen files after reloading
+the viewer; files are held in memory for the current session.
+
+Both saved views share an optional **Show coordinate frame** control. It shows
+positive X (red), Y (green) and Z (blue) arrows at the JSON's `left_base_link`
+origin `(0,0,0)`, with a length of 40 mm each. The axes use the same transform
+as the points and hand, so switching views does not move or rotate the frame.
+Reconstructed gray points require matching geometry and a valid saved pose;
+incompatible files still show their stored contacts and coordinate frame.
+
+Replay works offline, reads files locally, preserves their point coordinates,
+and never publishes historical values to `/api/taxels`. Saved calibration is
+used only for replay and never overwrites browser calibration. Files with a
+matching profile, geometry and calibration support the hand view; otherwise
+only their stored point cloud is available, with an explanation.
+
+If the controller reports `CSV not saved: HTTP Error 404`, the bridge at the
+configured address lacks the updated taxel endpoint (for example an older
+bridge process still running). Stop that bridge, start this checkout's
+`digital_twin/bridge_server.py` again and reload the 3D viewer. The controller
+now reports this recovery instruction explicitly. A manually downloaded JSON
+is separate from automatic CSV capture. The connection-reset traceback in a
+controller log concerns the robot TCP connection, not JSON replay.

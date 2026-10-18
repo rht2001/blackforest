@@ -17,7 +17,7 @@ hr{border:none;border-top:1px solid #2e4961;margin:14px 0}details{border-top:1px
 .plotly-graph-div{position:absolute!important;left:440px!important;width:calc(100vw - 440px)!important;height:100vh!important}
 @media(max-width:900px) and (min-width:621px){#panel{width:300px}.plotly-graph-div{left:324px!important;width:calc(100vw - 324px)!important}}
 @media(max-width:620px){#panel{height:42vh;max-height:42vh;top:0;left:0;width:100%;padding:12px;overflow:auto}.plotly-graph-div{left:0!important;top:42vh!important;width:100vw!important;height:58vh!important}#toast{bottom:8px;right:8px;max-width:200px}h1{font-size:17px}}
-</style></head><body><aside id="panel">
+#savedCaptures{padding:10px;margin:10px 0;border:1px solid #54758b;border-radius:9px;background:#0b2030}#savedCaptures h2{font-size:14px;margin:0 0 9px}#savedCaptures select{width:100%;padding:7px;margin:8px 0;background:#132f44;color:#e9f3fa;border:1px solid #54758b;border-radius:5px}#savedCaptures input[type=file]{width:100%;font-size:11px;margin-top:6px}#savedInfo{overflow-wrap:anywhere}button:disabled{opacity:.5;cursor:not-allowed}</style></head><body><aside id="panel">
 <div class="kicker">RH56DFTP · Left hand · 6 DOF</div><h1>Digital Hand Twin</h1>
 <p class="muted">Original STEP geometry · CAD-derived joint axes · visual kinematics without hardware commands</p>
 <div class="switches"><button id="modeManual" class="mode active">Manual</button><button id="modeLive" class="mode">Live from Python</button></div>
@@ -264,7 +264,20 @@ body.profile-mode #toast,body.profile-mode #renderStats{display:none}
 
 </style>
 <div id="profileControls">
- <p class="kicker">Live hand · Pressure</p>
+ <section id="savedCaptures" aria-label="Saved captures">
+  <h2>Saved captures</h2>
+  <label>Open contact JSON files<input id="savedFiles" type="file" accept=".json,application/json" multiple></label>
+  <select id="savedSelect" aria-label="Saved capture" disabled><option>No files loaded</option></select>
+  <div class="switches"><button id="savedHand" class="mode" disabled>Hand + contacts</button><button id="savedCloud" class="mode" disabled>Point cloud only</button></div>
+  <label><input id="showOtherTaxels" type="checkbox" checked disabled> Show non-active taxels (point cloud)</label>
+  <p id="otherTaxelInfo" class="muted">Gray taxels: positions reconstructed from the saved pose; pressure was not stored.</p>
+  <label><input id="showSavedAxes" type="checkbox" checked disabled> Show coordinate frame</label>
+  <p id="savedAxesLegend" class="muted"><span style="color:#ff595e">X</span> · <span style="color:#49d17d">Y</span> · <span style="color:#58a6ff">Z</span> · left_base_link · origin (0, 0, 0) · arrows 40 mm</p>
+  <p id="savedInfo" class="muted" role="status">Load one or more hand_contact_cloud JSON exports. Files stay on this computer.</p>
+  <button id="savedReturn" class="small-button" hidden>Return to live</button>
+ </section>
+
+ <p id="pressureHeading" class="kicker">Live hand · Pressure</p>
  <p class="muted">1,062 sensing points · 17 fields. Blue dots mark pressure-weighted contact centres.</p>
  <div class="pressure-legend"><span style="--swatch:#00aa00">0–799</span><span style="--swatch:#cccc00">800–1,999</span><span style="--swatch:#ff8800">2,000–3,199</span><span style="--swatch:#ff0000">3,200+</span><span style="--swatch:#536171">No data</span></div>
  <p class="muted">Calibrated sensor counts</p><p id="pressureStatus" class="muted" role="status">Waiting for pressure data</p>
@@ -427,15 +440,49 @@ root.SensorObjects={defaults,valid,points,attach};if(typeof module!=='undefined'
 })(typeof globalThis!=='undefined'?globalThis:this);
 
 /* Read-only live motion and pressure. Uses the existing poller's packets. */
+/* Read saved contact exports as data; never reinterpret them as live telemetry. */
+(function(root){
+'use strict';
+const vector=(v,n)=>Array.isArray(v)&&v.length===n&&v.every(x=>typeof x==='number'&&Number.isFinite(x));
+function prepare(payload,context){
+ const fail=message=>{throw Error(message)};
+ if(!payload||payload.schema_version!==1||payload.frame!=='left_base_link'||payload.units!=='metres')fail('Expected a version 1 hand contact JSON in left_base_link metres.');
+ if(!Array.isArray(payload.points)||payload.points.length>1062)fail('Expected up to 1,062 saved contact points.');
+ const seen=new Set();
+ for(const p of payload.points){
+  if(!p||typeof p.id!=='string'||p.id.length>160||seen.has(p.id)||!vector(p.position_m,3)||p.position_m.some(x=>Math.abs(x)>10)||typeof p.value!=='number'||!Number.isFinite(p.value)||p.value<0||p.value>4095)fail('Invalid or duplicate contact point.');
+  seen.add(p.id);
+ }
+ if(payload.centroids!==undefined&&(!Array.isArray(payload.centroids)||payload.centroids.length>17||payload.centroids.some(c=>!c||!vector(c.position_m,3)||c.position_m.some(x=>Math.abs(x)>10))))fail('Invalid contact centres.');
+ const cloud=JSON.parse(JSON.stringify(payload));
+ let solution=null,reason='';
+ try{
+  if(payload.valid!==true)throw Error('This export has no valid saved hand pose.');
+  if(payload.profile!==context.id)throw Error('The hand profile differs from this viewer.');
+  if(payload.reference_sha256!==context.referenceHash||payload.geometry_sha256!==context.geometryHash)throw Error('The saved geometry differs from this viewer.');
+  if(!vector(payload.angles_act,6)||payload.angles_act.some(x=>x<0||x>1000)||!payload.kinematics_calibration)throw Error('The saved angles or calibration are missing.');
+  const calibration=root.JointKinematics.validateCalibration(context.profile,cloud.kinematics_calibration);
+  solution=root.JointKinematics.solve(context.profile,cloud.angles_act,calibration);
+  if(payload.joint_angles_rad&&Object.entries(payload.joint_angles_rad).some(([key,value])=>typeof value!=='number'||!Number.isFinite(value)||!Number.isFinite(solution.q[key])||Math.abs(solution.q[key]-value)>1e-6))throw Error('The saved joint angles cannot be reproduced by this viewer.');
+ }catch(error){reason=error.message;solution=null}
+ return {cloud,solution,handAvailable:!!solution,handReason:reason};
+}
+root.SavedContacts={prepare};
+if(typeof module!=='undefined')module.exports=root.SavedContacts;
+})(typeof globalThis!=='undefined'?globalThis:this);
+
 (function profileExtension(){
 'use strict';
 const K=JointKinematics,P=JointPressure,T=TactilePoints,$=id=>document.getElementById(id),data=JSON.parse($('jointProfileData').textContent),id='rh56_tactile_toolkit_left',profile=data.reference.primary_profiles[id],geometry=data.tactile_geometry;
+let replay=null;
 let calibration=K.defaults(profile),live=false,packet=null,disconnected=false,demo=false,raw=Array(6).fill(1000),view=null,manualQueued=false;
 // Preserve previously saved Toolkit geometry without exposing editing controls.
 try{const saved=JSON.parse(localStorage.getItem('rh56-joint-calibration:'+data.reference_sha256)||'null');if(saved?.reference_sha256===data.reference_sha256&&saved.profiles?.[id])calibration=K.clone(K.validateCalibration(profile,saved.profiles[id]))}catch{}
 calibration.enable_candidate_live=true;
 const assets=data.assets[id],traces=assets.map(a=>{const n=a.vertices.length/3;return {type:'mesh3d',color:a.sensor?'#263846':'#a4b6ca',x:Array(n).fill(0),y:Array(n).fill(0),z:Array(n).fill(0),i:a.indices.filter((_,i)=>i%3===0),j:a.indices.filter((_,i)=>i%3===1),k:a.indices.filter((_,i)=>i%3===2)}});
 const pointIndex=traces.length,centroidIndex=pointIndex+1;
+const objectStart=centroidIndex+1,objectEnd=objectStart+data.sensor_objects.length;
+let inactiveIndex=-1,coordinateIndices=[];
 traces.push({name:'Taxels',type:'scatter3d',mode:'markers',x:[],y:[],z:[],marker:{size:3.4,rgb:[]}}, {name:'Contact centres',type:'scatter3d',mode:'markers',color:'#247dff',x:[],y:[],z:[],marker:{size:8,rgb:[]}});
 function meshPoints(a,solution){const m=K.mul(solution.frames[a.link],K.rigid(a.origin_xyz_m,a.origin_rpy_rad)),out=[];for(let i=0;i<a.vertices.length;i+=3)out.push(K.point(m,a.vertices.slice(i,i+3).map((v,k)=>v*a.scale[k])));return out}
 const displayRotation=K.rigid([0,0,0],[0,-Math.PI/2,0]),bounds=[[Infinity,Infinity,Infinity],[-Infinity,-Infinity,-Infinity]],open=K.solve(profile,Array(6).fill(1000),K.defaults(profile));
@@ -445,7 +492,7 @@ function pose(values){view.solution=K.solve(profile,values,calibration);view.raw
 let pressures=P.sample(null,false),signature=null,overlaySignature=null,renderedCells=[],lastInput=null,taxelPositions=[],poseSignature=null,positionSignature=null,publishedSignature=null,publishing=false,lastPublished=0;
 const rgb=hex=>[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255);
 function present(point){return K.point(displayRotation,point).map((x,i)=>(x-center[i])*1000+[0,15,130][i])}
-function currentCloud(){return T.cloud(geometry,view.solution,P.sample(lastInput,demo||(live&&!disconnected)),lastInput,demo||(live&&!disconnected),$('activationThreshold').value,calibration)}
+function currentCloud(){if(replay)return K.clone(replay.entry.cloud);return T.cloud(geometry,view.solution,P.sample(lastInput,demo||(live&&!disconnected)),lastInput,demo||(live&&!disconnected),$('activationThreshold').value,calibration)}
 function overlay(input){
  renderedCells=T.cells(geometry,view.solution,pressures,$('activationThreshold').value);
  // Reuse the actual model cells. Export base-link metres, before camera/lift transforms.
@@ -457,7 +504,7 @@ function overlay(input){
  const cloud=currentCloud();if($('showContactCentres').checked)for(const c of cloud.centroids){const p=present(K.point(view.solution.frames.left_base_link,c.position_m.map((v,i)=>v+.0008*c.normal[i])));['x','y','z'].forEach((axis,i)=>centres[axis].push(p[i]));centres.marker.rgb.push(rgb('#247dff'))}
  $('contactSummary').textContent=cloud.valid?cloud.points.length+' activated points · '+cloud.centroids.length+' contact centres':'Contact export awaits fresh, synchronized angles and pressure';
 }
-function update(){if(!view)return;
+function update(){if(!view||replay)return;
  const desired=live?(!disconnected&&K.freshActual(packet)?packet.angles_act:view.raw):raw;
  const next=JSON.stringify(desired),moved=next!==signature;if(moved){signature=next;pose(desired)}
  lastInput=demo?{...P.demo(performance.now()/1000),angles_act:view.raw.slice(),received_at:Date.now()/1000,field_received_at:{angles_act:Date.now()/1000,tactile_regions:Date.now()/1000}}:packet;
@@ -471,19 +518,121 @@ function update(){if(!view)return;
  $('profileStatus0').textContent=demo?'Demo · simulated motion and pressure':!live?'Manual preview':disconnected?'Disconnected · pose held':!K.freshActual(packet)?'Waiting for fresh actual angles · pose held':(packet.simulated?'Simulation':'Live hand')+' · actual angles and pressure';
  $('profileAngles0').textContent=view.solution.warnings.join('\n');
 }
-window.ProfileTwin={manual(values){if(!live){raw=values.slice();if(!manualQueued){manualQueued=true;requestAnimationFrame(()=>{manualQueued=false;update()})}}},mode(enabled,values){live=enabled;demo=false;disconnected=false;if(!enabled){packet=null;raw=values.slice()}update()},demo(enabled){demo=enabled;update()},receive(msg){packet=K.clone(msg);disconnected=false;if(live)update()},disconnect(){disconnected=true;update()},tick:update,snapshot(){return {live,demo,pressure:K.clone(pressures),taxels:K.clone(renderedCells),models:view?{[id]:{raw:view.raw.slice(),q:K.clone(view.solution.q),frames:K.clone(view.solution.frames)}}:{}}}};
+window.ProfileTwin={manual(values){if(!live){raw=values.slice();if(!manualQueued){manualQueued=true;requestAnimationFrame(()=>{manualQueued=false;update()})}}},mode(enabled,values){leaveSaved();live=enabled;demo=false;disconnected=false;if(!enabled){packet=null;raw=values.slice()}update()},demo(enabled){demo=enabled;update()},receive(msg){packet=K.clone(msg);disconnected=false;if(live)update()},disconnect(){disconnected=true;update()},tick:update,snapshot(){return {replay:replay?{name:replay.entry.name,mode:replay.mode}:null,live,demo,pressure:K.clone(pressures),taxels:K.clone(renderedCells),models:view?{[id]:{raw:view.raw.slice(),q:K.clone(view.solution.q),frames:K.clone(view.solution.frames)}}:{}}}};
 window.getContactCloud=()=>currentCloud();window.getContactPoints=()=>currentCloud().points;
-window.getTaxelPositions=()=>taxelPositions.map(point=>({...point}));
+window.getTaxelPositions=()=>replay?[]:taxelPositions.map(point=>({...point}));
 // A single in-flight request; latest displayed pose wins. Refresh held poses once/second.
 async function shareTaxels(){
- if(publishing||!taxelPositions.length||publishedSignature===positionSignature&&performance.now()-lastPublished<1000)return;
+ if(replay||publishing||!taxelPositions.length||publishedSignature===positionSignature&&performance.now()-lastPublished<1000)return;
  const sentSignature=positionSignature,root=$('bridgeUrl').value.trim().replace(/\/$/,'');publishing=true;
  try{const response=await fetch(root+'/api/taxels',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(taxelPositions),signal:AbortSignal.timeout(1250)});if(response.ok){publishedSignature=sentSignature;lastPublished=performance.now()}}catch{}finally{publishing=false}
 }
 setInterval(shareTaxels,200);
-$('activationThreshold').oninput=update;$('showContactCentres').onchange=update;
+$('activationThreshold').oninput=update;$('showContactCentres').onchange=()=>replay?renderSaved():update();
 $('exportContactCloud').onclick=()=>{const cloud=currentCloud(),url=URL.createObjectURL(new Blob([JSON.stringify(cloud,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='hand_contact_cloud.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
-function fit(){const low=[Infinity,Infinity,Infinity],high=[-Infinity,-Infinity,-Infinity];for(const trace of traces){if(trace.visible===false)continue;for(let i=0;i<trace.x.length;i++)for(let k=0;k<3;k++){const value=trace[['x','y','z'][k]][i];low[k]=Math.min(low[k],value);high[k]=Math.max(high[k],value)}}const target=low.map((v,k)=>(v+high[k])/2),distance=Math.max(440,.55*Math.hypot(...high.map((v,k)=>v-low[k]))/Math.sin(Math.PI/7.5));view?.plot._renderer?.focus(target,[.2,-1,.25],distance)}
+function fit(){const low=[Infinity,Infinity,Infinity],high=[-Infinity,-Infinity,-Infinity];for(const trace of traces){if(trace.visible===false)continue;for(let i=0;i<trace.x.length;i++)for(let k=0;k<3;k++){const value=trace[['x','y','z'][k]][i];low[k]=Math.min(low[k],value);high[k]=Math.max(high[k],value)}}if(!Number.isFinite(low[0]))return;const target=low.map((v,k)=>(v+high[k])/2),distance=Math.max(replay?.mode==='cloud'?80:440,.55*Math.hypot(...high.map((v,k)=>v-low[k]))/Math.sin(Math.PI/7.5));view?.plot._renderer?.focus(target,[.2,-1,.25],distance)}
+// Saved files are isolated from live sampling, taxel sharing, and browser calibration.
+const savedEntries=[];
+function savedControls(active){
+ for(const key of ['activationThreshold','quickOpen','quickClose','animateDemo','openAll','closeAll',...Array.from({length:6},(_,i)=>'s'+i),...Array.from({length:6},(_,i)=>'n'+i)]){if($(key))$(key).disabled=active||((key[0]==='s'||key[0]==='n'||key==='openAll'||key==='closeAll')&&live)}
+ $('sensorObjectsPanel').hidden=active;
+ $('savedReturn').hidden=!active;
+}
+function savedVisibility(){
+ traces[pointIndex].xray=!!replay;traces[centroidIndex].xray=!!replay;
+ traces.forEach((trace,i)=>{
+  if(i===inactiveIndex)trace.visible=!!replay&&replay.mode==='cloud'&&replay.entry.handAvailable&&$('showOtherTaxels').checked;
+  else if(coordinateIndices.includes(i))trace.visible=!!replay&&$('showSavedAxes').checked;
+  else if(i>=objectStart&&i<objectEnd)trace.visible=!replay&&objects.snapshot()[i-objectStart].visible;
+  else trace.visible=!replay||i>=pointIndex||replay.mode==='hand';
+ });
+}
+function otherTaxels(entry){
+ if(!entry.solution)return [];
+ if(!entry.otherTaxels){
+  const active=new Set(entry.cloud.points.map(p=>p.id)),baseInverse=T.inverseRigid(entry.solution.frames.left_base_link);
+  entry.otherTaxels=T.cells(geometry,entry.solution,{},entry.cloud.threshold).filter(cell=>!active.has(cell.id)).map(cell=>({id:cell.id,position_m:K.point(baseInverse,cell.position_world_m),pressure:null}));
+ }
+ return entry.otherTaxels;
+}
+function coordinateFrame(append){
+ const length=.04,head=.004,wing=.0025,colors=['#ff595e','#49d17d','#58a6ff'];
+ coordinateIndices.forEach((index,axis)=>{
+  const trace=traces[index];trace.x=[];trace.y=[];trace.z=[];trace.marker.rgb=[];
+  const origin=[0,0,0],end=origin.slice();end[axis]=length;
+  const segment=(a,b)=>{append(trace,a,colors[axis]);append(trace,b,colors[axis])};
+  segment(origin,end);
+  for(const perpendicular of [0,1,2].filter(k=>k!==axis))for(const sign of [-1,1]){const tip=end.slice();tip[axis]-=head;tip[perpendicular]=sign*wing;segment(end,tip)}
+ });
+}
+function renderSaved(){
+ if(!replay||!view)return;
+ const {entry,mode}=replay,cloud=entry.cloud;
+ if(entry.solution){view.solution=entry.solution;view.raw=cloud.angles_act.slice();assets.forEach((a,index)=>meshPoints(a,view.solution).forEach((p,j)=>{const q=present(p);for(let k=0;k<3;k++)traces[index][['x','y','z'][k]][j]=q[k]}))}
+ else {view.solution=K.solve(profile,Array(6).fill(1000),K.defaults(profile));view.raw=Array(6).fill(1000)}
+ savedVisibility();
+ const base=view.solution.frames.left_base_link,dots=traces[pointIndex],centres=traces[centroidIndex];
+ for(const trace of [dots,centres]){trace.x=[];trace.y=[];trace.z=[];trace.marker.rgb=[]}
+ const append=(trace,p,color)=>{const q=present(K.point(base,p));['x','y','z'].forEach((axis,i)=>trace[axis].push(q[i]));trace.marker.rgb.push(rgb(color))};
+ for(const point of cloud.points)append(dots,point.position_m,P.color(point.value));
+ const others=otherTaxels(entry),inactive=traces[inactiveIndex];
+ inactive.x=[];inactive.y=[];inactive.z=[];inactive.marker.rgb=[];
+ for(const point of others)append(inactive,point.position_m,'#647b8d');
+ coordinateFrame(append);
+ $('showOtherTaxels').disabled=mode!=='cloud'||!entry.handAvailable;
+ $('showSavedAxes').disabled=false;
+ $('otherTaxelInfo').textContent=entry.handAvailable?cloud.points.length+' stored active points + '+others.length+' other taxels. Gray positions are reconstructed; their pressure was not stored.':'Other taxels cannot be reconstructed: '+entry.handReason;
+ if($('showContactCentres').checked)for(const c of cloud.centroids||[])append(centres,c.position_m,'#247dff');
+ renderedCells=cloud.points.map(p=>({...p,value:p.value,position_world_m:K.point(base,p.position_m)}));
+ pressures=P.sample(null,false);
+ if(view.ready){const indices=traces.map((_,i)=>i);HandRenderer.restyle(view.plot,{x:traces.map(t=>t.x),y:traces.map(t=>t.y),z:traces.map(t=>t.z),visible:traces.map(t=>t.visible)},indices)}
+ $('savedHand').classList.toggle('active',mode==='hand');$('savedCloud').classList.toggle('active',mode==='cloud');
+ $('savedHand').disabled=!entry.handAvailable;$('savedCloud').disabled=false;
+ const date=typeof cloud.received_at==='number'&&Number.isFinite(cloud.received_at)?new Date(cloud.received_at*1000).toLocaleString():'Unknown capture time';
+ $('savedInfo').textContent=entry.name+' · '+date+' · '+cloud.points.length+' saved contacts · threshold '+cloud.threshold+(cloud.simulated?' · simulated':'')+(entry.handReason?' · '+entry.handReason:'');
+ $('profileStatus0').textContent='Saved capture · '+(mode==='hand'?'hand + contacts':'point cloud only');
+ $('liveStatus').textContent='Viewing saved capture · live updates paused';$('statusDot').className='dot';
+ $('dataSource').textContent='Data source: saved JSON · '+entry.name;
+ $('pressureHeading').textContent='Saved capture · Pressure';
+ $('pressureStatus').textContent='Saved contact values only · '+cloud.points.length+' points';
+ $('contactSummary').textContent=cloud.points.length+' stored points · positions preserved from JSON';
+ $('profileAngles0').textContent=entry.handReason||'Saved angles and calibration · '+cloud.angles_act.join(' / ');
+ for(const r of P.regions){const values=cloud.points.filter(p=>p.region===r.key).map(p=>p.value),el=$('pressure_'+r.key);el.textContent=r.key.replaceAll('_',' ')+': '+(values.length?Math.max(...values)+' peak ('+values.length+' saved contacts)':'not stored');el.style.borderLeftColor=values.length?P.color(Math.max(...values)):P.missing}
+}
+function openSaved(entry,mode){
+ if(!entry)return;
+ if(!replay)$('modeManual').click();
+ replay={entry,mode:mode==='hand'&&entry.handAvailable?'hand':'cloud'};
+ savedControls(true);$('modeManual').classList.remove('active');$('modeLive').classList.remove('active');renderSaved();fit();
+}
+function leaveSaved(){
+ if(!replay)return;
+ replay=null;$('showOtherTaxels').disabled=true;$('showSavedAxes').disabled=true;$('pressureHeading').textContent='Live hand · Pressure';signature=null;overlaySignature=null;poseSignature=null;
+ savedControls(false);savedVisibility();
+ if(view.ready)HandRenderer.restyle(view.plot,{visible:traces.map(t=>t.visible)},traces.map((_,i)=>i));
+ $('savedHand').classList.remove('active');$('savedCloud').classList.remove('active');
+ $('savedInfo').textContent='Saved captures remain in the list. Select one to view it again.';
+}
+$('savedFiles').onchange=async event=>{
+ const errors=[];let last=null;
+ for(const file of event.target.files){
+  try{
+   if(file.size>5*1024*1024)throw Error('File exceeds 5 MB.');
+   const entry=SavedContacts.prepare(JSON.parse(await file.text()),{id,profile,referenceHash:data.reference_sha256,geometryHash:geometry.geometry_sha256});entry.name=file.name;
+   savedEntries.push(entry);last=entry;
+  }catch(error){errors.push(file.name+': '+error.message)}
+ }
+ if(last){$('savedSelect').replaceChildren(...savedEntries.map((entry,i)=>{const option=document.createElement('option');option.value=i;option.textContent=entry.name+' · '+entry.cloud.points.length+' contacts';return option}));$('savedSelect').disabled=false;$('savedSelect').value=savedEntries.indexOf(last);openSaved(last,'hand')}
+ if(errors.length)$('savedInfo').textContent=errors.join(' | ');
+ event.target.value='';
+};
+$('savedSelect').onchange=()=>openSaved(savedEntries[Number($('savedSelect').value)],replay?.mode||'hand');
+$('savedHand').onclick=()=>openSaved(savedEntries[Number($('savedSelect').value)],'hand');
+$('savedCloud').onclick=()=>openSaved(savedEntries[Number($('savedSelect').value)],'cloud');
+$('savedReturn').onclick=()=>$('modeLive').click();
+$('showOtherTaxels').onchange=()=>{renderSaved();fit()};
+$('showSavedAxes').onchange=()=>{renderSaved();fit()};
+
 $('resetView').onclick=fit;
 $('panel').insertBefore($('profileControls'),$('panel').children[2]);document.body.classList.add('profile-mode');
 for(const id of ['sensorEditor','showSensors','exportContacts','indexAlpha','thumbBend','thumbRot','ratio']){let el=$(id);if(!el)continue;if(id!=='sensorEditor')el=el.closest('details')||el.closest('.metrics');el?.remove()}
@@ -492,7 +641,11 @@ $('liveField').previousElementSibling.remove();$('liveField').hidden=true;
 for(const r of P.regions){const el=document.createElement('div');el.id='pressure_'+r.key;$('pressureRegions').appendChild(el)}
 view={plot:$('profileScene0'),raw:raw.slice(),ready:false};pose(raw);update();
 const objects=SensorObjects.attach({models:data.sensor_objects,traces,plot:view.plot,toDisplay:p=>present(K.point(view.solution.frames.left_base_link,p))});
+inactiveIndex=traces.length;
+traces.push({name:'Other taxels (pressure not stored)',type:'scatter3d',mode:'markers',visible:false,x:[],y:[],z:[],marker:{size:2.3,rgb:[]}});
+coordinateIndices=['X','Y','Z'].map(axis=>{const index=traces.length;traces.push({name:'Global '+axis,type:'scatter3d',mode:'lines',visible:false,xray:true,x:[],y:[],z:[],marker:{rgb:[]}});return index});
 window.getSensorObjects=()=>objects.snapshot();
+view.plot.addEventListener('pointerdown',event=>{if(replay&&event.shiftKey)event.stopImmediatePropagation()},true);
 HandRenderer['create']('profileScene0',traces).then(()=>{view.ready=true;objects.connectDrag();fit();$('modeLive').click()}).catch(e=>{$('profileStatus0').textContent='Rendering failed: '+e.message});
 setInterval(update,200);
 })();
