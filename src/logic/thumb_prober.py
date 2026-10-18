@@ -176,9 +176,9 @@ class ThumbProber:
 
         # 2. Thumb actuator force delta check (catches physical resistance against object)
         delta_force = current_thumb_force - baseline_thumb_force
-        if delta_force >= 35.0:
+        if delta_force >= 65.0:
             return True, "Thumb Force Sensor", 0.0, 0.0, round(delta_force, 1)
-        if current_thumb_force >= 80.0 and delta_force >= 15.0:
+        if current_thumb_force >= 120.0 and delta_force >= 25.0:
             return True, "Thumb Force Sensor", 0.0, 0.0, round(current_thumb_force, 1)
 
         return False, "", 0.0, 0.0, 0.0
