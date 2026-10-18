@@ -487,6 +487,7 @@ const assets=data.assets[id],traces=assets.map(a=>{const n=a.vertices.length/3;r
 const pointIndex=traces.length,centroidIndex=pointIndex+1;
 const objectStart=centroidIndex+1,objectEnd=objectStart+data.sensor_objects.length;
 let inactiveIndex=-1,boundaryIndex=-1,coordinateIndices=[];
+let estimateIndices=[],estimatePointIndex=-1,estimateActive=false;
 const boundaryData=JSON.parse($('handBoundaryData').textContent);
 traces.push({name:'Taxels',type:'scatter3d',mode:'markers',x:[],y:[],z:[],marker:{size:3.4,rgb:[]}}, {name:'Contact centres',type:'scatter3d',mode:'markers',color:'#247dff',x:[],y:[],z:[],marker:{size:8,rgb:[]}});
 function meshPoints(a,solution){const m=K.mul(solution.frames[a.link],K.rigid(a.origin_xyz_m,a.origin_rpy_rad)),out=[];for(let i=0;i<a.vertices.length;i+=3)out.push(K.point(m,a.vertices.slice(i,i+3).map((v,k)=>v*a.scale[k])));return out}
@@ -561,7 +562,8 @@ function savedControls(active){
 function savedVisibility(){
  traces[pointIndex].xray=!!replay;traces[centroidIndex].xray=!!replay;
  traces.forEach((trace,i)=>{
-  if(i===boundaryIndex)trace.visible=$('showHandBoundaries').checked&&(!replay||replay.entry.handAvailable);
+  if(estimateIndices.includes(i)||i===estimatePointIndex){if(!estimateActive)trace.visible=false;}
+  else if(i===boundaryIndex)trace.visible=$('showHandBoundaries').checked&&(!replay||replay.entry.handAvailable);
   else if(i===inactiveIndex)trace.visible=!!replay&&replay.mode==='cloud'&&replay.entry.handAvailable&&$('showOtherTaxels').checked;
   else if(coordinateIndices.includes(i))trace.visible=!!replay&&$('showSavedAxes').checked;
   else if(i>=objectStart&&i<objectEnd)trace.visible=!replay&&objects.snapshot()[i-objectStart].visible;
@@ -627,6 +629,7 @@ function openSaved(entry,mode){
  savedControls(true);$('modeManual').classList.remove('active');$('modeLive').classList.remove('active');renderSaved();fit();
 }
 function leaveSaved(){
+ window.HandEstimate?.clear();
  if(!replay)return;
  replay=null;$('showOtherTaxels').disabled=true;$('showSavedAxes').disabled=true;$('pressureHeading').textContent='Live hand · Pressure';signature=null;overlaySignature=null;poseSignature=null;
  savedControls(false);savedVisibility();
@@ -714,10 +717,48 @@ inactiveIndex=traces.length;
 traces.push({name:'Other taxels (pressure not stored)',type:'scatter3d',mode:'markers',visible:false,x:[],y:[],z:[],marker:{size:2.3,rgb:[]}});
 coordinateIndices=['X','Y','Z'].map(axis=>{const index=traces.length;traces.push({name:'Global '+axis,type:'scatter3d',mode:'lines',visible:false,xray:true,x:[],y:[],z:[],marker:{rgb:[]}});return index});
 window.getSensorObjects=()=>objects.snapshot();
+// Fitted candidates have independent traces: never modify manual object poses.
+estimateIndices=data.sensor_objects.map((model,index)=>{
+ const trace={name:'Estimated '+(index?'SENSOR_B':'SENSOR_A'),type:'mesh3d',color:index?'#d7a936':'#18b79c',visible:false,
+ x:model.vertices.filter((_,i)=>i%3===0).map(v=>v*1000),y:model.vertices.filter((_,i)=>i%3===1).map(v=>v*1000),z:model.vertices.filter((_,i)=>i%3===2).map(v=>v*1000),i:model.indices.filter((_,i)=>i%3===0),j:model.indices.filter((_,i)=>i%3===1),k:model.indices.filter((_,i)=>i%3===2)};
+ const slot=traces.length;traces.push(trace);return slot;
+});
+estimatePointIndex=traces.length;traces.push({name:'Frozen estimate measurements',type:'scatter3d',mode:'markers',visible:false,xray:true,x:[],y:[],z:[],marker:{size:4,rgb:[]}});
+window.HandEstimate={
+ clear(){estimateActive=false;savedVisibility();for(const slot of [...estimateIndices,estimatePointIndex])traces[slot].visible=false;
+  if(view.ready)HandRenderer.restyle(view.plot,{visible:[...estimateIndices,estimatePointIndex].map(()=>false)},[...estimateIndices,estimatePointIndex]);},
+ show(name,fit,frame,threshold=200){
+  this.clear();
+  if(frame.frame!=='left_base_link'||!['mm','m'].includes(frame.units))throw Error('Estimate has no matching hand coordinate frame.');
+  if(!fit?.compatible)throw Error('This candidate violates contact or hand limits.');
+  const index=['SENSOR_A','SENSOR_B'].indexOf(name),model=data.sensor_objects[index],matrix=fit.transform;
+  if(!model||!Array.isArray(matrix)||matrix.length!==4||matrix.some(row=>!Array.isArray(row)||row.length!==4||!row.every(Number.isFinite)))throw Error('Invalid fitted pose.');
+  if(!replay?.entry.handAvailable)throw Error('The capture has no reproducible hand pose. Use the fit report for this cloud.');
+  const base=view.solution.frames.left_base_link,trace=traces[estimateIndices[index]];
+  trace.x=[];trace.y=[];trace.z=[];
+  for(let i=0;i<model.vertices.length;i+=3){
+   // Embedded display meshes are centered; fit transforms use original STL coordinates.
+   const local=model.vertices.slice(i,i+3).map((v,k)=>v*1000+model.source_center_mm[k]);
+   const fitted=matrix.slice(0,3).map(row=>(row[3]+row.slice(0,3).reduce((sum,v,k)=>sum+v*local[k],0))/1000);
+   const q=present(K.point(base,fitted));['x','y','z'].forEach((axis,k)=>trace[axis].push(q[k]));
+  }
+  const dots=traces[estimatePointIndex];dots.x=[];dots.y=[];dots.z=[];dots.marker.rgb=[];
+  for(const p of frame.points){
+   const scale=frame.units==='mm'?.001:1,q=present(K.point(base,[p.x,p.y,p.z].map(v=>v*scale)));
+   ['x','y','z'].forEach((axis,k)=>dots[axis].push(q[k]));dots.marker.rgb.push(rgb(typeof p.pressure==='number'&&p.pressure>threshold?'#ff4141':'#8496a6'));
+  }
+  estimateActive=true;savedVisibility();trace.visible=true;dots.visible=true;traces[pointIndex].visible=false;
+  for(let i=objectStart;i<objectEnd;i++)traces[i].visible=false;
+  const slots=traces.map((_,i)=>i);HandRenderer.restyle(view.plot,{x:traces.map(t=>t.x),y:traces.map(t=>t.y),z:traces.map(t=>t.z),visible:traces.map(t=>t.visible)},slots);
+  fitView();return {candidate:name,vertices:trace.x.length};
+ }
+};
+function fitView(){fit()}
+
 view.plot.addEventListener('pointerdown',event=>{if(replay&&event.shiftKey)event.stopImmediatePropagation()},true);
 HandRenderer['create']('profileScene0',traces).then(()=>{view.ready=true;objects.connectDrag();fit();$('modeLive').click()}).catch(e=>{$('profileStatus0').textContent='Rendering failed: '+e.message});
 setInterval(update,200);
 })();
 
 </script>
-<!-- JOINT PROFILES END --><script src="sensor_identification/history.js"></script><script src="sensor_identification/runs.js"></script><script src="sensor_identification/measurements.js"></script><script src="sensor_identification/simulation.js"></script></body></html>
+<!-- JOINT PROFILES END --><script src="sensor_identification/history.js"></script><script src="sensor_identification/measurements.js"></script><script src="sensor_identification/simulation.js"></script></body></html>

@@ -44,3 +44,7 @@ assert.equal(R.validateFrame(cloud).points.length,4);
  await assert.rejects(R.buildAsync([pose1],context,{cancelled:()=>true}),/cancelled/);
  console.log('PASS moving-pose reconstruction, voxel hold reduction, run boundaries, pressure/pose validation, flat/raw CSV parity and asynchronous cancellation');
 })().catch(e=>{console.error(e);process.exitCode=1});
+
+assert.equal(cloud.hand_snapshot.angles_act[4],400);
+assert.equal(cloud.hand_snapshot.units,"metres");
+assert.ok(cloud.hand_snapshot.points.length);

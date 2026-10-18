@@ -15,7 +15,7 @@ class LimitsTests(unittest.TestCase):
         p=np.zeros((4,3));n=np.tile([0,0,1.],(4,1))
         q=np.array([[0,0,5],[0,0,-.5],[0,0,-5],[40,0,-5.]])
         r=penetration_residual(q,p,n,1.)
-        np.testing.assert_allclose(r[:3],[0,0,4])
+        np.testing.assert_allclose(r[:3],[0,.5,5])
         self.assertLess(r[3],1e-10)
         # Rotation/translation of the whole observation does not change limits.
         rot=np.array([[0,0,1],[1,0,0],[0,1,0]])
@@ -38,7 +38,8 @@ class LimitsTests(unittest.TestCase):
         self.assertEqual(r['contacts'],12)
         self.assertEqual(r['hand_boundary_points'],1)
         self.assertEqual(r['inactive_taxel_limits'],1)
-        np.testing.assert_allclose(fn.call_args.kwargs['boundary_xyz'],[[20,10,0],[0,0,0]])
+        np.testing.assert_allclose(fn.call_args.kwargs['boundary_xyz'],[[20,10,0],[0,0,0],[0,0,0]])
+        self.assertEqual(r['surface_taxel_limits'],2)
         self.assertEqual(len(fn.call_args.args[1]),12)
         # Boundaries never count as contacts, even in a manual snapshot.
         r=identify_sensor([],dict(SENSOR_A=object(),SENSOR_B=object()),boundary_points=[boundary])

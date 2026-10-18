@@ -100,7 +100,13 @@ class IdentificationTests(unittest.TestCase):
         points = synthetic_points(self.models['SENSOR_A'], region='shared', noise_mm=.1)
         result = identify_sensor(points, self.models, self.config)
         self.assertEqual(result['classification'], 'AMBIGUOUS', json.dumps(result))
-        self.assertEqual(result['reason'], 'both_candidates_compatible', json.dumps(result))
+        # Strict per-contact checks may reject B when its finite local search
+        # leaves a few contacts outside tolerance. Shared geometry must still
+        # remain ambiguous rather than forcing an A label from that failure.
+        self.assertIn(result['reason'], ('both_candidates_compatible', 'score_margin_too_small'), json.dumps(result))
+        for fit in result['fits'].values():
+            if fit['compatible']:
+                self.assertLessEqual(fit['max_error_mm'], self.config.tolerance_mm)
 
     def test_impossible_cloud_neither_fits(self):
         rng = np.random.default_rng(15)

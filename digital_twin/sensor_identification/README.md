@@ -126,3 +126,30 @@ supplied CAD assemblies are open meshes and sparse points can miss crossings.
 Unknown taxel pressures impose no additional limit. Saved clouds without a
 reproducible hand pose receive no invented hand limits. Boundary points never
 become pressure evidence and cannot identify an object without active contacts.
+
+
+Strict fitting and hand overlay
+-------------------------------
+Every valid above-threshold contact must lie within the selected position tolerance
+of an exact STL triangle. Average error cannot excuse an outlier. Certified
+clearance is also checked by its maximum violation. Feasible refinements are
+preferred to lower-scoring infeasible poses.
+
+All supplied taxel positions with outward normals impose geometric hand limits,
+even when pressure is unknown. Unknown pressure is never invented as a contact
+or non-contact reading. After refinement, every candidate triangle is audited
+against 8 by 8 mm tangent patches extending inward from the taxels and purple
+hand points. This catches crossings and enclosing shapes hidden by unsigned
+nearest-surface distance. The maximum allowed inward depth is independently
+0.25 mm; increasing contact tolerance never increases this allowance. These
+local patches are a conservative surface approximation, not a watertight hand
+collision certificate; unsampled gaps and inaccurate calibration remain limitations.
+
+Compatible poses appear in the hand scene using the returned STL-mm to base-mm
+transform and the captured hand pose/calibration. The UI pauses live replay
+while displaying that frozen snapshot. Both compatible candidates can be
+selected and remain provisional when identification is ambiguous. Rejected
+poses appear only on request in Fit report. Clouds without a reproducible hand
+pose remain report-only. CSV runs store the last contact-bearing hand pose;
+the overlay and hand-limit checks use that pose, while contact checks use all
+accumulated run contacts. This does not check collision at every earlier pose.

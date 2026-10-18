@@ -69,7 +69,8 @@ def write_viewer(path, points, models, result, *, threshold=200., coordinate_uni
         faces = mesh.faces
         fig.add_trace(go.Mesh3d(x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2],
                                i=faces[:, 0], j=faces[:, 1], k=faces[:, 2], color=color,
-                               opacity=.25, name=f"{name} score={fit['score']:.2f}", showlegend=True))
+                               opacity=.25, name=f"{name} {'valid' if fit['compatible'] else 'REJECTED'} score={fit['score']:.2f}",
+                               visible=True if fit['compatible'] else 'legendonly', showlegend=True))
     fig.update_layout(title=result['classification'],
                       scene=dict(aspectmode='data', xaxis_title='X (mm)',
                                  yaxis_title='Y (mm)', zaxis_title='Z (mm)'),

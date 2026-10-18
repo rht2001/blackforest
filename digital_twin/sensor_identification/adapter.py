@@ -15,7 +15,8 @@ def normalize_frame(frame):
             if not isinstance(xyz, (list, tuple)) or len(xyz) != 3:
                 points.append({'valid': False})
                 continue
-            points.append(dict(id=point.get('id'), x=xyz[0], y=xyz[1], z=xyz[2], pressure=point.get('value')))
+            points.append(dict(id=point.get('id'), x=xyz[0], y=xyz[1], z=xyz[2],
+                               pressure=point.get('value'), **({'normal': point['normal']} if point.get('normal') is not None else {})))
         return {**frame, 'units': 'm', 'points': points}
     return frame
 

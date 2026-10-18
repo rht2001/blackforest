@@ -38,8 +38,8 @@
         <p id="historyStatus" class="hint">Choose a file to preview it before estimating.</p>
       </section>
       <h2>2. Estimate from these points</h2><button id="estimateButton">Estimate</button><p id="estimateStatus" role="status" aria-live="polite">Ready. The selected data source supplies the point cloud.</p>
-      <div class="data-actions"><button id="showHand">Hand view</button><button id="showCloud" disabled>Point cloud</button><button id="showEstimate" disabled>Fit result</button></div><div id="viewActions" class="data-actions"></div>
-      <p class="hint">Purple: hand limits · inactive taxels: penetration limits · active taxels: surface references</p><div id="boundaryDisplay"></div><details id="estimateSettings"><summary>Estimation settings</summary><label>Contact threshold <input id="estimateThreshold" type="number" min="0" max="4095" value="200"></label><label>Position tolerance (mm) <input id="estimateTolerance" type="number" min="0.1" max="20" step="0.1" value="1.5"></label><p class="hint">Active taxels guide surface alignment. Purple hand points and known inactive taxels limit inward penetration. Gray taxels have unknown pressure. Limits use approximate local surfaces; hand geometry requires calibration.</p></details>
+      <div class="data-actions"><button id="showHand">Hand view</button><button id="showCloud" disabled>Point cloud</button><button id="showEstimate" disabled>Estimate in hand</button><button id="showFitReport" disabled>Fit report</button></div><label id="estimateCandidateLabel" hidden>Fitted candidate <select id="estimateCandidate"></select></label><div id="viewActions" class="data-actions"></div>
+      <p class="hint">Purple and gray: hand surface limits · red: measured contacts</p><div id="boundaryDisplay"></div><details id="estimateSettings"><summary>Estimation settings</summary><label>Contact threshold <input id="estimateThreshold" type="number" min="0" max="4095" value="200"></label><label>Position tolerance (mm) <input id="estimateTolerance" type="number" min="0.1" max="20" step="0.1" value="1.5"></label><p class="hint">Every red contact must be within the position tolerance. All known hand surfaces, including gray taxel positions, impose a separate 0.25 mm penetration limit. Hand limits use conservative local surface patches and require calibrated geometry.</p></details>
       <details id="advancedData"><summary>Advanced display & connection</summary></details>`;
     panel.append(app);old.forEach(node=>$('advancedData').append(node));
     old.filter(n=>n.matches('.kicker,h1')).forEach(n=>{n.hidden=true});
@@ -60,6 +60,20 @@
     const base=location.protocol==='file:'?'http://127.0.0.1:18768':location.origin;
     let mode='manual',switching=false,historyValid=false,csvRows=null,csvName='',job=null,pollTimer=null,running=false,loading=false,historyFrame=null,loadVersion=0;
     const status=$('estimateStatus');
+    let fittedFrame=null,fittedResult=null,fittedThreshold=200;
+    function clearEstimate(){window.HandEstimate?.clear();fittedFrame=null;fittedResult=null;$('showEstimate').disabled=true;$('showFitReport').disabled=true;$('estimateCandidateLabel').hidden=true;}
+    function placeEstimate(){
+      if(!fittedFrame||!fittedResult)return;
+      estimateView.hidden=true;runView.hidden=true;
+      const candidate=$('estimateCandidate').value;
+      try{
+        if(!fittedFrame.hand_snapshot)throw Error('This cloud has no saved hand pose. Open Fit report to inspect its alignment.');
+        window.HandHistory.show(fittedFrame.hand_snapshot,'Estimate snapshot');
+        historyFrame=fittedFrame;historyValid=true;layoutMode('history');
+        window.HandEstimate.show(candidate,fittedResult.fits[candidate],fittedFrame,fittedThreshold);
+      }catch(error){window.HandEstimate?.clear();status.textContent+=' '+error.message;}
+    }
+    $('estimateCandidate').onchange=placeEstimate;
     function updateReady(){
       $('estimateButton').disabled=running||loading||(mode==='history'&&!historyValid);
       $('showCloud').disabled=mode!=='history'||!historyValid;
@@ -67,11 +81,12 @@
       $('downloadRun').hidden=!runFrame||!historyValid;
     }
     function invalidateHistory(message){
-      historyValid=false;historyFrame=null;estimateView.hidden=true;
+      clearEstimate();historyValid=false;historyFrame=null;estimateView.hidden=true;
       runFrame=null;runView.hidden=true;
       $('historyStatus').textContent=message;updateReady();
     }
     function previewReady(){
+      clearEstimate();
       runFrame=null;runView.hidden=true;
       const frame=window.getIdentificationFrame();
       if(!frame.valid||!frame.points.length)throw Error('This file does not contain a usable point cloud.');
@@ -89,6 +104,7 @@
       updateReady();
     }
     function selectMode(next){
+      clearEstimate();
       switching=true;try{
         if(next==='manual')$('modeManual').click();
         if(next==='live')$('modeLive').click();
@@ -126,7 +142,11 @@
       runPlot._renderer.focus(center,[.5,1,.4],Math.max(30,radius*3));
     }
     async function acceptRun(frame){
-      runFrame=IdentificationRuns.validateFrame(frame);historyFrame=runFrame;historyValid=true;
+      clearEstimate();runFrame=IdentificationRuns.validateFrame(frame);historyFrame=runFrame;historyValid=true;
+      if(runFrame.hand_snapshot){
+        window.HandHistory.show(runFrame.hand_snapshot,'Run: last contact pose');
+        runFrame.boundary_points=[...window.getHandBoundaryPoints(),...window.HandHistory.points().filter(p=>p.normal).map(p=>({...p,id:'pose:'+p.id}))];
+      }
       layoutMode('history');$('selectedHistory').textContent=frame.saved_name;
       const a=frame.accumulation;
       status.textContent=frame.points.length+' accumulated contact points'+(a?' from '+a.frames_used+' contact-bearing samples ('+a.contact_observations+' observations before reduction).':'.')+' Press Estimate to fit this cloud.';
@@ -145,7 +165,7 @@
           progress:(n,total)=>{$('historyStatus').textContent='Building run: '+n+' / '+total+' samples';}
         });
         if(version===buildVersion)await acceptRun(frame);
-      }catch(e){if(version===buildVersion)invalidateHistory(e.message)}
+      }catch(e){if(version===buildVersion)invalidateHistory(e.message.startsWith('No valid ')?'CSV loaded. '+e.message+' Choose All hand regions for finger contacts, or select a run with thumb contact.':e.message)}
       finally{if(version===buildVersion){loading=false;updateReady()}}
     }
     function chooseScope(){
@@ -177,6 +197,7 @@
           if(!runs.length)throw Error('CSV contains no non-idle run samples.');
           $('historyRun').replaceChildren(...runs.map(run=>{const o=document.createElement('option');o.value=run.key;o.textContent=run.label+' · '+run.first_index+'–'+run.last_index+' · '+run.count+' samples';return o}));
           $('csvControls').hidden=false;$('historyRow').max=csvRows.length;$('historyRow').value=1;$('csvScope').value='run';chooseScope();
+          if(runs.length===1)await buildRun();
         }else{
           const payload=JSON.parse(text);
           if(payload.measurement_source==='csv_run')await acceptRun(payload);
@@ -190,24 +211,33 @@
     $('historyNext').onclick=()=>{if(csvRows&&Number($('historyRow').value)<csvRows.length){$('historyRow').value=Number($('historyRow').value)+1;$('historyRow').onchange()}};
     $('showHand').onclick=()=>{estimateView.hidden=true;runView.hidden=true;if(mode==='history'&&historyValid&&!runFrame)$('savedHand').click()};
     $('showCloud').onclick=()=>{if(mode==='history'&&historyValid){if(runFrame)drawRun();else{estimateView.hidden=true;$('savedCloud').click()}}};
-    $('showEstimate').onclick=()=>{estimateView.hidden=false};
+    $('showEstimate').onclick=placeEstimate;
+    $('showFitReport').onclick=()=>{estimateView.hidden=false;runView.hidden=true};
     const reasons={both_candidates_compatible:'Both shapes fit.',neither_candidate_compatible_within_search:'Neither shape fits sufficiently within this search.',insufficient_contacts:'Not enough valid contact pressure.',insufficient_spatial_coverage:'Contacts cover too little of the object.',calibration_unverified:'Geometry needs calibration before a confident label.',score_margin_too_small:'The score difference is too small.',alignment_search_unstable:'Alignment did not settle reliably.',invalid_or_stale_frame:'No valid synchronized snapshot.',one_candidate_clearly_more_consistent:'One shape fits clearly better.'};
     function display(state){
+      if(state.estimator_revision!=='strict_hand_v1')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
       running=state.status==='running';updateReady();clearTimeout(pollTimer);
       if(state.status==='running'){
         status.textContent='Estimating frozen snapshot: '+(state.input_label||mode)+'. You can keep inspecting the hand.';
         job=state.job_id;pollTimer=setTimeout(refresh,1500);
       }else if(state.status==='complete'){
-        const result=state.result,errors=Object.entries(result.fits||{}).map(([name,fit])=>name.replace('SENSOR_','')+': '+fit.rmse_mm.toFixed(2)+' mm').join(' · ');
+        const result=state.result,errors=Object.entries(result.fits||{}).map(([name,fit])=>name.replace('SENSOR_','')+': '+(fit.compatible?'valid':'rejected')+' (max contact '+(fit.max_error_mm??fit.rmse_mm).toFixed(2)+' mm, hand '+(fit.hand_limit_max_mm??0).toFixed(2)+' mm)').join(' · ');
         status.textContent='Last estimate: '+result.classification+' · '+(reasons[result.reason]||result.reason)+' Snapshot: '+state.input_label+(errors?' · '+errors:'');
         estimateView.querySelector('iframe').src=base+state.report_url+'?job='+state.job_id;
-        estimateView.hidden=false;$('showEstimate').disabled=false;
+        estimateView.hidden=true;runView.hidden=true;$('showFitReport').disabled=false;
+        fittedResult=result;
+        const candidates=Object.entries(result.fits||{}).filter(([,fit])=>fit.compatible).sort((a,b)=>a[1].score-b[1].score);
+        $('estimateCandidate').replaceChildren(...candidates.map(([name])=>{const option=document.createElement('option');option.value=name;option.textContent=name+' · provisional fit';return option}));
+        $('estimateCandidateLabel').hidden=candidates.length<2;
+        $('showEstimate').disabled=!candidates.length||!fittedFrame?.hand_snapshot;
+        if(candidates.length&&fittedFrame?.hand_snapshot){status.textContent+=' Provisional pose shown in the frozen hand'+(fittedFrame.measurement_source==='csv_run'?' at the last contact sample.':'.');placeEstimate();}
+        else{window.HandEstimate?.clear();status.textContent+=candidates.length?' No reproducible hand pose; see Fit report.':' No valid STL pose; see Fit report for rejected candidates.';}
       }else if(state.status==='error')status.textContent='Estimate failed: '+state.error;
     }
     async function refresh(){try{
       const response=await fetch(base+'/api/identification',{signal:AbortSignal.timeout(10000)}),state=await response.json();
       if(!response.ok)throw Error(state.error||'Service unavailable');
-      if(job&&state.job_id!==job)throw Error('Another estimate replaced this job. Run Estimate again.');
+      if(job&&state.job_id!==job){clearEstimate();throw Error('Another estimate replaced this job. Run Estimate again.');}
       display(state);
     }catch(error){running=false;updateReady();status.textContent=error.message}}
     $('estimateButton').onclick=async()=>{
@@ -218,12 +248,17 @@
       window.ProfileTwin.tick();const frame=mode==='history'?historyFrame:window.getIdentificationFrame();
       if(!frame.valid){status.textContent=mode==='live'?'Live angles and pressure are missing, stale or unsynchronized.':'Load a valid history frame or choose a manual pose first.';return}
       const frozen=JSON.parse(JSON.stringify(frame));
+      clearEstimate();fittedFrame=frozen;fittedThreshold=threshold;
       const count=frozen.points.filter(p=>typeof p.pressure==='number'&&p.pressure>threshold).length;
       const label=mode==='history'?'History · '+(frame.saved_name||'capture'):mode==='manual'?'Manual pose':'Live hand';
       status.textContent='Captured '+frozen.points.length+' positions · '+count+' contact points · '+(frozen.boundary_points?.length||0)+' hand limits. Starting estimate…';running=true;updateReady();
       try{
+        const check=await fetch(base+'/api/identification',{signal:AbortSignal.timeout(10000)});
+        const backend=await check.json();
+        if(!check.ok)throw Error(backend.error||'Could not reach estimator');
+        if(backend.estimator_revision!=='strict_hand_v1')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
         const response=await fetch(base+'/api/identification',{method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(15000),body:JSON.stringify({mode:'current',frame:frozen,threshold,tolerance_mm:tolerance,input_label:label})});
-        const state=await response.json();if(!response.ok&&response.status!==409)throw Error(state.error||'Could not estimate');job=state.job_id;display(state);
+        const state=await response.json();if(response.status===409){clearEstimate();throw Error('An estimate is already running. Wait for it to finish, then press Estimate again.');}if(!response.ok)throw Error(state.error||'Could not estimate');job=state.job_id;display(state);
       }catch(error){running=false;updateReady();status.textContent='Estimate failed: '+error.message}
     };
     selectMode('manual');

@@ -29,6 +29,7 @@
       geometry_sha256:cloud?.geometry_sha256 ?? null,
       reference_sha256:cloud?.reference_sha256 ?? null,
       boundary_points:valid?(viewer.getHandBoundaryPoints?.()||[]).map(p=>({...p,normal:p.normal?.slice()})):[],
+      hand_snapshot:valid && cloud?.angles_act ? JSON.parse(JSON.stringify(cloud)) : null,
       points
     };
   }

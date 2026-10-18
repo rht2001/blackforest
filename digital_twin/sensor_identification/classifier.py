@@ -12,11 +12,12 @@ from .limits import valid_boundaries
 class IdentificationConfig:
     pressure_threshold: float = 200.
     tolerance_mm: float = 1.5
+    hand_tolerance_mm: float = .25
     coordinate_units: str = 'mm'
     calibrated: bool = False
     min_contacts: int = 8
     min_spread_mm: float = 3.
-    min_inlier_fraction: float = .9
+    min_inlier_fraction: float = 1.
     score_margin: float = 1.
     stability_margin: float = .35
     random_starts: int = 24
@@ -28,7 +29,7 @@ class IdentificationConfig:
     def __post_init__(self):
         if self.coordinate_units not in ('mm', 'm'):
             raise ValueError('coordinate_units must be mm or m')
-        for key in ('tolerance_mm', 'min_spread_mm', 'score_margin', 'stability_margin'):
+        for key in ('tolerance_mm', 'hand_tolerance_mm', 'min_spread_mm', 'score_margin', 'stability_margin'):
             if not np.isfinite(getattr(self, key)) or getattr(self, key) <= 0:
                 raise ValueError(key+' must be finite and positive')
         if not np.isfinite(self.pressure_threshold) or not 0 <= self.pressure_threshold <= 4095:
@@ -76,11 +77,15 @@ def identify_sensor(points, models, config=None, *, boundary_points=()):
                   valid_points=len(clean), invalid_points=invalid, contacts=len(active),
                   units='mm', calibrated=config.calibrated,
                   search='finite multistart local optimization; not a global infeasibility certificate')
-    inactive = [p for p in clean if p['pressure'] <= config.pressure_threshold and p.get('normal') is not None]
-    inactive = valid_boundaries(inactive)
-    limits = boundaries + inactive
+    inactive = valid_boundaries([p for p in clean if p['pressure'] <= config.pressure_threshold and p.get('normal') is not None])
+    # Geometry remains valid when pressure is unknown. These points constrain
+    # the hand surface without inventing non-contact pressure observations.
+    surface = valid_boundaries([p for p in points if isinstance(p, dict)
+                               and p.get('normal') is not None and p.get('valid', True) is True]) if isinstance(points, (list, tuple)) else []
+    limits = boundaries + surface
     result.update(hand_boundary_points=len(boundaries), inactive_taxel_limits=len(inactive),
-                  limit_method='approximate local oriented surface; no solid collision certificate')
+                  surface_taxel_limits=len(surface),
+                  limit_method='exact triangle audit of local oriented hand patches; conservative, not a solid collision certificate')
     if len(active) < config.min_contacts:
         return result
     scale = 1000. if config.coordinate_units == 'm' else 1.

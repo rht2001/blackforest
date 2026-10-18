@@ -11,12 +11,14 @@ from .classifier import IdentificationConfig, identify_sensor
 from .demo import synthetic_points, write_viewer
 from .geometry import load_candidates
 
+ESTIMATOR_REVISION = 'strict_hand_v1'
+
 
 class IdentificationService:
     def __init__(self, output=None):
         self.output = Path(output) if output else Path(__file__).resolve().parents[2] / 'sensor_identification_demo' / 'simulation'
         self._lock = threading.Lock()
-        self._state = {'status': 'idle'}
+        self._state = {'status': 'idle', 'estimator_revision': ESTIMATOR_REVISION}
         self._report = None
         self._models = None
 
@@ -42,6 +44,7 @@ class IdentificationService:
             if self._state['status'] == 'running':
                 return None
             self._state = dict(status='running', job_id=uuid.uuid4().hex, mode=mode,
+                               estimator_revision=ESTIMATOR_REVISION,
                                started_at=time.time(), input_label=str(request.get('input_label', mode))[:256])
             self._report = None
             state = copy.deepcopy(self._state)
