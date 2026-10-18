@@ -278,3 +278,10 @@ bridge process still running). Stop that bridge, start this checkout's
 now reports this recovery instruction explicitly. A manually downloaded JSON
 is separate from automatic CSV capture. The connection-reset traceback in a
 controller log concerns the robot TCP connection, not JSON replay.
+
+
+## Geometry-based sensor identification
+
+Double-click `Start Sensor Identification.cmd` or see
+[digital_twin/sensor_identification/README.md](digital_twin/sensor_identification/README.md).
+This integration retains the current viewer and saved-contact playback.

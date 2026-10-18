@@ -12,3 +12,7 @@ wheels/
 uv.lock
 
 *.csv
+
+# Local CAD matching results and dependency cache
+sensor_identification_demo/
+.uv-cache/

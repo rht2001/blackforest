@@ -29,6 +29,17 @@ TAXEL_IDS = {f'{key}:{i}' for key, (rows, cols) in REGIONS.items() for i in rang
 HTML = Path(__file__).with_name('hand_twin_6dof.html')
 TACTILE_HTML = Path(__file__).with_name('tactile_2d.html')
 
+IDENTIFICATION_SETUP_LOCK = threading.Lock()
+
+
+def identification_service(server):
+    # Import optional geometry dependencies only when this feature is used.
+    with IDENTIFICATION_SETUP_LOCK:
+        if not hasattr(server, 'sensor_identification'):
+            from sensor_identification.web_service import IdentificationService
+            server.sensor_identification = IdentificationService()
+        return server.sensor_identification
+
 def vector(value, name, lo, hi):
     if value is None: return None
     if not isinstance(value, list) or len(value) != 6:
@@ -107,6 +118,24 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):self.send_data(b'',204)
     def do_GET(self):
         url = urlsplit(self.path)
+        if self.path in ('/sensor_identification/simulation.js', '/sensor_identification/measurements.js'):
+            self.send_data(Path(__file__).with_name('sensor_identification').joinpath(self.path.rsplit('/', 1)[1]).read_bytes(),
+                           ctype='text/javascript; charset=utf-8')
+            return
+        if self.path in ('/api/identification', '/identification/report'):
+            try:
+                service = identification_service(self.server)
+                if self.path == '/api/identification':
+                    self.respond_json(service.snapshot())
+                else:
+                    report = service.report()
+                    if report is None:
+                        self.respond_json({'error': 'Run identification first'}, 404)
+                    else:
+                        self.send_data(report, ctype='text/html; charset=utf-8')
+            except ImportError:
+                self.respond_json({'error': 'Install geometry tools: uv sync --extra sensor-identification'}, 503)
+            return
         if url.path in ('/api/taxels', '/api/taxels/'):
             try:
                 after = float(parse_qs(url.query).get('after', ['0'])[0])
@@ -133,6 +162,28 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == '/health':self.respond_json({'status':'ok','mode':'read-only-from-hand'})
         else:self.respond_json({'error':'Not found'},404)
     def do_POST(self):
+        if self.path == '/api/identification':
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 1 <= length <= 524288:
+                    raise ValueError('Identification JSON must be 1..524288 bytes')
+                origin = self.headers.get('Origin')
+                if origin is not None and origin not in (f'http://127.0.0.1:{self.server.server_port}',
+                                                          f'http://localhost:{self.server.server_port}'):
+                    # Consume the bounded body so Windows can deliver the 403
+                    # before closing, rather than resetting an unread socket.
+                    self.rfile.read(length)
+                    self.respond_json({'error': 'Open identification in the local simulation'}, 403)
+                    return
+                request = json.loads(self.rfile.read(length))
+                service = identification_service(self.server)
+                state = service.start(request)
+                self.respond_json(state if state else service.snapshot(), 202 if state else 409)
+            except ImportError:
+                self.respond_json({'error': 'Install geometry tools: uv sync --extra sensor-identification'}, 503)
+            except (TypeError, ValueError, UnicodeDecodeError) as error:
+                self.respond_json({'error': str(error)}, 400)
+            return
         if self.path in ('/api/taxels', '/api/taxels/'):
             self.receive_taxels()
             return
@@ -191,6 +242,7 @@ def main():
     global HTML
     ap=argparse.ArgumentParser(description='Read-only telemetry bridge for RH56DFTP viewer')
     ap.add_argument('--port',type=int,default=18765)
+    ap.add_argument('--open-browser', action='store_true', help='Open the local viewer')
     ap.add_argument('--view',choices=['3d','tactile'],default='3d')
     args=ap.parse_args()
     if args.view=='tactile':HTML=TACTILE_HTML
@@ -199,6 +251,9 @@ def main():
     print(f'Hand viewer ({args.view}) available at: http://127.0.0.1:{args.port}/',flush=True)
     print(f'POST endpoint: http://127.0.0.1:{args.port}/api/state (localhost only)',flush=True)
     print('This bridge does NOT send motor commands.',flush=True)
+    if args.open_browser:
+        import webbrowser
+        webbrowser.open(f'http://127.0.0.1:{args.port}/')
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:server.server_close()

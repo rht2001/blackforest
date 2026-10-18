@@ -16,6 +16,9 @@ dependencies = [
     "pyproject-toml>=0.1.0",
 ]
 
+[project.optional-dependencies]
+sensor-identification = ["scipy>=1.15", "trimesh>=4.6", "rtree>=1.3", "plotly>=6"]
+
 [project.scripts]
 blackforest = "main:main"
 
