@@ -302,20 +302,20 @@ Refinement uses the eight nearest samples to find nearby STL triangles and
 projects onto those local surfaces. Global nearest-triangle searches no longer
 run inside optimization, even in Detailed validation. Detailed validation uses
 the full mesh once per final pose for contact/clearance scoring and triangle
-penetration auditing. Quick placement skips exact contact queries but retains full-CAD hand checks.
+penetration auditing. Quick placement skips these full-mesh final queries.
 
-Quick search uses at most 256 spatially spread representative contacts and
-256 representative oriented hand limits, eight coarse iterations and fifteen
-refinement evaluations. Hand residuals guide initialization, correction and
-refinement. Final contact scores use sampled local sensor surfaces; hand checks
-use the full CAD against the retained representative hand patches. Recordings
-and exported point clouds are unchanged. The reported pose remains provisional
-even if calibrated.
+Quick search uses at most 256 spatially spread contacts and 256 oriented hand
+limits, eight coarse iterations and fifteen refinement evaluations. It skips
+per-start hand correction, while hand residuals still rank starts and guide
+palm initialization and final refinement. All supplied contacts and limits
+are scored once at the final pose against sampled local surfaces; recordings
+and exported point clouds are unchanged. Quick scores and penetration values
+are approximate. The reported pose remains provisional even if calibrated.
 
 
 ### Collision and orientation search update
 
-Quick placement audits every retained representative hand patch against the full sensor
+Quick placement now audits every supplied hand patch against the full sensor
 CAD before accepting a placement. Its contact distances remain
 approximate; the separate hand penetration allowance defaults to 3 mm and can
 be adjusted in Estimation settings. Rejected poses stay in the fit report.
@@ -344,38 +344,6 @@ to validate every observation. Nearby points can contain distinct errors, so
 reduced checks may miss a violation present in the original dense cloud.
 
 
-### Finger limits in run history
-
-Run clouds retain non-thumb finger surface limits only at each finger's maximum
-recorded bend among the selected valid poses. More extended poses no longer
-leave extra finger arcs in the displayed cloud or estimation limits. Each finger
-is selected independently using its actuator calibration, including reversed
-calibration; equal maximum bends retain their pressure evidence. Slip and
-excluded-state samples cannot select a pose. Measured contact selection, thumb
-probing, palm limits and raw recordings are unchanged. Reload the viewer and
-reopen or rebuild a run to apply this to an existing history view. API callers
-can request `finger_limit_selection: 'all'` to reconstruct the full finger sweep.
-
-## Direction from pressure patches
-
-The estimator uses pressure-weighted local contact planes to guide rotation
-in both quick and detailed modes, including coarse pose ranking and refinement.
-Each accepted neighborhood needs at least six distinct contacts within 12 mm,
-at least 1 mm of independent width, and low out-of-plane variance. Pressure
-weights are capped to prevent a single peak from dominating. Sparse, line-like,
-and strongly curved neighborhoods contribute no directional term. Planes are
-computed before display/search point thinning, with at most 128 neighborhoods.
-
-Their unsigned normals are matched to local CAD triangle normals using a soft
-residual with a bounded 3 mm lever arm. STL winding does not determine direction.
-Pressure values are not treated as calibrated forces, and a footprint axis is
-not assumed to be the sensor axis. A plane leaves rotation about its normal
-unresolved; symmetric surfaces may still leave yaw/roll ambiguous. Contact and
-hand-penetration acceptance limits remain unchanged. The fit card reports how
-many local patches contributed; fit JSON also includes the directional RMS in
-mm-equivalent residual units. Previous estimator results must be recomputed.
-
-
 ### Thumb closure first guess
 
 With at least three above-threshold thumb taxels at a pose at least 85%
@@ -389,8 +357,10 @@ New run clouds retain the deepest contact-bearing thumb pose separately from
 the display pose, after state/slip filtering. Rebuild old clouds to enable this
 hint. Live/saved snapshots use their recorded thumb pressures and calibration.
 Quick placement first tries eight general orientations and up to eight palm
-starts, with three coarse iterations and two refinements. If that pass fails,
-it repeats the normal search for that candidate; no candidate is rejected on
-the short pass alone. It stops refining at the first pose passing the existing
+starts, with three coarse iterations and at most two refinements per candidate.
+If no pose passes, it tries the other candidate with the same short budget.
+The full search is available through Detailed validation; quick search may miss
+a feasible pose, so a rejected quick result does not prove the sensor cannot fit.
+It stops refining at the first pose passing the existing
 contact, clearance and full-CAD hand checks. The 85% heuristic reflects the
 observed grasp behavior, not a calibrated probability or a physical guarantee.

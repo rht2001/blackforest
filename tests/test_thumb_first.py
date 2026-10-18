@@ -7,7 +7,7 @@ import json
 import numpy as np
 import trimesh
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path('C:/Users/karl/Desktop/personal_branch_hand/blackforest')
 sys.path.insert(0, str(ROOT))
 from digital_twin.sensor_identification.thumb_prior import thumb_closure_hint
 from digital_twin.sensor_identification.classifier import identify_sensor, IdentificationConfig
@@ -102,16 +102,18 @@ class ThumbFirstTests(unittest.TestCase):
         self.assertEqual(fit['refinements'],2)
         self.assertTrue(fit['compatible'])
 
-    def test_short_pass_failure_retries_same_candidate_with_full_budget(self):
+    def test_quick_budget_is_bounded_even_when_no_pose_passes(self):
         config=IdentificationConfig(quick_preview=True)
-        with patch('digital_twin.sensor_identification.matching._fit_model',side_effect=[self.fake_fit(False),self.fake_fit()]) as fit:
+        with patch('digital_twin.sensor_identification.matching._fit_model',return_value=self.fake_fit(False)) as fit:
             result=fit_model(self.small,np.zeros((8,3)),np.empty((0,3)),np.array([]),config)
-        self.assertTrue(fit.call_args_list[0].kwargs['fast_attempt'])
-        self.assertNotIn('fast_attempt',fit.call_args_list[1].kwargs)
-        self.assertEqual(result['search_pass'],'full_fallback')
+        self.assertEqual(fit.call_count,1)
+        self.assertTrue(fit.call_args.kwargs['fast_attempt'])
+        self.assertEqual(result['search_pass'],'quick_short_search')
+        self.assertFalse(result['compatible'])
         with patch('digital_twin.sensor_identification.matching._fit_model',return_value=self.fake_fit()) as fit:
             result=fit_model(self.small,np.zeros((8,3)),np.empty((0,3)),np.array([]),replace(config,quick_preview=False))
         self.assertEqual(fit.call_count,1)
+        self.assertNotIn('fast_attempt',fit.call_args.kwargs)
         self.assertEqual(result['search_pass'],'detailed')
 
 if __name__=='__main__':unittest.main(verbosity=2)

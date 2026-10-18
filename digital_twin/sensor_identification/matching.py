@@ -4,7 +4,6 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
-from .contact_directions import pressure_directions, direction_residual
 from .limits import penetration_residual, sampled_patch_penetrations, triangle_penetrations
 
 
@@ -102,18 +101,17 @@ def _palm_starts(model, contacts, points, normals):
 
 
 def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, boundary_normals=None,
-              palm_xyz=None, palm_normals=None, contact_pressures=None, progress=None):
-    """Try a short quick pass, retaining the full search as fallback."""
+              palm_xyz=None, palm_normals=None, progress=None):
+    """Quick placement uses a bounded search; detailed mode uses all starts."""
     kwargs = dict(boundary_xyz=boundary_xyz, boundary_normals=boundary_normals,
                   palm_xyz=palm_xyz, palm_normals=palm_normals,
-                  contact_pressures=contact_pressures, progress=progress)
+                  progress=progress)
     if config.quick_preview:
         attempt = _fit_model(model, contacts, exclusions, radii, config, fast_attempt=True, **kwargs)
-        if attempt['compatible']:
-            attempt['search_pass'] = 'short_first_pass'
-            return attempt
+        attempt['search_pass'] = 'quick_short_search'
+        return attempt
     result = _fit_model(model, contacts, exclusions, radii, config, **kwargs)
-    result['search_pass'] = 'full_fallback' if config.quick_preview else 'detailed'
+    result['search_pass'] = 'detailed'
     return result
 
 
@@ -127,8 +125,6 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
     input_contact_points = len(contacts)
     input_hand_points = len(boundary_xyz) if boundary_xyz is not None else 0
     input_contacts = contacts
-    directions = pressure_directions(contacts, contact_pressures, config.pressure_threshold)
-    has_directions = bool(len(directions[0]))
     contacts = contacts[_spaced_indices(contacts, config.point_spacing_mm)]
     if boundary_xyz is not None and len(boundary_xyz):
         selected = _spaced_indices(boundary_xyz, config.point_spacing_mm, boundary_normals)
@@ -201,9 +197,6 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
             weight = config.tolerance_mm/config.hand_tolerance_mm
             d = np.r_[d, boundary_error*np.sqrt(len(contacts)/len(boundary_error))*weight,
                       boundary_error.max()*np.sqrt(len(contacts))*weight]
-        if has_directions:
-            angular = direction_residual(model, r, t, directions)
-            d = np.r_[d, angular*np.sqrt(len(contacts)/len(directions[0]))]
         return d/config.tolerance_mm
 
     coarse = []
@@ -230,7 +223,7 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
             r, t = nr, nt
             if delta < 1e-5:
                 break
-        if has_limits or has_directions:
+        if has_limits:
             # ICP alone ignores the hand. Correct each fallback pose with
             # contact AND hand residuals before deciding which starts survive.
             r0, t0 = r.copy(), t.copy()
@@ -239,7 +232,7 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
             opt = least_squares(lambda p: search_residual(*decode_free(p)), np.zeros(6),
                                 x_scale=[1., 1., 1., 20., 20., 20.], max_nfev=iterations)
             r, t = decode_free(opt.x)
-        if has_limits or has_directions:
+        if has_limits:
             error = search_residual(r, t)
             cost = float(np.mean(error**2))
         else:
@@ -296,9 +289,7 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
                           if has_limits else np.array([]))
         boundary_rmse = float(np.sqrt(np.mean(boundary_error**2))) if len(boundary_error) else 0.
         boundary_max = float(boundary_error.max()) if len(boundary_error) else 0.
-        angular = direction_residual(model, r, t, directions)
-        direction_rmse = float(np.sqrt(np.sum(angular**2)/len(directions[0]))) if has_directions else 0.
-        score = float(np.sqrt(rmse**2+penalty**2+boundary_rmse**2+direction_rmse**2)/config.tolerance_mm)
+        score = float(np.sqrt(rmse**2+penalty**2+boundary_rmse**2)/config.tolerance_mm)
         transform = np.eye(4)
         transform[:3, :3], transform[:3, 3] = r, t
         fits.append(dict(score=score, rmse_mm=rmse, max_error_mm=float(d.max()),
@@ -310,9 +301,6 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
                          hand_constraints_checked=len(boundary_error),
                          transform=transform.tolist(), optimizer_success=bool(opt.success),
                          initialization=initialization,
-                         pressure_direction_patches=len(directions[0]),
-                         pressure_direction_rmse_mm=direction_rmse,
-                         pressure_direction_method='pressure_weighted_local_planes_unsigned_soft',
                          refinement_method='sample_guided_local_triangles',
                          validation_method='sampled_contacts_exact_hand' if config.quick_preview else 'exact_full_mesh',
                          quick_preview=config.quick_preview,
