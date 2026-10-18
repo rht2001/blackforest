@@ -17,9 +17,9 @@ const {chromium}=require(process.env.PLAYWRIGHT_PACKAGE||'playwright');
    await route.fulfill({body:csv.replaceAll('chosen-run','incoming'),contentType:'text/csv'});
   });
   await page.route(base+'/api/identification',route=>{
-   if(route.request().method()==='GET')return route.fulfill({json:{status:'idle',estimator_revision:'collision_roll_v4'}});
+   if(route.request().method()==='GET')return route.fulfill({json:{status:'idle',estimator_revision:'thumb_first_v7'}});
    request=route.request().postDataJSON();
-   return route.fulfill({json:{status:'complete',job_id:'source-test',estimator_revision:'collision_roll_v4',report_url:'/identification/report',result:{classification:'AMBIGUOUS',reason:'quick_placement',quick_preview:true,contacts:request.frame.points.length,fits:{}}}});
+   return route.fulfill({json:{status:'complete',job_id:'source-test',estimator_revision:'thumb_first_v7',report_url:'/identification/report',result:{classification:'AMBIGUOUS',reason:'quick_placement',quick_preview:true,contacts:request.frame.points.length,fits:{}}}});
   });
   await page.goto(base,{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>window.HandHistory?.context()?.geometry&&document.querySelector('#receivedRuns'),null,{timeout:60000});

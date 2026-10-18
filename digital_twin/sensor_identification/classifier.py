@@ -79,7 +79,7 @@ def valid_measurements(points):
     return clean, invalid
 
 
-def identify_sensor(points, models, config=None, *, boundary_points=(), progress=None):
+def identify_sensor(points, models, config=None, *, boundary_points=(), progress=None, thumb_hint=None):
     config = config or IdentificationConfig()
     if set(models) != {'SENSOR_A', 'SENSOR_B'}:
         raise ValueError('Exactly SENSOR_A and SENSOR_B models are required')
@@ -139,14 +139,21 @@ def identify_sensor(points, models, config=None, *, boundary_points=(), progress
     # Assembly STLs may be open, so signed mesh volume is not a size measure.
     # Use the CAD bounding envelope in mm, independent of sensor names.
     ordered = sorted(models, key=lambda name: (-float(np.prod(models[name].mesh.extents)), name))
-    result['candidate_order'] = ordered
+    larger = ordered[0]
     result['placement_policy'] = 'larger_first_with_smaller_fallback'
+    if thumb_hint:
+        ordered.reverse()
+        result['placement_policy'] = 'thumb_closure_first_with_geometric_fallback'
+        result['first_guess'] = {**thumb_hint, 'candidate': ordered[0]}
+    result['candidate_order'] = ordered
+    if progress and thumb_hint:
+        progress(dict(stage='thumb_first_guess', first_guess=result['first_guess']))
     for name in ordered:
         model = models[name]
         fit_kwargs = dict(kwargs)
         if progress:
             def candidate_progress(event, candidate=name):
-                progress({**event, 'candidate': candidate})
+                progress({**event, 'candidate': candidate, **({'first_guess': result['first_guess']} if thumb_hint else {})})
             fit_kwargs['progress'] = candidate_progress
             candidate_progress(dict(stage='alignment', completed=0))
         result['fits'][name] = fit_model(model, xyz, exclusions, radii, config, **fit_kwargs)
@@ -158,11 +165,13 @@ def identify_sensor(points, models, config=None, *, boundary_points=(), progress
     acceptable = [name for name in ordered if name in fits and fits[name]['compatible']]
     if acceptable:
         result['placement_candidate'] = acceptable[0]
-        result['placement_reason'] = ('larger_candidate_fits' if acceptable[0] == ordered[0]
+        result['placement_reason'] = ('thumb_first_candidate_fits' if thumb_hint and acceptable[0] == ordered[0]
+                                      else 'geometric_fallback_after_thumb_guess' if thumb_hint
+                                      else 'larger_candidate_fits' if acceptable[0] == larger
                                       else 'smaller_candidate_after_larger_rejected')
     else:
         result['placement_reason'] = 'neither_candidate_fits'
-    result['larger_rejection_reasons'] = fits[ordered[0]].get('rejection_reasons', [])
+    result['larger_rejection_reasons'] = fits.get(larger, {}).get('rejection_reasons', [])
     if config.quick_preview:
         result['reason'] = 'quick_placement'
         result['best_candidate'] = result.get('placement_candidate') or min(fits, key=lambda name: (not fits[name]['compatible'], fits[name]['score']))

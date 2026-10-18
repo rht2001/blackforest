@@ -140,7 +140,7 @@
     }
     // Keep one initial contact patch per closing finger; thumb probing continues.
     const capturedFingers=new Map(),closingFingers=new Set(['little','ring','middle','index']);
-    let first=null,last=null,handSnapshot=null;
+    let first=null,last=null,handSnapshot=null,thumbClosureSample=null,thumbClosureBend=-Infinity;
     function add(row){
       stats.frames_total++;
       if(row.state&&!states.has(row.state)){stats.frames_skipped_state++;return}
@@ -168,6 +168,12 @@
           }
           cells.push({...c,value});
         }
+      }
+      const thumbPressures=cells.filter(c=>c.region.startsWith('thumb_')).map(c=>c.value);
+      const a=calibration.actuators.thumb_bend;const raw=(packet.angles_act[profile.control_mapping.thumb_bend.index]-a.raw_at_closed)/(a.raw_at_open-a.raw_at_closed);const thumbBend=a.reversed?raw:1-raw;
+      if(thumbPressures.length>=3&&thumbBend>=thumbClosureBend){
+        thumbClosureBend=thumbBend;
+        thumbClosureSample={angles_act:packet.angles_act.slice(),thumb_pressures:thumbPressures,source_index:packet.index};
       }
       for(const finger of newlyContacting)capturedFingers.set(finger,packet.index);
       for(const p of bodies){const [x,y,z]=p.xyz;addLimit({x,y,z,normal:p.normal,pressure:null,kind:'hand_boundary',link:p.link,surface_id:p.id,source_index:packet.index})}
@@ -208,7 +214,7 @@
       return {schema_version:1,valid:true,frame:'left_base_link',units:'m',geometry_status:geometry.geometry_status,
         geometry_sha256:geometry.geometry_sha256,reference_sha256:geometry.reference_sha256,
         measurement_source:'csv_run',saved_name:options.name||run,received_at:null,field_received_at:{},
-        hand_snapshot:handSnapshot,
+        hand_snapshot:handSnapshot,thumb_closure_sample:thumbClosureSample,
         timestamp_basis:'CSV sample order; capture times and pose/tactile skew unavailable',
         accumulation:{run_key:run,threshold,voxel_mm:voxelMm,thumb_only:options.thumb_only===true,
           states:[...states],first_contact_index:first,last_contact_index:last,...stats,

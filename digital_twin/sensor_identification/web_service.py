@@ -12,7 +12,7 @@ from .classifier import IdentificationConfig, identify_sensor
 from .demo import synthetic_points, write_viewer
 from .geometry import load_candidates
 
-ESTIMATOR_REVISION = 'collision_roll_v4'
+ESTIMATOR_REVISION = 'thumb_first_v7'
 
 
 class IdentificationService:
@@ -46,6 +46,8 @@ class IdentificationService:
         with self._lock:
             if self._state.get('status') == 'running':
                 self._state['progress'] = {**event, 'updated_at': time.time()}
+                if event.get('first_guess'):
+                    self._state['first_guess'] = copy.deepcopy(event['first_guess'])
 
     def snapshot(self):
         with self._lock:

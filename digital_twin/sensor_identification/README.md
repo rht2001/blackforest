@@ -342,3 +342,25 @@ and exports remain intact. Certified clearance constraints are retained.
 This trades local detail for speed: increase spacing for fewer checks or set 0
 to validate every observation. Nearby points can contain distinct errors, so
 reduced checks may miss a violation present in the original dense cloud.
+
+
+### Thumb closure first guess
+
+With at least three above-threshold thumb taxels at a pose at least 85%
+closed in the configured actuator range, the smaller CAD envelope is tried
+first. The running estimate shows this provisional first guess immediately
+before alignment. Closure alone never confirms identity or rejects the larger
+sensor. A less closed thumb retains the larger-first order. Both candidates
+remain available as fallback; detailed validation still fits both.
+
+New run clouds retain the deepest contact-bearing thumb pose separately from
+the display pose, after state/slip filtering. Rebuild old clouds to enable this
+hint. Live/saved snapshots use their recorded thumb pressures and calibration.
+Quick placement first tries eight general orientations and up to eight palm
+starts, with three coarse iterations and at most two refinements per candidate.
+If no pose passes, it tries the other candidate with the same short budget.
+The full search is available through Detailed validation; quick search may miss
+a feasible pose, so a rejected quick result does not prove the sensor cannot fit.
+It stops refining at the first pose passing the existing
+contact, clearance and full-CAD hand checks. The 85% heuristic reflects the
+observed grasp behavior, not a calibrated probability or a physical guarantee.
