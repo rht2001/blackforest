@@ -223,6 +223,7 @@ class RobotHandController:
 
     def set_default_speed(self):
         """Sets the default speed for all 6 DOFs."""
+        self.set_speeds(DEFAULT_MOVEMENT_SPEED)
         return self.send_command(DEFAULT_MOVEMENT_SPEED, "DEFAULT_SPEED_SET")
 
     def set_speeds(self, speeds: list[int]) -> bool:
@@ -259,7 +260,10 @@ class RobotHandController:
 
     def open_hand(self):
         """Opens all fingers fully (angle 1000) and re-arms automatic grip detection."""
+        self.set_angles([1000] * 6)
         self.clear_errors()
+        self.set_forces([1500] * 6)
+        self.set_default_speed()
         self.set_angles([1000] * 6)
         self.auto_mode_active = True
         self.auto_contact_trigerred = False

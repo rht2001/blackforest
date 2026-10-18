@@ -134,8 +134,8 @@ class TactileSlipDetector:
             q = self.history[name]
             q.append((now, scx, scy, total_f))
 
-            # Prune samples older than window_duration
-            while len(q) > 1 and (now - q[0][0]) > self.window_duration:
+            # Prune samples older than window_duration while keeping at least 3 samples
+            while len(q) > 3 and (now - q[0][0]) > self.window_duration:
                 q.popleft()
 
             if len(q) >= 3:
@@ -177,7 +177,7 @@ class TactileSlipDetector:
             if curr_f > 100.0:
                 self.global_force_history.append((now, curr_f))
                 while (
-                    len(self.global_force_history) > 1
+                    len(self.global_force_history) > 3
                     and (now - self.global_force_history[0][0]) > self.window_duration
                 ):
                     self.global_force_history.popleft()

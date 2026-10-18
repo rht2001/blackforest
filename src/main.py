@@ -79,6 +79,24 @@ def main():
             grasp_results = grasp_manager.step(robot, results_data)
             if app_open:
                 app.main(state=grasp_results.get("state"), data=grasp_results)
+                # Sync grasp_results in case a UI button callback (e.g. OPEN) ran inside app.update()
+                grasp_results["state"] = grasp_manager.state
+                grasp_results["probe_state"] = (
+                    "probing"
+                    if grasp_manager.state == "thumb_probing"
+                    else grasp_manager.probe_state
+                )
+                grasp_results["probe_summary"] = grasp_manager.probe_summary
+                grasp_results["slip_detected"] = (
+                    grasp_manager.slip_detector.is_slipping
+                    if grasp_manager.state == "cylinder_confirmed"
+                    else False
+                )
+                grasp_results["slipping_contacts"] = (
+                    grasp_manager.slip_detector.slipping_contacts
+                    if grasp_manager.state == "cylinder_confirmed"
+                    else []
+                )
             if dashboard_open and dashboard.winfo_exists():
                 dashboard.main(state=grasp_results.get("state"), data=grasp_results)
             db.main(data=grasp_results)

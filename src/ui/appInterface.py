@@ -135,9 +135,11 @@ class HandApp(tk.Tk):
     def open_hand(self):
         for s in self.sliders:
             s.set(1000)
-        self.robot.open_hand()
         if self.grasp_manager is not None:
-            self.grasp_manager.reset()
+            self.grasp_manager.reset(self.robot)
+        else:
+            self.robot.open_hand()
+        self.update_state_display("open")
         self.update_slip_display(False, [])
         self.update_probe_display("none", {})
 
@@ -198,9 +200,48 @@ class HandApp(tk.Tk):
             self.positions[name] = values
             self.create_button(name, values)
 
-    def draw(self):
+    def _init_canvas_items(self):
         self.canvas.delete("all")
         self.canvas.create_image(350, 450, image=self.hand_img)
+        self._rect_ids = {}
+        self._rect_colors = {}
+        self._oval_ids = {}
+        self._oval_states = {}
+        default_color = "#00aa00"
+        for name, _addr, h, w, key, rel in self.robot.sensor_groups:
+            x0 = self.offsets[key][0] + rel[0]
+            y0 = self.offsets[key][1] + rel[1]
+            rows_ids = []
+            rows_cols = []
+            for i in range(h):
+                r_ids = []
+                r_cols = []
+                for j in range(w):
+                    rid = self.canvas.create_rectangle(
+                        x0 + j * self.pixel,
+                        y0 + i * self.pixel,
+                        x0 + (j + 1) * self.pixel,
+                        y0 + (i + 1) * self.pixel,
+                        fill=default_color,
+                        width=0,
+                        stipple="gray25",
+                    )
+                    r_ids.append(rid)
+                    r_cols.append(default_color)
+                rows_ids.append(r_ids)
+                rows_cols.append(r_cols)
+            self._rect_ids[name] = rows_ids
+            self._rect_colors[name] = rows_cols
+            self._oval_ids[name] = self.canvas.create_oval(
+                0, 0, 0, 0, fill="#0055ff", state="hidden"
+            )
+            self._oval_states[name] = (0, 0, 0, False, False)
+
+    def draw(self):
+        if not hasattr(self, "_rect_ids"):
+            self._init_canvas_items()
+
+        slipping_set = set(getattr(self, "current_slipping_contacts", []))
 
         for name, addr, h, w, key, rel in self.robot.sensor_groups:
             # Prefer cached tactile data from robot loop to avoid redundant Modbus traffic
@@ -216,33 +257,42 @@ class HandApp(tk.Tk):
             matrix = (raw - offset).reshape(h, w)
             matrix[matrix < 0] = 0
 
-            x0 = self.offsets[key][0] + rel[0]
-            y0 = self.offsets[key][1] + rel[1]
+            rect_grid = self._rect_ids.get(name)
+            color_grid = self._rect_colors.get(name)
+            if rect_grid is not None and color_grid is not None:
+                for i in range(h):
+                    r_ids = rect_grid[i]
+                    r_cols = color_grid[i]
+                    row_vals = matrix[i]
+                    for j in range(w):
+                        v = row_vals[j] / 4000.0
+                        if v < 0.2:
+                            color = "#00aa00"
+                        elif v < 0.5:
+                            color = "#cccc00"
+                        elif v < 0.8:
+                            color = "#ff8800"
+                        else:
+                            color = "#ff0000"
+                        if r_cols[j] != color:
+                            r_cols[j] = color
+                            self.canvas.itemconfig(r_ids[j], fill=color)
 
-            # Heatmap
-            for i in range(h):
-                for j in range(w):
-                    v = matrix[i, j] / 4000
-
-                    if v < 0.2:
-                        color = "#00aa00"
-                    elif v < 0.5:
-                        color = "#cccc00"
-                    elif v < 0.8:
-                        color = "#ff8800"
-                    else:
-                        color = "#ff0000"
-
-                    self.canvas.create_rectangle(
-                        x0 + j * self.pixel, y0 + i * self.pixel,
-                        x0 + (j + 1) * self.pixel, y0 + (i + 1) * self.pixel,
-                        fill=color, width=0, stipple="gray25"
-                    )
+            oval_id = self._oval_ids.get(name)
+            if oval_id is None:
+                continue
 
             # Robust Contact Point
             active = matrix > 50
             if np.sum(active) < 2:
+                prev_state = self._oval_states.get(name)
+                if prev_state is None or prev_state[4]:
+                    self.canvas.itemconfig(oval_id, state="hidden")
+                    self._oval_states[name] = (0, 0, 0, False, False)
                 continue
+
+            x0 = self.offsets[key][0] + rel[0]
+            y0 = self.offsets[key][1] + rel[1]
 
             y_idx, x_idx = np.where(active)
             cx = int(np.mean(x_idx))
@@ -250,19 +300,27 @@ class HandApp(tk.Tk):
             force = np.mean(matrix[active])
             size = int(3 + force / 200)
 
-            is_slipping = name in getattr(self, "current_slipping_contacts", [])
-            circle_color = "#ff2222" if is_slipping else "#0055ff"
-            outline_color = "#ffcc00" if is_slipping else ""
+            is_slipping = name in slipping_set
+            new_oval_state = (cx, cy, size, is_slipping, True)
+            if self._oval_states.get(name) != new_oval_state:
+                self._oval_states[name] = new_oval_state
+                circle_color = "#ff2222" if is_slipping else "#0055ff"
+                outline_color = "#ffcc00" if is_slipping else ""
 
-            self.canvas.create_oval(
-                x0 + cx * self.pixel,
-                y0 + cy * self.pixel,
-                x0 + cx * self.pixel + size,
-                y0 + cy * self.pixel + size,
-                fill=circle_color,
-                outline=outline_color,
-                width=2 if is_slipping else 0,
-            )
+                self.canvas.coords(
+                    oval_id,
+                    x0 + cx * self.pixel,
+                    y0 + cy * self.pixel,
+                    x0 + cx * self.pixel + size,
+                    y0 + cy * self.pixel + size,
+                )
+                self.canvas.itemconfig(
+                    oval_id,
+                    state="normal",
+                    fill=circle_color,
+                    outline=outline_color,
+                    width=2 if is_slipping else 0,
+                )
 
     def update_state_display(self, state: str):
         if hasattr(self, "state_label"):
