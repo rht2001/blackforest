@@ -1,79 +1,67 @@
-# Sensor identification in the current hand twin
+# One-page tactile identification
 
-Integrated into `check_digital_twin`, based on commit `320c504`.
+Start **Start Sensor Identification.cmd** from this Desktop repository. The UI
+opens at http://127.0.0.1:18768/. Everything happens on that page.
 
-## Start
+1. Choose **Manual**, **Live**, or **History**.
+2. Inspect the displayed hand and its data.
+3. Press **Estimate**. A frozen copy of that source's points is sent to the
+   geometric matcher. The point cloud and fitted geometries appear in the same
+   page. **Hand view** returns to the hand without changing the selected data.
 
-Double-click **Start Sensor Identification.cmd** in this repository. The first
-launch installs the optional tools. It opens this viewer at
-http://127.0.0.1:18768/ (separate from the old prototype on port 18767).
-Keep the terminal open while using it.
+**Manual:** set the six angles under **Set finger angles**. These define taxel
+positions, not physical contacts. Manual cells have unknown pressure and appear
+gray in the estimate. With no contact readings, AMBIGUOUS is the correct result.
+No artificial pressure is created from angles.
 
-Under **Sensor identification**, select a CAD sample and click **Identify sensor**.
-After fitting, **View fit in 3D** shows both aligned CAD surfaces and contacts.
-**Current displayed contacts** uses the viewer's existing live/demo data or
-saved-contact playback. The current viewer's hand, sensor objects, saved-file
-mode, axes and pressure controls are retained.
+**Live:** displays actual hand angles and pressure through the existing bridge
+address, normally port 18765. Stale or unsynchronized readings cannot be
+estimated. No new hardware reads or motor commands are introduced.
 
-The existing telemetry bridge address is left as configured by the current
-viewer (normally port 18765). Start that bridge as usual for physical hand
-telemetry, or change its existing Bridge address field to this server if your
-publisher already targets port 18768. No hardware reads or commands are added.
+**History:** load native `hand_contact_cloud.json` files or telemetry CSV files.
+CSV supports semicolon/comma delimiters, quoted multiline fields, JSON arrays
+and complete NumPy array strings. It needs `angles` (six actual readings) and,
+for pressure evidence, `tactile_matrix` with exactly 112 rows and 17 columns.
+The supplied `index;angles;forces;position;tactile_matrix;...` format is supported.
+Use the row selector or Previous/Next to inspect CSV frames individually. Only
+the selected row is reconstructed. Files remain local; the limit is 50 MB.
+Truncated arrays (`...`) are rejected. Means cannot replace per-cell pressure.
+Missing/invalid pressure stays unknown. CSV row time is not invented, and CSV
+counts are shown as recorded; pressure offsets and failed-read validity are not
+supplied by that format. A CSV pose uses the current viewer's explicitly
+uncalibrated kinematic model. JSON uses its recorded pose/calibration.
 
-Manual start:
+The saved-file hand/point-cloud controls, axes, sensor objects, pressure display
+and connection options remain accessible. The old source controls are grouped
+under **Advanced display & connection** rather than mixed with the main modes.
+
+Estimate captures all available cell positions. Recognition uses only valid
+pressure strictly above its threshold; ordinary non-contact cells are not
+hard exclusion boundaries. Gray points are positions with unknown pressure.
+For native JSON containing active points only, other positions are reconstructed
+from the recorded pose only when its matching hand geometry is available;
+their pressures remain unknown. Clouds without a reproducible hand pose retain
+only their recorded points.
+
+Both CAD surfaces receive the same multistart rigid alignment budget, followed
+by exact unsigned triangle refinement. No scaling is allowed. A and B fit well,
+neither fits within the search, insufficient coverage, calibration uncertainty
+and an unreliable alignment have different ambiguity reasons. Scores are costs,
+not probabilities; local search does not prove global infeasibility.
+
+Hand geometry is still uncalibrated, so measured clouds can produce scores but
+not a confident sensor label through this UI. Shared shaft regions may remain
+indistinguishable even after calibration. A's STEP confirms millimetres; B's
+physical scale, taxel locations, joint mapping and timing still need validation.
+
+The report is embedded as the page's estimate view; it does not open another tab.
+Its header records which source was frozen. Changing modes while fitting does
+not alter that snapshot. The independent CLI and CAD benchmark tests remain.
 
 ```powershell
 uv sync --extra sensor-identification
 uv run --extra sensor-identification python digital_twin/start_sensor_simulation.py
-```
-
-To use the default bridge port instead, restart the bridge after installation:
-
-```powershell
-uv run --extra sensor-identification python digital_twin/bridge_server.py
-```
-
-## Measurement adapter
-
-`measurements.js` consumes `getContactCloud()`, `getTaxelPositions()` and
-`ProfileTwin.snapshot()` from the current viewer. The source frame is explicitly
-`left_base_link`, with `metres` normalized to `m` at the matcher interface.
-Matching itself uses millimetres. Live clouds use the viewer's existing
-pose/pressure synchronization checks. Saved playback retains its historical
-pose and does not acquire a fake current timestamp. Only recorded active
-points are available in saved exports; other cells are unknown, not zero.
-
-No older viewer CAD-frame transform is transplanted. Physical geometry remains
-uncalibrated: current displayed hand contacts can return compatibility scores,
-but the integration does not enable a confident sensor label for them. CAD
-sample inputs have known synthetic geometry and can be classified.
-
-## Matching
-
-The independent matcher tries both STL models with identical multistart rigid
-alignment budgets, then refines exact unsigned triangle distances. It never
-scales either model. Lower score means better surface compatibility, not a
-probability. Both fit, neither fit within the search, poor separation, sparse
-contacts, unverified calibration and unstable fitting have separate ambiguity
-reasons. Shared shaft contacts commonly cannot distinguish these sensors.
-The search is local and does not prove global infeasibility.
-
-Normal non-contact readings are ignored as negative constraints. Only explicitly
-certified surface-clearance balls can contribute exclusion evidence. Both CAD
-meshes are open, so solid inside/outside collision checks are not inferred.
-A measures roughly 36 x 119 x 36 mm; B roughly 68 x 162 x 63 mm. A's companion
-STEP declares millimetres; B's physical scale still needs confirmation.
-Electrode placement, joint mapping, timing and contact deformation need
-calibration before relying on physical identification.
-
-## Test without hardware
-
-```powershell
-uv run --extra sensor-identification python -m unittest discover -s tests -p test_sensor_identification.py -v
-uv run --extra sensor-identification python -m unittest discover -s tests -p test_identification_service.py -v
+node tests/test_identification_history.js
 node tests/test_identification_measurements.js
+uv run --extra sensor-identification python -m unittest discover -s tests -p test_identification_service.py -v
 ```
-
-The current self-contained HTML is extended additively. Existing embedded mesh
-and saved-replay code is preserved byte-for-byte; no old viewer is copied over.
-The staged `filter_csv.py` file and Git index are outside this change.

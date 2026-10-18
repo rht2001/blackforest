@@ -47,6 +47,15 @@ def write_viewer(path, points, models, result, *, threshold=200., coordinate_uni
                         if (p['pressure'] > threshold) == active]).reshape(-1, 3)
         fig.add_trace(go.Scatter3d(x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2],
                                  mode='markers', marker=dict(size=4, color=color), name=label))
+    unknown = []
+    for p in points if isinstance(points, (list, tuple)) else []:
+        if (isinstance(p, dict) and p.get('pressure') is None
+                and all(isinstance(p.get(k), (int, float)) and not isinstance(p[k], bool)
+                        and np.isfinite(p[k]) for k in ('x', 'y', 'z'))):
+            unknown.append([p[k]*scale for k in ('x', 'y', 'z')])
+    xyz = np.array(unknown, dtype=float).reshape(-1, 3)
+    fig.add_trace(go.Scatter3d(x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2], mode='markers',
+                             marker=dict(size=2, color='#8496a6'), name='Pressure unknown'))
     for name, color in [('SENSOR_A', '#18b79c'), ('SENSOR_B', '#d7a936')]:
         fit = result['fits'].get(name)
         if fit is None:
@@ -58,17 +67,19 @@ def write_viewer(path, points, models, result, *, threshold=200., coordinate_uni
         fig.add_trace(go.Mesh3d(x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2],
                                i=faces[:, 0], j=faces[:, 1], k=faces[:, 2], color=color,
                                opacity=.25, name=f"{name} score={fit['score']:.2f}", showlegend=True))
-    fig.update_layout(title=result['classification']+' · '+result['reason'].replace('_', ' '),
+    fig.update_layout(title=result['classification'],
                       scene=dict(aspectmode='data', xaxis_title='X (mm)',
                                  yaxis_title='Y (mm)', zaxis_title='Z (mm)'),
                       legend=dict(orientation='h', x=0, y=1.05),
-                      height=600, margin=dict(l=0, r=0, b=0, t=95))
-    body = fig.to_html(full_html=False, include_plotlyjs=True, config={'responsive': True})
+                      autosize=True, margin=dict(l=0, r=0, b=0, t=80))
+    body = fig.to_html(full_html=False, include_plotlyjs=True,
+                       default_height='max(220px, calc(100vh - 90px))',
+                       config={'responsive': True, 'displaylogo': False})
     details = html.escape(json.dumps(result, indent=2, allow_nan=False))
     Path(path).write_text('<!doctype html><meta charset="utf-8"><title>CAD tactile identification</title>'
                          '<style>body{font:14px system-ui;margin:16px}pre{overflow:auto;max-width:100%;'
                          'padding:12px;background:#f4f6f8}p{max-width:100%}</style>'
                          +body+'<p>Drag to rotate; click legend entries to hide each candidate. '
                          'Non-contact dots impose no constraint unless separately certified. '
-                         'Transforms map STL mm into the observation frame in mm.</p><pre>'+details+'</pre>',
+                         'Transforms map STL mm into the observation frame in mm.</p><details><summary>Fit details</summary><pre>'+details+'</pre></details>',
                          encoding='utf-8')

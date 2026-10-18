@@ -53,8 +53,9 @@ class ServiceTests(unittest.TestCase):
     def test_routes_and_invalid_requests_preserve_existing_state(self):
         self.assertEqual(json.loads(self.request('/api/identification')[1])['status'], 'idle')
         self.assertEqual(self.request('/identification/report')[0], 404)
-        self.assertIn(b'Current displayed contacts', self.request('/sensor_identification/simulation.js')[1])
+        self.assertIn(b'Estimate', self.request('/sensor_identification/simulation.js')[1])
         self.assertEqual(self.request('/sensor_identification/measurements.js')[0], 200)
+        self.assertEqual(self.request('/sensor_identification/history.js')[0], 200)
         self.assertEqual(self.request('/api/identification', {'mode': 'bogus'})[0], 400)
         self.assertEqual(self.request('/api/identification', {'mode': 'SENSOR_B', 'tolerance_mm': -1})[0], 400)
         self.assertEqual(self.request('/api/identification', {'mode': 'current'})[0], 400)
@@ -90,6 +91,7 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(state['status'], 'complete')
             self.assertEqual(state['result'], result)
             self.assertIn(b'fitted shapes', self.request('/identification/report')[1])
+            self.assertIn(b'fitted shapes', self.request('/identification/report?job='+state['job_id'])[1])
 
     def test_current_frame_cannot_bypass_calibration_and_errors_are_visible(self):
         result = {'classification': 'AMBIGUOUS', 'reason': 'calibration_unverified', 'fits': {}}

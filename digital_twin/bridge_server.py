@@ -118,14 +118,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):self.send_data(b'',204)
     def do_GET(self):
         url = urlsplit(self.path)
-        if self.path in ('/sensor_identification/simulation.js', '/sensor_identification/measurements.js'):
+        if self.path in ('/sensor_identification/simulation.js', '/sensor_identification/measurements.js', '/sensor_identification/history.js'):
             self.send_data(Path(__file__).with_name('sensor_identification').joinpath(self.path.rsplit('/', 1)[1]).read_bytes(),
                            ctype='text/javascript; charset=utf-8')
             return
-        if self.path in ('/api/identification', '/identification/report'):
+        if url.path in ('/api/identification', '/identification/report'):
             try:
                 service = identification_service(self.server)
-                if self.path == '/api/identification':
+                if url.path == '/api/identification':
                     self.respond_json(service.snapshot())
                 else:
                     report = service.report()

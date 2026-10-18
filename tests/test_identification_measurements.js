@@ -22,4 +22,13 @@ cloud.valid=false;assert.equal(capture(viewer).points.length,0);assert.equal(cap
 cloud.valid=true;cloud.units='mm';assert.equal(capture(viewer).valid,false);
 cloud.units='metres';cloud.frame='unknown';assert.equal(capture(viewer).valid,false);
 assert.equal(capture({}).valid,false);
+cloud.frame='left_base_link';cloud.valid=false;
+viewer.ProfileTwin.snapshot=()=>({live:false,demo:false,replay:null});
+frame=capture(viewer);assert.equal(frame.valid,true);assert.equal(frame.measurement_source,'manual_pose');
+assert.ok(frame.points.every(p=>p.pressure===null));
+viewer.ProfileTwin.snapshot=()=>({live:true,demo:false,replay:null});
+assert.equal(capture(viewer).valid,false);
+cloud.valid=true;viewer.ProfileTwin.snapshot=()=>({live:false,replay:{name:'recorded.csv'}});
+viewer.HandHistory={points:()=>[{id:'known',x:0,y:0,z:0,pressure:700},{id:'unknown',x:1,y:0,z:0,pressure:null}]};
+frame=capture(viewer);assert.equal(frame.points.length,2);assert.equal(frame.points[1].pressure,null);
 console.log('PASS current metre-frame adapter, zero/missing readings, saved-capture isolation and invalid frames');

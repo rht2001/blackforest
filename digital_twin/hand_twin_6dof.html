@@ -613,6 +613,49 @@ function leaveSaved(){
  $('savedHand').classList.remove('active');$('savedCloud').classList.remove('active');
  $('savedInfo').textContent='Saved captures remain in the list. Select one to view it again.';
 }
+window.HandHistory={
+ show(payload,name){
+  const entry=SavedContacts.prepare(payload,{id,profile,referenceHash:data.reference_sha256,geometryHash:geometry.geometry_sha256});
+  if(entry.cloud.identification_points!==undefined){
+   const points=entry.cloud.identification_points,seen=new Set(),allowed=new Set(geometry.regions.flatMap(r=>r.cells.map(c=>r.key+':'+c.wire_index)));
+   if(!Array.isArray(points)||points.length>1062)throw Error('Invalid full-cell history measurements.');
+   for(const p of points){
+    if(!p||!allowed.has(p.id)||seen.has(p.id)||!['x','y','z'].every(k=>typeof p[k]==='number'&&Number.isFinite(p[k])&&Math.abs(p[k])<=10)||(p.pressure!==null&&(typeof p.pressure!=='number'||!Number.isFinite(p.pressure)||p.pressure<0||p.pressure>4095)))throw Error('Invalid full-cell history measurements.');
+    seen.add(p.id);
+   }
+  }
+  entry.name=name;entry.onePage=true;
+  const previous=savedEntries.findIndex(e=>e.onePage);if(previous>=0)savedEntries[previous]=entry;else savedEntries.push(entry);
+  $('savedSelect').replaceChildren(...savedEntries.map((e,i)=>{const option=document.createElement('option');option.value=i;option.textContent=e.name;return option}));
+  $('savedSelect').disabled=false;$('savedSelect').value=savedEntries.indexOf(entry);openSaved(entry,'hand');
+ },
+ telemetry(row,name){
+  const solution=K.solve(profile,row.angles_act,calibration),now=Date.now()/1000;
+  const input={angles_act:row.angles_act,tactile_regions:row.tactile_regions,simulated:false,
+   received_at:now,field_received_at:{angles_act:now,tactile_regions:now}};
+  const samples=P.sample(input,true,now),cloud=T.cloud(geometry,solution,samples,input,true,$('activationThreshold').value,calibration,now);
+  const fromWorld=T.inverseRigid(solution.frames.left_base_link);
+  cloud.identification_points=T.cells(geometry,solution,samples,cloud.threshold).map(cell=>{
+   const [x,y,z]=K.point(fromWorld,cell.position_world_m);return {id:cell.id,x,y,z,pressure:cell.value}});
+  cloud.valid=true;cloud.pose_only=cloud.valid_cells===0;
+  cloud.angles_act=row.angles_act.slice();cloud.joint_angles_rad={...solution.q};
+  cloud.received_at=null;cloud.field_received_at={};cloud.timestamp_basis='CSV row; hardware capture timestamp unavailable';
+  cloud.history_source='csv';cloud.history_index=row.index;cloud.history_state=row.state;
+  cloud.pressure_basis='Recorded CSV counts; pressure offsets and failed-read validity are not supplied';
+  this.show(cloud,name);
+ },
+ points(){
+  if(!replay)return taxelPositions.map(p=>({...p}));
+  const entry=replay.entry,cloud=entry.cloud;
+  if(Array.isArray(cloud.identification_points))return cloud.identification_points.map(p=>({...p}));
+  const known=new Map(cloud.points.map(p=>[p.id,p]));
+  if(!entry.handAvailable)return cloud.points.map(p=>({id:p.id,x:p.position_m[0],y:p.position_m[1],z:p.position_m[2],pressure:p.value}));
+  const fromWorld=T.inverseRigid(entry.solution.frames.left_base_link);
+  return T.cells(geometry,entry.solution,{},cloud.threshold).map(cell=>{
+   const point=known.get(cell.id),[x,y,z]=point?point.position_m:K.point(fromWorld,cell.position_world_m);
+   return {id:cell.id,x,y,z,pressure:point?point.value:null}});
+ }
+};
 $('savedFiles').onchange=async event=>{
  const errors=[];let last=null;
  for(const file of event.target.files){
@@ -651,4 +694,4 @@ setInterval(update,200);
 })();
 
 </script>
-<!-- JOINT PROFILES END --><script src="sensor_identification/measurements.js"></script><script src="sensor_identification/simulation.js"></script></body></html>
+<!-- JOINT PROFILES END --><script src="sensor_identification/history.js"></script><script src="sensor_identification/measurements.js"></script><script src="sensor_identification/simulation.js"></script></body></html>

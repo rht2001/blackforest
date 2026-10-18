@@ -42,7 +42,7 @@ class IdentificationService:
             if self._state['status'] == 'running':
                 return None
             self._state = dict(status='running', job_id=uuid.uuid4().hex, mode=mode,
-                               started_at=time.time())
+                               started_at=time.time(), input_label=str(request.get('input_label', mode))[:256])
             self._report = None
             state = copy.deepcopy(self._state)
         worker = threading.Thread(target=self._run, args=(copy.deepcopy(request), config),
@@ -66,6 +66,8 @@ class IdentificationService:
                                         calibrated=False)
                 points = frame.get('points', []) if frame.get('valid') is True else []
                 units = frame.get('units', 'mm')
+                result['measurement_source'] = frame.get('measurement_source', 'snapshot')
+                result['captured_points'] = len(points)
             else:
                 model = self._models['SENSOR_A' if mode == 'shared' else mode]
                 points = synthetic_points(model, region='shared' if mode == 'shared' else 'full')

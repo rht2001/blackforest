@@ -1,142 +1,166 @@
-/* Start the independent fitter using the simulation's existing measurement snapshot. */
+/* One page: select the data source, inspect it, then estimate that frozen cloud. */
 (() => {
-  const wait = setInterval(() => {
-    const anchor = document.getElementById('profileControls');
-    if (!anchor) return;
-    clearInterval(wait);
-    attach(anchor);
-  }, 250);
-
-  function attach(anchor) {
-    const panel = document.createElement('section');
-    panel.id = 'identificationPanel';
-    panel.innerHTML = `<style>
-      #identificationPanel{font-size:12px;line-height:1.45}
-      #identificationPanel button{font:inherit;color:#deedf7;background:#1c4055;border:1px solid #42647b;border-radius:6px;padding:7px;margin:3px 2px 3px 0;cursor:pointer}
-      #identificationPanel button:disabled{opacity:.5;cursor:wait}
-      #identificationOptions label{display:block;margin:7px 0;font-size:11px}
-      #identificationOptions input{width:72px;margin-left:5px}
-      #identificationPanel a{color:#78daf1}
-      #identificationPanel h2{font-size:14px;font-weight:650;margin:0 0 8px}
-      #identificationPanel select{display:block;width:100%;padding:9px;border:1px solid #42647b;border-radius:6px;background:#122c40;color:#deedf7;margin:7px 0}
-      #identificationPanel [data-identify]{width:100%;background:#14536b;border-color:#32829a;margin:3px 0 8px}
-      #identificationStatus{padding:10px;border-radius:7px;background:#112638;font-size:12px;margin:8px 0}
-      #identificationPanel .muted{font-size:11px;margin:6px 0}
-    </style>
-      <select id="identificationSource" aria-label="Contact source">
-        <option value="SENSOR_B">Sample · Sensor B</option>
-        <option value="SENSOR_A">Sample · Sensor A</option>
-        <option value="shared">Sample · Shared shaft</option>
-        <option value="current">Current displayed contacts</option>
-      </select>
-      <p id="identificationHint" class="muted" hidden>Generated CAD contacts · no hardware needed</p>
-      <button data-identify>Identify sensor</button>
-      <p id="identificationStatus" role="status" aria-live="polite">Ready to compare both shapes.</p>
-      <a id="identificationReport" target="_blank" rel="noopener" hidden>View fit in 3D ↗</a>
-      <details id="identificationOptions"><summary>Identification settings</summary>
-      <label>Contact threshold (counts) <input id="identifyThreshold" type="number" min="0" max="4095" value="200"></label>
-      <label>Allowed position error (mm) <input id="identifyTolerance" type="number" min="0.1" max="20" step="0.1" value="1.5"></label>
-      <p class="muted">Both shapes are moved and rotated to fit the contacts. Similar fits, poor fits, or insufficient evidence give AMBIGUOUS. Hand geometry still needs calibration. Motion-demo pressure is artificial and is not object-contact physics. Saved captures are analyzed in their recorded frame.</p>
-      <p id="identificationScores" class="muted"></p></details>`;
-    const group = document.createElement('details');
-    group.id = 'sensorIdentificationPanel';
-    group.open = true;
-    const summary = document.createElement('summary');
-    summary.textContent = 'Sensor identification';
-    group.append(summary, panel);
-    anchor.insertAdjacentElement('beforebegin', group);
-    const options = panel.querySelector('#identificationOptions');
-
-    const base = location.protocol === 'file:' ? 'http://127.0.0.1:18768' : location.origin;
-    const status = panel.querySelector('#identificationStatus');
-    const report = panel.querySelector('#identificationReport');
-    const buttons = [...panel.querySelectorAll('[data-identify]')];
-    const source = panel.querySelector('#identificationSource');
-    function updateHint() {
-      panel.querySelector('#identificationHint').hidden = source.value !== 'current';
-      panel.querySelector('#identificationHint').textContent = source.value === 'current'
-        ? 'Uses live, demo, or saved contacts · geometry uncalibrated'
-        : 'Generated CAD contacts · no hardware needed';
+  const ready=setInterval(()=>{
+    if(!window.HandHistory||!document.querySelector('#profileScene0')?._renderer)return;
+    clearInterval(ready);start();
+  },200);
+  function start(){
+    const $=id=>document.getElementById(id),panel=$('panel'),old=[...panel.children];
+    const app=document.createElement('div');app.id='onePageApp';
+    app.innerHTML=`<style>
+      #panel{width:min(350px,calc(100vw - 24px))}#profileWorkspace{left:374px}
+      #onePageApp{font-size:12px;line-height:1.45}#onePageApp h1{font-size:20px;margin:0 0 14px}
+      #onePageApp h2{font-size:13px;margin:14px 0 7px}#onePageApp p{margin:7px 0}
+      #onePageApp button,#onePageApp select,#onePageApp input{font:inherit}
+      #onePageApp button{background:#18384e;color:#dcebf5;border:1px solid #42647b;border-radius:6px;padding:8px;cursor:pointer}
+      #onePageApp button:disabled{opacity:.5;cursor:not-allowed}#onePageApp button.active{background:#145875;border-color:#59c4e3}
+      .data-modes{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:8px}
+      .data-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.data-actions button{flex:1}
+      #onePageApp select{width:100%;padding:7px;background:#10283b;color:#dcebf5;border:1px solid #42647b;border-radius:6px}
+      #onePageApp input[type=number]{max-width:90px;background:#10283b;color:#dcebf5;border:1px solid #42647b;border-radius:5px;padding:6px}
+      #onePageApp input[type=file]{max-width:100%;font-size:11px}#estimateButton{width:100%;background:#135b72!important;font-weight:650;margin:13px 0 4px}
+      #estimateStatus{background:#10283b;border-radius:6px;padding:9px;font-size:11px}#onePageApp .hint{font-size:11px;color:#a6bac9}
+      #onePageApp details{margin-top:10px;padding-top:8px}#onePageApp label{display:block;margin:7px 0}#onePageApp [hidden]{display:none!important}
+      #estimateView{position:absolute;inset:0;z-index:8;background:#fff}#estimateView[hidden]{display:none}#estimateView iframe{width:100%;height:100%;border:0}
+      @media(min-width:621px) and (max-width:900px){#panel{width:300px}#profileWorkspace{left:324px}}
+      @media(max-width:620px){#panel{width:100%;height:50vh;max-height:50vh;padding:10px 12px}#profileWorkspace{left:0;top:50vh}#onePageApp h1{font-size:16px;margin-bottom:8px}#onePageApp h2{margin-top:8px}#onePageApp button{padding:6px}}
+    </style><h1>Hand twin</h1><h2>1. Choose data</h2>
+      <div class="data-modes" role="tablist" aria-label="Data mode">
+        <button role="tab" id="dataManual">Manual</button><button role="tab" id="dataLive">Live</button><button role="tab" id="dataHistory">History</button>
+      </div><p id="sourceInfo" class="hint"></p>
+      <section id="manualData"><div class="data-actions" id="manualActions"></div><details id="manualAngles"><summary>Set finger angles</summary></details></section>
+      <section id="liveData" hidden></section>
+      <section id="historyData" hidden><button id="chooseHistory" type="button">Choose JSON or CSV…</button><input id="historyFiles" type="file" accept=".json,.csv,application/json,text/csv" hidden><p id="selectedHistory" class="hint">No history file selected.</p>
+        <div id="csvControls" hidden><label>CSV row <input id="historyRow" type="number" value="1" min="1"></label><div class="data-actions"><button id="historyPrev">Previous</button><button id="historyNext">Next</button></div><p id="historyRowInfo" class="hint"></p></div>
+        <p id="historyStatus" class="hint">Choose a file to preview it before estimating.</p>
+      </section>
+      <h2>2. Estimate from these points</h2><button id="estimateButton">Estimate</button><p id="estimateStatus" role="status" aria-live="polite">Ready. The selected data source supplies the point cloud.</p>
+      <div class="data-actions"><button id="showHand">Hand view</button><button id="showCloud" disabled>Point cloud</button><button id="showEstimate" disabled>Fit result</button></div><div id="viewActions" class="data-actions"></div>
+      <details id="estimateSettings"><summary>Estimation settings</summary><label>Contact threshold <input id="estimateThreshold" type="number" min="0" max="4095" value="200"></label><label>Position tolerance (mm) <input id="estimateTolerance" type="number" min="0.1" max="20" step="0.1" value="1.5"></label><p class="hint">All available positions are captured. Only valid pressure above the threshold is contact evidence. Gray points have unknown pressure. Hand geometry still requires calibration.</p></details>
+      <details id="advancedData"><summary>Advanced display & connection</summary></details>`;
+    panel.append(app);old.forEach(node=>$('advancedData').append(node));
+    old.filter(n=>n.matches('.kicker,h1')).forEach(n=>{n.hidden=true});
+    $('modeManual').parentElement.hidden=true;
+    $('manualActions').append($('quickOpen'),$('quickClose'));
+    $('manualAngles').append($('controls'));$('viewActions').append($('resetView'));
+    const connection=$('liveStatus').closest('.connection');if(connection)$('liveData').append(connection);
+    if($('dataSource'))$('liveData').append($('dataSource'));
+    $('advancedData').append($('savedCaptures'));$('savedFiles').closest('label').hidden=true;
+    const estimateView=document.createElement('section');estimateView.id='estimateView';estimateView.hidden=true;
+    estimateView.innerHTML='<iframe title="Captured point cloud and fitted sensor geometries" sandbox="allow-scripts allow-same-origin allow-downloads"></iframe>';
+    $('profileWorkspace').append(estimateView);
+    const base=location.protocol==='file:'?'http://127.0.0.1:18768':location.origin;
+    let mode='manual',switching=false,historyValid=false,csvRows=null,csvName='',job=null,pollTimer=null,running=false,loading=false,historyFrame=null,loadVersion=0;
+    const status=$('estimateStatus');
+    function updateReady(){
+      $('estimateButton').disabled=running||loading||(mode==='history'&&!historyValid);
+      $('showCloud').disabled=mode!=='history'||!historyValid;
     }
-    source.onchange = () => {
-      updateHint();
-      status.textContent = 'Ready to compare both shapes.';
-      report.hidden = true;
-      options.querySelector('#identificationScores').textContent = '';
-    };
-    let timer = null;
-    const reasons = {
-      one_candidate_clearly_more_consistent: 'One sensor fits the contacts clearly better.',
-      both_candidates_compatible: 'Both shapes fit. Touching this region cannot tell them apart.',
-      score_margin_too_small: 'The difference is too small to choose safely.',
-      neither_candidate_compatible_within_search: 'Neither shape explains these contacts well.',
-      calibration_unverified: 'The hand geometry needs calibration before a confident result.',
-      insufficient_contacts: 'There are too few valid contact points.',
-      insufficient_spatial_coverage: 'The contacts cover too little of the object.',
-      invalid_or_stale_frame: 'No valid contact snapshot is available. Select live feedback, a motion demo, or a valid saved capture.',
-      alignment_search_unstable: 'The alignment search did not settle reliably.'
-    };
-    function display(state) {
-      const running = state.status === 'running';
-      buttons.forEach(button => { button.disabled = running; });
-      source.disabled = running;
-      if (state.mode) {
-        source.value = state.mode;
-        updateHint();
-      }
-      report.hidden = true;
-      if (running) {
-        status.textContent = 'Comparing shapes… This may take a few minutes.';
-      } else if (state.status === 'complete') {
-        const result = state.result;
-        const label = result.classification === 'AMBIGUOUS' ? 'AMBIGUOUS — cannot choose safely' : result.classification.replace('_', ' ');
-        const scores = Object.entries(result.fits || {}).map(([name, fit]) =>
-          `${name.replace('_', ' ')} error: ${fit.rmse_mm.toFixed(2)} mm`).join(' · ');
-        status.textContent = `${label}. ${reasons[result.reason] || result.reason.replaceAll('_', ' ')}`;
-        options.querySelector('#identificationScores').textContent = scores;
-        report.href = base + state.report_url;
-        report.hidden = false;
-      } else if (state.status === 'error') {
-        status.textContent = 'Could not run identification: ' + state.error;
-      }
-      clearTimeout(timer);
-      if (running) timer = setTimeout(refresh, 1500);
+    function invalidateHistory(message){
+      historyValid=false;historyFrame=null;estimateView.hidden=true;
+      $('historyStatus').textContent=message;updateReady();
     }
-    async function refresh() {
-      try {
-        const response = await fetch(base + '/api/identification', {signal: AbortSignal.timeout(5000)});
-        const state = await response.json();
-        if (!response.ok) throw Error(state.error || 'Identification service unavailable');
-        display(state);
-      } catch (error) {
-        buttons.forEach(button => { button.disabled = false; });
-        source.disabled = false;
-        status.textContent = 'Start this simulation with Start Sensor Identification.cmd. ' + error.message;
-      }
+    function previewReady(){
+      const frame=window.getIdentificationFrame();
+      if(!frame.valid||!frame.points.length)throw Error('This file does not contain a usable point cloud.');
+      historyFrame=JSON.parse(JSON.stringify(frame));historyValid=true;
+      $('selectedHistory').textContent=frame.saved_name||'Saved capture';
+      status.textContent='Preview ready · '+frame.points.length+' points. Inspect the hand or point cloud, then press Estimate.';
+      updateReady();
     }
-    for (const button of buttons) button.onclick = async () => {
-      const mode = source.value;
-      const threshold = Number(options.querySelector('#identifyThreshold').value);
-      const tolerance = Number(options.querySelector('#identifyTolerance').value);
-      if (!Number.isFinite(threshold) || threshold < 0 || threshold > 4095 || !Number.isFinite(tolerance) || tolerance < .1 || tolerance > 20) {
-        status.textContent = 'Use a threshold from 0 to 4095 and a position error from 0.1 to 20 mm.';
-        return;
+    $('chooseHistory').onclick=()=>$('historyFiles').click();
+    function layoutMode(next){
+      mode=next;for(const key of ['manual','live','history']){
+        $(key+'Data').hidden=key!==mode;const tab=$('data'+key[0].toUpperCase()+key.slice(1));tab.classList.toggle('active',key===mode);tab.setAttribute('aria-selected',String(key===mode));
       }
-      const frame = mode === 'current' ? window.getIdentificationFrame?.() : undefined;
-      if (mode === 'current' && !frame?.valid) {
-        status.textContent = reasons.invalid_or_stale_frame;
-        return;
-      }
-      display({status:'running'});
-      try {
-        const response = await fetch(base + '/api/identification', {method:'POST',
-          headers:{'Content-Type':'application/json'}, signal:AbortSignal.timeout(10000),
-          body:JSON.stringify({mode, threshold, tolerance_mm:tolerance, frame})});
-        const state = await response.json();
-        if (!response.ok && response.status !== 409) throw Error(state.error || 'Could not start');
-        display(state);
-      } catch (error) { display({status:'error',error:error.message}); }
+      $('sourceInfo').textContent=mode==='manual'?'Set the angles yourself. Pressure is unknown; angles alone cannot identify an object.':mode==='live'?'Current actual angles and pressure from the connected hand.': 'Historical data only. Live updates are paused.';
+      updateReady();
+    }
+    function selectMode(next){
+      switching=true;try{
+        if(next==='manual')$('modeManual').click();
+        if(next==='live')$('modeLive').click();
+        if(next==='history'){
+          if(!window.ProfileTwin.snapshot().replay)$('modeManual').click();
+          if(historyValid&&!$('savedSelect').disabled){$('savedSelect').onchange();previewReady()}
+        }
+        layoutMode(next);estimateView.hidden=true;
+      }finally{switching=false}
+    }
+    for(const key of ['manual','live','history'])$('data'+key[0].toUpperCase()+key.slice(1)).onclick=()=>selectMode(key);
+    $('modeManual').addEventListener('click',()=>{if(!switching)layoutMode('manual')});
+    $('modeLive').addEventListener('click',()=>{if(!switching)layoutMode('live')});
+    $('savedSelect').addEventListener('change',()=>{try{layoutMode('history');estimateView.hidden=true;previewReady()}catch(e){invalidateHistory(e.message)}});
+    function showHistory(payload,name){switching=true;try{window.HandHistory.show(payload,name);layoutMode('history');estimateView.hidden=true;previewReady()}finally{switching=false}}
+    function showCSV(){
+      if(!csvRows)return;
+      const row=Number($('historyRow').value);if(!Number.isInteger(row)||row<1||row>csvRows.length)throw Error('Choose a row from 1 to '+csvRows.length+'.');
+      const packet=IdentificationHistory.telemetry(csvRows[row-1],JointPressure.regions);
+      switching=true;try{window.HandHistory.telemetry(packet,csvName+' · row '+row);layoutMode('history');previewReady()}finally{switching=false}
+      $('historyRowInfo').textContent='Row '+row+' / '+csvRows.length+' · index '+packet.index+(packet.state?' · '+packet.state:'');
+      $('historyStatus').textContent='CSV uses the saved angles and recorded counts. Offsets and failed-read validity are not supplied.';
+      estimateView.hidden=true;
+    }
+    $('historyFiles').onchange=async event=>{
+      const file=event.target.files[0];if(!file)return;
+      const version=++loadVersion;loading=true;
+      invalidateHistory('Loading '+file.name+'…');
+      $('selectedHistory').textContent=file.name;
+      csvRows=null;$('csvControls').hidden=true;
+      try{
+        if(file.size>50*1024*1024)throw Error('History files must be at most 50 MB.');
+        const text=await file.text();if(version!==loadVersion)return;
+        if(file.name.toLowerCase().endsWith('.csv')){
+          csvRows=IdentificationHistory.records(text);csvName=file.name;
+          $('csvControls').hidden=false;$('historyRow').max=csvRows.length;$('historyRow').value=1;showCSV();
+        }else{
+          showHistory(JSON.parse(text),file.name);
+          $('historyStatus').textContent='Loaded JSON coordinates and pressure.';
+        }
+      }catch(error){if(version===loadVersion)invalidateHistory(file.name+': '+error.message+' Choose a valid file before estimating.')}
+      finally{if(version===loadVersion){loading=false;updateReady();event.target.value=''}}
     };
-    refresh();
+    $('historyRow').onchange=()=>{try{showCSV()}catch(e){invalidateHistory(e.message)}};
+    $('historyPrev').onclick=()=>{if(Number($('historyRow').value)>1){$('historyRow').value=Number($('historyRow').value)-1;$('historyRow').onchange()}};
+    $('historyNext').onclick=()=>{if(csvRows&&Number($('historyRow').value)<csvRows.length){$('historyRow').value=Number($('historyRow').value)+1;$('historyRow').onchange()}};
+    $('showHand').onclick=()=>{estimateView.hidden=true;if(mode==='history'&&historyValid)$('savedHand').click()};
+    $('showCloud').onclick=()=>{if(mode==='history'&&historyValid){estimateView.hidden=true;$('savedCloud').click()}};
+    $('showEstimate').onclick=()=>{estimateView.hidden=false};
+    const reasons={both_candidates_compatible:'Both shapes fit.',neither_candidate_compatible_within_search:'Neither shape fits sufficiently within this search.',insufficient_contacts:'Not enough valid contact pressure.',insufficient_spatial_coverage:'Contacts cover too little of the object.',calibration_unverified:'Geometry needs calibration before a confident label.',score_margin_too_small:'The score difference is too small.',alignment_search_unstable:'Alignment did not settle reliably.',invalid_or_stale_frame:'No valid synchronized snapshot.',one_candidate_clearly_more_consistent:'One shape fits clearly better.'};
+    function display(state){
+      running=state.status==='running';updateReady();clearTimeout(pollTimer);
+      if(state.status==='running'){
+        status.textContent='Estimating frozen snapshot: '+(state.input_label||mode)+'. You can keep inspecting the hand.';
+        job=state.job_id;pollTimer=setTimeout(refresh,1500);
+      }else if(state.status==='complete'){
+        const result=state.result,errors=Object.entries(result.fits||{}).map(([name,fit])=>name.replace('SENSOR_','')+': '+fit.rmse_mm.toFixed(2)+' mm').join(' · ');
+        status.textContent='Last estimate: '+result.classification+' · '+(reasons[result.reason]||result.reason)+' Snapshot: '+state.input_label+(errors?' · '+errors:'');
+        estimateView.querySelector('iframe').src=base+state.report_url+'?job='+state.job_id;
+        estimateView.hidden=false;$('showEstimate').disabled=false;
+      }else if(state.status==='error')status.textContent='Estimate failed: '+state.error;
+    }
+    async function refresh(){try{
+      const response=await fetch(base+'/api/identification',{signal:AbortSignal.timeout(10000)}),state=await response.json();
+      if(!response.ok)throw Error(state.error||'Service unavailable');
+      if(job&&state.job_id!==job)throw Error('Another estimate replaced this job. Run Estimate again.');
+      display(state);
+    }catch(error){running=false;updateReady();status.textContent=error.message}}
+    $('estimateButton').onclick=async()=>{
+      if(loading||running)return;
+      if(mode==='history'&&!historyValid){status.textContent='Select a valid history frame before estimating.';return}
+      const threshold=Number($('estimateThreshold').value),tolerance=Number($('estimateTolerance').value);
+      if(!Number.isFinite(threshold)||threshold<0||threshold>4095||!Number.isFinite(tolerance)||tolerance<.1||tolerance>20){status.textContent='Check the threshold (0–4095) and tolerance (0.1–20 mm).';return}
+      window.ProfileTwin.tick();const frame=mode==='history'?historyFrame:window.getIdentificationFrame();
+      if(!frame.valid){status.textContent=mode==='live'?'Live angles and pressure are missing, stale or unsynchronized.':'Load a valid history frame or choose a manual pose first.';return}
+      const frozen=JSON.parse(JSON.stringify(frame));
+      const count=frozen.points.filter(p=>typeof p.pressure==='number'&&p.pressure>threshold).length;
+      const label=mode==='history'?'History · '+(frame.saved_name||'capture'):mode==='manual'?'Manual pose':'Live hand';
+      status.textContent='Captured '+frozen.points.length+' positions · '+count+' contact points. Starting estimate…';running=true;updateReady();
+      try{
+        const response=await fetch(base+'/api/identification',{method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(15000),body:JSON.stringify({mode:'current',frame:frozen,threshold,tolerance_mm:tolerance,input_label:label})});
+        const state=await response.json();if(!response.ok&&response.status!==409)throw Error(state.error||'Could not estimate');job=state.job_id;display(state);
+      }catch(error){running=false;updateReady();status.textContent='Estimate failed: '+error.message}
+    };
+    selectMode('manual');
   }
 })();
