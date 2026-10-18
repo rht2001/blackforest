@@ -374,3 +374,23 @@ unresolved; symmetric surfaces may still leave yaw/roll ambiguous. Contact and
 hand-penetration acceptance limits remain unchanged. The fit card reports how
 many local patches contributed; fit JSON also includes the directional RMS in
 mm-equivalent residual units. Previous estimator results must be recomputed.
+
+
+### Thumb closure first guess
+
+With at least three above-threshold thumb taxels at a pose at least 85%
+closed in the configured actuator range, the smaller CAD envelope is tried
+first. The running estimate shows this provisional first guess immediately
+before alignment. Closure alone never confirms identity or rejects the larger
+sensor. A less closed thumb retains the larger-first order. Both candidates
+remain available as fallback; detailed validation still fits both.
+
+New run clouds retain the deepest contact-bearing thumb pose separately from
+the display pose, after state/slip filtering. Rebuild old clouds to enable this
+hint. Live/saved snapshots use their recorded thumb pressures and calibration.
+Quick placement first tries eight general orientations and up to eight palm
+starts, with three coarse iterations and two refinements. If that pass fails,
+it repeats the normal search for that candidate; no candidate is rejected on
+the short pass alone. It stops refining at the first pose passing the existing
+contact, clearance and full-CAD hand checks. The 85% heuristic reflects the
+observed grasp behavior, not a calibrated probability or a physical guarantee.

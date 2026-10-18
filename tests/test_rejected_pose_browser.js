@@ -9,9 +9,9 @@ const {chromium}=require('playwright');
   let reject=false,request,oldBackend=false,posts=0;
   const matrix=[[0,-1,0,22],[1,0,0,-13],[0,0,1,55],[0,0,0,1]];
   await page.route('http://127.0.0.1:18765/api/identification',route=>{
-   if(route.request().method()==='GET')return route.fulfill({json:{status:'idle',estimator_revision:oldBackend?null:'collision_roll_v4'}});
+   if(route.request().method()==='GET')return route.fulfill({json:{status:'idle',estimator_revision:oldBackend?null:fs.readFileSync(require('node:path').join(__dirname,'../digital_twin/sensor_identification/web_service.py'),'utf8').match(/ESTIMATOR_REVISION = '([^']+)'/)[1]}});
    posts++;request=route.request().postDataJSON();
-   return route.fulfill({json:{status:'complete',estimator_revision:'collision_roll_v4',job_id:'test',input_label:'test capture',report_url:'/identification/report',result:{classification:'AMBIGUOUS',reason:'calibration_unverified',fits:{SENSOR_A:{compatible:!reject,score:.1,rmse_mm:.1,transform:matrix},SENSOR_B:{compatible:!reject,score:.2,rmse_mm:.2,transform:matrix}}}}});
+   return route.fulfill({json:{status:'complete',estimator_revision:fs.readFileSync(require('node:path').join(__dirname,'../digital_twin/sensor_identification/web_service.py'),'utf8').match(/ESTIMATOR_REVISION = '([^']+)'/)[1],job_id:'test',input_label:'test capture',report_url:'/identification/report',result:{classification:'AMBIGUOUS',reason:'calibration_unverified',fits:{SENSOR_A:{compatible:!reject,score:.1,rmse_mm:.1,transform:matrix},SENSOR_B:{compatible:!reject,score:.2,rmse_mm:.2,transform:matrix}}}}});
   });
   await page.goto(pathToFileURL(path.resolve(__dirname,'../digital_twin/hand_twin_6dof.html')).href);
   await page.waitForFunction(()=>document.querySelector('#onePageApp')&&window.HandEstimate,null,{timeout:60000});

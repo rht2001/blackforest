@@ -5,7 +5,7 @@
  const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const mm=value=>typeof value==='number'&&Number.isFinite(value)?value.toFixed(2)+' mm':'—';
  const elapsed=(start,end)=>{if(!Number.isFinite(start))return '';const seconds=Math.max(0,Math.floor((end-start)));return seconds<60?seconds+'s':Math.floor(seconds/60)+'m '+String(seconds%60).padStart(2,'0')+'s'};
- const stages={queued:'Starting estimate',loading_models:'Loading sensor models',preparing:'Checking measurements',palm_initialization:'Fitting a palm-aligned starting pose',alignment:'Matching surfaces',refining:'Refining pose',checking_limits:'Checking hand penetration',writing_report:'Preparing result'};
+ const stages={thumb_first_guess:'Thumb nearly closed: trying the smaller sensor first',queued:'Starting estimate',loading_models:'Loading sensor models',preparing:'Checking measurements',palm_initialization:'Fitting a palm-aligned starting pose',alignment:'Matching surfaces',refining:'Refining pose',checking_limits:'Checking hand penetration',writing_report:'Preparing result'};
  const rejection={contact_outside_tolerance:'Some red contacts are too far from the surface.',hand_penetration:'The model crosses the hand limits.',certified_clearance_violated:'The model violates a certified clearance region.'};
  const sensorName=(name,context={})=>context.models?.[['SENSOR_A','SENSOR_B'].indexOf(name)]?.name||({SENSOR_A:'VEGABAR 29',SENSOR_B:'VEGABAR 38'}[name])||name;
  function identityBox(result,compatible,context){
@@ -56,7 +56,7 @@
    const label=(p.candidate?p.candidate+' · ':'')+(stages[p.stage]||'Estimating frozen snapshot');
    return '<h3>Estimating… <span class="fit-time">'+escape(elapsed(state.started_at,now))+'</span></h3>'+source+'<p>'+escape(label)+'</p><progress aria-label="Current estimation stage" '+(hasCount?'max="'+p.total+'" value="'+Math.max(0,Math.min(p.total,p.completed))+'"':'')+'></progress>'+
     (hasCount?'<p class="fit-small">'+escape(p.completed+' / '+p.total)+' '+(p.stage==='alignment'?'starting poses':'pose refinements')+'</p>':'')+
-    '<p class="fit-small">You can keep inspecting the hand while the pose is fitted.</p>';
+    (state.first_guess?'<p class="fit-small">First guess: '+escape(sensorName(state.first_guess.candidate,context))+' · thumb '+Math.round(state.first_guess.closure_fraction*100)+'% closed with contact. Provisional; checking geometry.</p>':'')+'<p class="fit-small">You can keep inspecting the hand while the pose is fitted.</p>';
   }
   if(state.status==='error'||state.status==='connection_error')return '<h3>'+(state.status==='connection_error'?'Connection lost':'Estimate failed')+'</h3>'+source+'<p class="fit-reason">'+escape(state.error||'No error details were returned.')+'</p>'+(state.status==='connection_error'?'<p class="fit-small">The job may still be running.</p><button id="retryEstimateStatus">Check status</button>':'');
   if(state.status!=='complete')return '';
@@ -68,7 +68,7 @@
   if(result.invalid_points)counts.push(result.invalid_points+' invalid readings ignored');
   return '<h3>'+escape(title)+(duration?' <span class="fit-time">'+escape(duration)+'</span>':'')+'</h3>'+source+'<p>'+escape(explanation||result.reason||'Estimate complete.')+'</p><p class="fit-small">'+escape(counts.join(' · '))+'</p>'+
    (result.classification==='AMBIGUOUS'&&compatible.length?'<p class="fit-small">A geometric fit is provisional; the sensor identity is not confirmed.</p>':'')+
-   (result.placement_candidate?'<p class="fit-small">Larger sensor first · selected '+escape(sensorName(result.placement_candidate,context))+(result.placement_reason==='smaller_candidate_after_larger_rejected'?' after the larger sensor failed the fit limits.':'.')+'</p>':'')+
+   (result.placement_candidate?'<p class="fit-small">'+(result.first_guess?'Thumb nearly closed · smaller sensor first · selected ':'Larger sensor first · selected ')+escape(sensorName(result.placement_candidate,context))+(result.placement_reason==='smaller_candidate_after_larger_rejected'?' after the larger sensor failed the fit limits.':'.')+'</p>':'')+
    identityBox(result,compatible,context)+fits.map(([name,fit])=>card(name,fit,fit.scored_contact_points??result.contacts,context)).join('')+
    (!fits.length?'<p class="fit-small">More valid, spatially spread contact readings are needed to locate the object.</p>':'')+
    '<p class="fit-small">Open Fit report for the full geometry comparison.</p>';
@@ -200,7 +200,7 @@
 
       <div class="data-actions"><button id="showHand">Hand view</button><button id="showCloud" disabled>Point cloud</button><button id="showEstimate" disabled>Estimate in hand</button><button id="showFitReport" disabled>Fit report</button></div><label id="estimateCandidateLabel" hidden>Fitted candidate <select id="estimateCandidate"></select></label><p id="estimatePoseWarning" role="status" hidden style="color:#edb6be">Rejected fit shown for comparison. Contact or collision limits are exceeded.</p><div id="viewActions" class="data-actions"></div>
 
-      <p class="hint">Purple and gray: hand surface limits · red: measured contacts</p><div id="boundaryDisplay"></div><details id="estimateSettings"><summary>Estimation settings</summary><label>Fit quality <select id="estimateQuality"><option value="quick" selected>Quick placement</option><option value="detailed">Detailed validation</option></select></label><label>Contact threshold <input id="estimateThreshold" type="number" min="0" max="4095" value="200"></label><label>Position tolerance (mm) <input id="estimateTolerance" type="number" min="0.1" max="20" step="0.1" value="3"></label><label>Hand penetration allowance (mm) <input id="estimateHandTolerance" type="number" min="0.1" max="20" step="0.1" value="3"></label><label>Estimation point spacing (mm) <input id="estimatePointSpacing" type="number" min="0" max="20" step="0.1" value="2"></label><p class="hint">Nearby contacts and hand limits share one representative within this spacing; 0 keeps all points. Opposing hand surfaces remain separate. Quick placement approximates contact distances; both modes check hand penetration against the full CAD with the adjustable hand penetration allowance (default 3 mm). Detailed validation also checks exact contact distances. Fitting starts with a longitudinal palm-aligned grasp when rigid palm geometry is available: several rolls around the full axis, then free rotation and translation. Hand limits guide the search and use conservative local surface patches requiring calibrated geometry.</p></details>
+      <p class="hint">Purple and gray: hand surface limits · red: measured contacts</p><div id="boundaryDisplay"></div><details id="estimateSettings"><summary>Estimation settings</summary><label>Fit quality <select id="estimateQuality"><option value="quick" selected>Quick placement</option><option value="detailed">Detailed validation</option></select></label><label>Contact threshold <input id="estimateThreshold" type="number" min="0" max="4095" value="200"></label><label>Position tolerance (mm) <input id="estimateTolerance" type="number" min="0.1" max="20" step="0.1" value="3"></label><label>Hand penetration allowance (mm) <input id="estimateHandTolerance" type="number" min="0.1" max="20" step="0.1" value="3"></label><label>Estimation point spacing (mm) <input id="estimatePointSpacing" type="number" min="0" max="20" step="0.1" value="2"></label><p class="hint">Nearby contacts and hand limits share one representative within this spacing; 0 keeps all points. Opposing hand surfaces remain separate. A thumb at least 85% closed with measured thumb contact gives a provisional smaller-sensor first guess. Quick placement stops at the first pose passing its fit checks. Quick placement approximates contact distances; both modes check hand penetration against the full CAD with the adjustable hand penetration allowance (default 3 mm). Detailed validation also checks exact contact distances. Fitting starts with a longitudinal palm-aligned grasp when rigid palm geometry is available: several rolls around the full axis, then free rotation and translation. Hand limits guide the search and use conservative local surface patches requiring calibrated geometry.</p></details>
 
       <details id="advancedData"><summary>Advanced display & connection</summary></details>`;
 
@@ -589,7 +589,7 @@
 
     function display(state){
 
-      if(state.estimator_revision!=='pressure_directions_v5')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
+      if(state.estimator_revision!=='thumb_first_v6')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
       if(!fittedFrame&&state.estimate_frame){
         fittedFrame=state.estimate_frame;
         fittedThreshold=state.estimate_threshold??200;
@@ -702,7 +702,7 @@
 
         if(!check.ok)throw Error(backend.error||'Could not reach estimator');
 
-        if(backend.estimator_revision!=='pressure_directions_v5')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
+        if(backend.estimator_revision!=='thumb_first_v6')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
 
         const response=await fetch(base+'/api/identification',{method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(15000),body:JSON.stringify({mode:'current',frame:frozen,threshold,tolerance_mm:tolerance,hand_tolerance_mm:handTolerance,point_spacing_mm:pointSpacing,quick_preview:$('estimateQuality').value==='quick',input_label:label})});
 

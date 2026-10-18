@@ -103,7 +103,23 @@ def _palm_starts(model, contacts, points, normals):
 
 def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, boundary_normals=None,
               palm_xyz=None, palm_normals=None, contact_pressures=None, progress=None):
-    """All candidates receive the same starts, iterations and refinement budget.
+    """Try a short quick pass, retaining the full search as fallback."""
+    kwargs = dict(boundary_xyz=boundary_xyz, boundary_normals=boundary_normals,
+                  palm_xyz=palm_xyz, palm_normals=palm_normals,
+                  contact_pressures=contact_pressures, progress=progress)
+    if config.quick_preview:
+        attempt = _fit_model(model, contacts, exclusions, radii, config, fast_attempt=True, **kwargs)
+        if attempt['compatible']:
+            attempt['search_pass'] = 'short_first_pass'
+            return attempt
+    result = _fit_model(model, contacts, exclusions, radii, config, **kwargs)
+    result['search_pass'] = 'full_fallback' if config.quick_preview else 'detailed'
+    return result
+
+
+def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, boundary_normals=None,
+               palm_xyz=None, palm_normals=None, contact_pressures=None, progress=None, fast_attempt=False):
+    """Both candidates receive the same budget within each search pass.
 
     Transform convention: p_observation_mm = R @ p_stl_mm + t_mm.
     Local optimization does not certify global infeasibility.
@@ -123,6 +139,8 @@ def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, 
     full_contacts = contacts
     full_boundary_xyz, full_boundary_normals = boundary_xyz, boundary_normals
     iterations = min(config.icp_iterations, 8) if config.quick_preview else config.icp_iterations
+    if fast_attempt:
+        iterations = min(iterations, 3)
     if config.quick_preview:
         contacts = contacts[_spread_indices(contacts, 256)]
         if boundary_xyz is not None and len(boundary_xyz):
@@ -154,18 +172,22 @@ def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, 
             if np.linalg.det(r) > 0:
                 rotations.append(r)
     rotations.extend(Rotation.random(config.random_starts, random_state=rng).as_matrix())
+    if fast_attempt:
+        rotations = [rotations[i] for i in np.linspace(0, len(rotations)-1, 8, dtype=int)]
     starts = []
     for r in rotations:
         # Partial grasps can be far from the object's center. Vary the axial
         # location and include off-axis anchors; do not assume centered contact.
-        for fraction in (-.35, 0., .35):
+        for fraction in ((0.,) if fast_attempt else (-.35, 0., .35)):
             anchor = model.samples.mean(axis=0) + fraction * np.ptp(model.samples @ ma[:, 0]) * ma[:, 0]
             starts.append((r.copy(), center - r@anchor))
-    for _ in range(config.random_starts):
+    for _ in range(0 if fast_attempt else config.random_starts):
         r = Rotation.random(random_state=rng).as_matrix()
         starts.append((r, center-r@model.samples[rng.integers(len(model.samples))]))
 
     preferred, palm_normal = _palm_starts(model, contacts, palm_xyz, palm_normals)
+    if fast_attempt and preferred:
+        preferred = [preferred[i] for i in np.linspace(0, len(preferred)-1, min(8, len(preferred)), dtype=int)]
 
     def search_residual(r, t, surface=False):
         d = model.nearest_sampled((contacts-t)@r)[1] if surface else model.tree.query((contacts-t)@r)[0]
@@ -238,16 +260,17 @@ def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, 
     # Retain different orientations instead of spending all refinements on
     # starts that converged to the same roll and translation.
     selected = []
+    refine_count = min(config.refine_starts, 2) if fast_attempt else config.refine_starts
     for item in coarse:
         if all(Rotation.from_matrix(item[1]@other[1].T).magnitude() > np.pi/8
                or np.linalg.norm(item[2]-other[2]) > 5. for other in selected):
             selected.append(item)
-        if len(selected) == config.refine_starts:
+        if len(selected) == refine_count:
             break
-    if len(selected) < config.refine_starts:
+    if len(selected) < refine_count:
         selected.extend(item for item in coarse if not any(item is old for old in selected)
                         )
-        selected = selected[:config.refine_starts]
+        selected = selected[:refine_count]
     refinement_total = len(selected)
     for refinement_index, (_, r, t, initialization) in enumerate(selected):
         if progress:
@@ -294,6 +317,11 @@ def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, 
                          validation_method='sampled_contacts_exact_hand' if config.quick_preview else 'exact_full_mesh',
                          quick_preview=config.quick_preview,
                          evaluations=int(opt.nfev)))
+        # Quick placement needs one feasible pose, after all existing final checks.
+        if (config.quick_preview and fits[-1]['max_error_mm'] <= config.tolerance_mm
+                and fits[-1]['exclusion_max_mm'] <= config.tolerance_mm
+                and fits[-1]['hand_limit_max_mm'] <= config.hand_tolerance_mm):
+            break
     for fit in fits:
         fit['compatible'] = (fit['max_error_mm'] <= config.tolerance_mm
                              and fit['exclusion_max_mm'] <= config.tolerance_mm

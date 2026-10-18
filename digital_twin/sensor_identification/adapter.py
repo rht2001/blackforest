@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from .classifier import IdentificationConfig, identify_sensor
+from .thumb_prior import thumb_closure_hint
 
 
 def normalize_frame(frame):
@@ -32,7 +33,8 @@ def identify_frame(frame, models, *, tolerance_mm=3., hand_tolerance_mm=3., poin
         coordinate_units=frame['units'], tolerance_mm=tolerance_mm, hand_tolerance_mm=hand_tolerance_mm, point_spacing_mm=point_spacing_mm,
         pressure_threshold=pressure_threshold, quick_preview=quick_preview,
         calibrated=calibrated and frame.get('geometry_status') == 'CALIBRATED'),
-        boundary_points=frame.get('boundary_points', []), progress=progress)
+        boundary_points=frame.get('boundary_points', []), progress=progress,
+        thumb_hint=thumb_closure_hint(frame, pressure_threshold))
 
 
 def read_points(path):

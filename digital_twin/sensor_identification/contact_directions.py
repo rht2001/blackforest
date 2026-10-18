@@ -36,11 +36,11 @@ def pressure_directions(points, pressures, threshold):
         delta = points[neighbors]-center
         values, vectors = np.linalg.eigh((delta*w[:, None]).T@delta/w.sum())
         # At least 1 mm of independent width; reject curved/volumetric groups.
-        if values[1] < 1. or values[0] > .12*values[1]:
+        if values[1] < 1. or values[0] > .03*values[1]:
             continue
         centers.append(center)
         normals.append(vectors[:, 0])
-        strengths.append(min(3., np.sqrt(values[1]))*(1.-values[0]/(.12*values[1])))
+        strengths.append(min(3., np.sqrt(values[1]))*(1.-values[0]/(.03*values[1])))
     return (np.asarray(centers).reshape(-1, 3), np.asarray(normals).reshape(-1, 3),
             np.asarray(strengths))
 
