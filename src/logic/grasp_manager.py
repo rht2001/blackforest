@@ -126,6 +126,7 @@ class GraspManager:
             robot: Optional robot controller interface. If provided, commands
                 the robot hand to fully open.
         """
+        self.thumb_prober.reset(robot)
         if robot is not None:
             robot.open_hand()
         self.state = "open"
@@ -139,7 +140,6 @@ class GraspManager:
         self.contact_triggered = False
         self.slip_detector.reset()
         self.was_slipping = False
-        self.thumb_prober.reset(robot)
         self.probing_results.clear()
         self.probe_state = "none"
         self.probe_summary = {}
@@ -243,7 +243,17 @@ class GraspManager:
         # State: OPEN
         if self.state in ("open", "initialised", "starting"):
             self.state = "open"
-            if self.check_contact_trigger(tactile_matrix):
+            if (now - self.reset_end_time) >= self.reset_cooldown and is_empty_grasp(
+                finger_angles, pad_pressures
+            ):
+                print(
+                    f"[GraspManager] State: OPEN -> RESETTING | recovering closed empty hand | angles={finger_angles.tolist()}"
+                )
+                self.state = "resetting"
+                self.reset_start_time = now
+                state_changed = True
+                robot.open_hand()
+            elif self.check_contact_trigger(tactile_matrix):
                 print("[GraspManager] State: OPEN -> CLOSING | contact triggered")
                 self.state = "closing"
                 self.closing_start_time = now
