@@ -56,6 +56,7 @@ class ServiceTests(unittest.TestCase):
         self.assertIn(b'Estimate', self.request('/sensor_identification/simulation.js')[1])
         self.assertEqual(self.request('/sensor_identification/measurements.js')[0], 200)
         self.assertEqual(self.request('/sensor_identification/history.js')[0], 200)
+        self.assertEqual(self.request('/sensor_identification/runs.js')[0], 200)
         self.assertEqual(self.request('/api/identification', {'mode': 'bogus'})[0], 400)
         self.assertEqual(self.request('/api/identification', {'mode': 'SENSOR_B', 'tolerance_mm': -1})[0], 400)
         self.assertEqual(self.request('/api/identification', {'mode': 'current'})[0], 400)
@@ -92,6 +93,26 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(state['result'], result)
             self.assertIn(b'fitted shapes', self.request('/identification/report')[1])
             self.assertIn(b'fitted shapes', self.request('/identification/report?job='+state['job_id'])[1])
+
+    def test_accumulated_run_reaches_estimator_and_retains_provenance(self):
+        self.service._models = {}
+        frame = dict(valid=True, units='m', frame='left_base_link',
+                     measurement_source='csv_run', saved_name='run_002',
+                     geometry_status='APPROXIMATE_UNCALIBRATED',
+                     accumulation={'frames_total': 1883, 'unique_points': 95},
+                     points=[dict(id='run:voxel:1', x=.01, y=.02, z=.03, pressure=500)])
+        result = dict(classification='AMBIGUOUS', reason='insufficient_contacts', fits={})
+        def viewer(path, *args, **kwargs):
+            Path(path).write_text('<html>run cloud</html>', encoding='utf-8')
+        with patch('sensor_identification.web_service.identify_frame', return_value=result) as identify, \
+                patch('sensor_identification.web_service.write_viewer', side_effect=viewer):
+            self.assertEqual(self.request('/api/identification', {'mode': 'current', 'frame': frame})[0], 202)
+            state = self.wait_for_job()
+            self.assertEqual(state['status'], 'complete')
+            self.assertEqual(identify.call_args.args[0]['points'], frame['points'])
+            self.assertFalse(identify.call_args.kwargs['calibrated'])
+            self.assertEqual(state['result']['accumulation'], frame['accumulation'])
+            self.assertEqual(state['result']['captured_points'], 1)
 
     def test_current_frame_cannot_bypass_calibration_and_errors_are_visible(self):
         result = {'classification': 'AMBIGUOUS', 'reason': 'calibration_unverified', 'fits': {}}

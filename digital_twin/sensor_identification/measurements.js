@@ -28,6 +28,7 @@
       timestamp_basis:cloud?.timestamp_basis || 'bridge_reception_not_hardware_capture',
       geometry_sha256:cloud?.geometry_sha256 ?? null,
       reference_sha256:cloud?.reference_sha256 ?? null,
+      boundary_points:valid?(viewer.getHandBoundaryPoints?.()||[]).map(p=>({...p,normal:p.normal?.slice()})):[],
       points
     };
   }

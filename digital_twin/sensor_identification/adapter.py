@@ -30,7 +30,8 @@ def identify_frame(frame, models, *, tolerance_mm=3., calibrated=False, pressure
     return identify_sensor(frame.get('points'), models, IdentificationConfig(
         coordinate_units=frame['units'], tolerance_mm=tolerance_mm,
         pressure_threshold=pressure_threshold,
-        calibrated=calibrated and frame.get('geometry_status') == 'CALIBRATED'))
+        calibrated=calibrated and frame.get('geometry_status') == 'CALIBRATED'),
+        boundary_points=frame.get('boundary_points', []))
 
 
 def read_points(path):

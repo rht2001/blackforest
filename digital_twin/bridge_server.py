@@ -118,7 +118,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):self.send_data(b'',204)
     def do_GET(self):
         url = urlsplit(self.path)
-        if self.path in ('/sensor_identification/simulation.js', '/sensor_identification/measurements.js', '/sensor_identification/history.js'):
+        if self.path in ('/sensor_identification/simulation.js', '/sensor_identification/measurements.js', '/sensor_identification/history.js', '/sensor_identification/boundaries.js', '/sensor_identification/runs.js'):
             self.send_data(Path(__file__).with_name('sensor_identification').joinpath(self.path.rsplit('/', 1)[1]).read_bytes(),
                            ctype='text/javascript; charset=utf-8')
             return
@@ -165,8 +165,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == '/api/identification':
             try:
                 length = int(self.headers.get('Content-Length', '0'))
-                if not 1 <= length <= 524288:
-                    raise ValueError('Identification JSON must be 1..524288 bytes')
+                if not 1 <= length <= 8 * 1024 * 1024:
+                    raise ValueError('Identification JSON must be 1 byte..8 MiB')
                 origin = self.headers.get('Origin')
                 if origin is not None and origin not in (f'http://127.0.0.1:{self.server.server_port}',
                                                           f'http://localhost:{self.server.server_port}'):
@@ -216,7 +216,7 @@ class Handler(BaseHTTPRequestHandler):
         global TAXELS, TAXELS_RECEIVED_AT
         try:
             length = int(self.headers.get('Content-Length', '0'))
-            if not 1 <= length <= 524288:
+            if not 1 <= length <= 8 * 1024 * 1024:
                 raise ValueError('Taxel JSON must contain 1 to 524288 bytes')
             points = json.loads(self.rfile.read(length))
             if not isinstance(points, list) or len(points) != len(TAXEL_IDS):

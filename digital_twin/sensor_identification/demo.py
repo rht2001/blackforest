@@ -35,7 +35,7 @@ def synthetic_points(model, *, count=64, seed=9, noise_mm=.2, region='full'):
     return points
 
 
-def write_viewer(path, points, models, result, *, threshold=200., coordinate_units='mm'):
+def write_viewer(path, points, models, result, *, threshold=200., coordinate_units='mm', boundary_points=()):
     """Self-contained Plotly HTML; triangle surfaces are not decimated for fitting."""
     import plotly.graph_objects as go
     from .classifier import valid_measurements
@@ -56,6 +56,9 @@ def write_viewer(path, points, models, result, *, threshold=200., coordinate_uni
     xyz = np.array(unknown, dtype=float).reshape(-1, 3)
     fig.add_trace(go.Scatter3d(x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2], mode='markers',
                              marker=dict(size=2, color='#8496a6'), name='Pressure unknown'))
+    xyz = np.array([[p[k]*scale for k in ('x','y','z')] for p in boundary_points], dtype=float).reshape(-1,3)
+    fig.add_trace(go.Scatter3d(x=xyz[:,0], y=xyz[:,1], z=xyz[:,2], mode='markers',
+                             marker=dict(size=3,color='#b88aff',symbol='diamond'), name='Hand boundary limits'))
     for name, color in [('SENSOR_A', '#18b79c'), ('SENSOR_B', '#d7a936')]:
         fit = result['fits'].get(name)
         if fit is None:
@@ -80,6 +83,7 @@ def write_viewer(path, points, models, result, *, threshold=200., coordinate_uni
                          '<style>body{font:14px system-ui;margin:16px}pre{overflow:auto;max-width:100%;'
                          'padding:12px;background:#f4f6f8}p{max-width:100%}</style>'
                          +body+'<p>Drag to rotate; click legend entries to hide each candidate. '
-                         'Non-contact dots impose no constraint unless separately certified. '
+                         'Purple hand points and known inactive taxels with normals limit inward penetration. '
+                         'Active pressure points guide surface alignment. Limits are approximate local surfaces. '
                          'Transforms map STL mm into the observation frame in mm.</p><details><summary>Fit details</summary><pre>'+details+'</pre></details>',
                          encoding='utf-8')

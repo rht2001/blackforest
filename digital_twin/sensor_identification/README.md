@@ -23,8 +23,28 @@ CSV supports semicolon/comma delimiters, quoted multiline fields, JSON arrays
 and complete NumPy array strings. It needs `angles` (six actual readings) and,
 for pressure evidence, `tactile_matrix` with exactly 112 rows and 17 columns.
 The supplied `index;angles;forces;position;tactile_matrix;...` format is supported.
-Use the row selector or Previous/Next to inspect CSV frames individually. Only
-the selected row is reconstructed. Files remain local; the limit is 50 MB.
+Choose **Whole probing run**, select a run, and press **Build run point cloud**.
+Each row's actual six angles drive forward kinematics for that row's taxels;
+contacts are collected across `thumb_probing` and `probing_complete` samples.
+The default is thumb-only contact above the Estimation settings threshold (200).
+Rows reporting slip are skipped. No means or actuator forces substitute for taxels.
+Choose All hand regions to include other fingers and palm as supporting contacts.
+The displayed cloud is the exact frozen cloud that **Estimate** receives.
+**Save run point cloud JSON** exports the estimator frame for later reuse.
+
+Repeated observations in each 1 mm spatial voxel contribute one observed point
+(the maximum-pressure contact), avoiding extra fit weight from a long hold.
+Point spacing is adjustable from 0.1 to 10 mm. Counts before and after reduction
+are retained. Fewer than eight distinct contacts or insufficient spatial coverage
+still produce an ambiguous estimate; accumulation does not invent evidence.
+
+Run IDs, idle states, and discontinuities in source indices keep grasps separate.
+The flat `thumb_frames.csv` is supported with six `angle_*_raw` columns and the
+210 thumb taxel columns `thumb_tip_000` through `thumb_pad_095` for their respective
+regions. Original 112 × 17 matrices retain all hand regions. Combined run files
+show a run selector. Use **Single row** for Previous/Next pose inspection.
+Files remain local; the limit is 256 MB. Larger recordings should be split into
+individual run files. A cloud may contain up to 20,000 spatial contacts.
 Truncated arrays (`...`) are rejected. Means cannot replace per-cell pressure.
 Missing/invalid pressure stays unknown. CSV row time is not invented, and CSV
 counts are shown as recorded; pressure offsets and failed-read validity are not
@@ -36,8 +56,8 @@ and connection options remain accessible. The old source controls are grouped
 under **Advanced display & connection** rather than mixed with the main modes.
 
 Estimate captures all available cell positions. Recognition uses only valid
-pressure strictly above its threshold; ordinary non-contact cells are not
-hard exclusion boundaries. Gray points are positions with unknown pressure.
+pressure strictly above its threshold; known inactive cells with reconstructed outward normals provide local penetration limits.
+They do not demand a positive clearance or prove empty space. Gray points are positions with unknown pressure.
 For native JSON containing active points only, other positions are reconstructed
 from the recorded pose only when its matching hand geometry is available;
 their pressures remain unknown. Clouds without a reproducible hand pose retain
@@ -54,6 +74,26 @@ not a confident sensor label through this UI. Shared shaft regions may remain
 indistinguishable even after calibration. A's STEP confirms millimetres; B's
 physical scale, taxel locations, joint mapping and timing still need validation.
 
+Accumulated coordinates assume the object stays stationary relative to the hand
+base. CSV does not establish this assumption or provide object tracking. Separate
+grasps need object-frame registration before their clouds can be merged.
+Run accumulation supplies active contacts only; it does not apply the current
+preview pose's hand limits to historical samples from other poses. Single-row,
+manual and live snapshots retain their existing hand-boundary behavior.
+
+The offline command uses the same reconstruction as the UI:
+
+```powershell
+node digital_twin/sensor_identification/build_run_cloud.cjs run_002_47589.csv --output thumb_cloud.json
+node digital_twin/sensor_identification/build_run_cloud.cjs thumb_frames.csv --list
+node digital_twin/sensor_identification/build_run_cloud.cjs thumb_frames.csv --run run_002 --calibration saved_contact_reference.json --output thumb_cloud.json
+```
+
+It writes an estimator frame (`units: m`, `frame: left_base_link`) and a companion
+XYZ/pressure CSV. Without `--calibration`, it explicitly uses the current uncalibrated
+profile defaults. A native contact JSON can supply `kinematics_calibration`; geometry
+fingerprints must match. Historical timing and read validity remain unverified.
+
 The report is embedded as the page's estimate view; it does not open another tab.
 Its header records which source was frozen. Changing modes while fitting does
 not alter that snapshot. The independent CLI and CAD benchmark tests remain.
@@ -62,6 +102,27 @@ not alter that snapshot. The independent CLI and CAD benchmark tests remain.
 uv sync --extra sensor-identification
 uv run --extra sensor-identification python digital_twin/start_sensor_simulation.py
 node tests/test_identification_history.js
+node tests/test_identification_runs.js
 node tests/test_identification_measurements.js
 uv run --extra sensor-identification python -m unittest discover -s tests -p test_identification_service.py -v
 ```
+
+
+Purple hand boundary points fill palmar gaps between sensing points. The 379
+mesh samples have at least 5 mm separation in the open sampling pose and a
+3 mm halo around taxels. Positions/normals live in each source link frame and
+follow the same FK and saved calibration as the hand. Articulation changes
+world spacing. Show hand boundary points toggles their display only.
+
+Frozen estimate frames include `boundary_points` separately from pressure
+measurements, in the same base-link metre frame. Known inactive taxels with
+normals and these samples penalize inward nearest CAD surfaces in coarse
+ranking and exact triangle refinement. A 4 mm local tangent weighting avoids
+extending a finger plane across the grasp; the selected tolerance permits
+small penetration. Scores report hand-limit RMS and maximum residuals; a
+maximum above tolerance makes a fit incompatible. This is an approximate
+oriented surface constraint, not watertight solid collision detection: the
+supplied CAD assemblies are open meshes and sparse points can miss crossings.
+Unknown taxel pressures impose no additional limit. Saved clouds without a
+reproducible hand pose receive no invented hand limits. Boundary points never
+become pressure evidence and cannot identify an object without active contacts.

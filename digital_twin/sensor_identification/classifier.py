@@ -5,6 +5,7 @@ from collections.abc import Mapping
 import numpy as np
 
 from .matching import fit_model
+from .limits import valid_boundaries
 
 
 @dataclass(frozen=True)
@@ -64,16 +65,22 @@ def valid_measurements(points):
     return clean, invalid
 
 
-def identify_sensor(points, models, config=None):
+def identify_sensor(points, models, config=None, *, boundary_points=()):
     config = config or IdentificationConfig()
     if set(models) != {'SENSOR_A', 'SENSOR_B'}:
         raise ValueError('Exactly SENSOR_A and SENSOR_B models are required')
+    boundaries = valid_boundaries(boundary_points)
     clean, invalid = valid_measurements(points)
     active = [p for p in clean if p['pressure'] > config.pressure_threshold]
     result = dict(classification='AMBIGUOUS', reason='insufficient_contacts', fits={},
                   valid_points=len(clean), invalid_points=invalid, contacts=len(active),
                   units='mm', calibrated=config.calibrated,
                   search='finite multistart local optimization; not a global infeasibility certificate')
+    inactive = [p for p in clean if p['pressure'] <= config.pressure_threshold and p.get('normal') is not None]
+    inactive = valid_boundaries(inactive)
+    limits = boundaries + inactive
+    result.update(hand_boundary_points=len(boundaries), inactive_taxel_limits=len(inactive),
+                  limit_method='approximate local oriented surface; no solid collision certificate')
     if len(active) < config.min_contacts:
         return result
     scale = 1000. if config.coordinate_units == 'm' else 1.
@@ -92,7 +99,11 @@ def identify_sensor(points, models, config=None):
     exclusions = np.array([[p[k] for k in ('x', 'y', 'z')] for p in negative], dtype=float).reshape(-1, 3)*scale
     radii = np.array([p['surface_clearance_mm'] for p in negative])
     result['certified_exclusions'] = len(negative)
-    result['fits'] = {name: fit_model(model, xyz, exclusions, radii, config)
+    kwargs = {}
+    if limits:
+        kwargs = dict(boundary_xyz=np.array([[p[k] for k in ('x','y','z')] for p in limits])*scale,
+                      boundary_normals=np.array([p['normal'] for p in limits]))
+    result['fits'] = {name: fit_model(model, xyz, exclusions, radii, config, **kwargs)
                       for name, model in sorted(models.items())}
     fits = result['fits']
     compatible = [name for name, fit in fits.items() if fit['compatible']]

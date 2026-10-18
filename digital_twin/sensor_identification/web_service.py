@@ -56,6 +56,7 @@ class IdentificationService:
                 self._models = load_candidates()
             mode = request['mode']
             units = 'mm'
+            boundary_points = []
             if mode == 'current':
                 frame = normalize_frame(request['frame'])
                 # This UI has no verified physical calibration. Never accept a
@@ -66,8 +67,12 @@ class IdentificationService:
                                         calibrated=False)
                 points = frame.get('points', []) if frame.get('valid') is True else []
                 units = frame.get('units', 'mm')
+                boundary_points = frame.get('boundary_points', []) if frame.get('valid') is True else []
                 result['measurement_source'] = frame.get('measurement_source', 'snapshot')
                 result['captured_points'] = len(points)
+                if frame.get('measurement_source') == 'csv_run':
+                    result['accumulation'] = frame.get('accumulation', {})
+                    result['saved_name'] = frame.get('saved_name')
             else:
                 model = self._models['SENSOR_A' if mode == 'shared' else mode]
                 points = synthetic_points(model, region='shared' if mode == 'shared' else 'full')
@@ -77,7 +82,7 @@ class IdentificationService:
             self.output.mkdir(parents=True, exist_ok=True)
             viewer = self.output / 'viewer.html'
             write_viewer(viewer, points, self._models, result,
-                         threshold=config.pressure_threshold, coordinate_units=units)
+                         threshold=config.pressure_threshold, coordinate_units=units, boundary_points=boundary_points)
             (self.output / 'result.json').write_text(json.dumps(result, indent=2, allow_nan=False), encoding='utf-8')
             report = viewer.read_bytes()
             with self._lock:

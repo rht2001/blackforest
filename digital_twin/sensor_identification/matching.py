@@ -4,6 +4,7 @@ import itertools
 import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
+from .limits import penetration_residual
 
 
 def _axes(points):
@@ -21,12 +22,22 @@ def _rigid(source, target):
     return r, b-r@a
 
 
-def fit_model(model, contacts, exclusions, radii, config):
+def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, boundary_normals=None):
     """All candidates receive the same starts, iterations and refinement budget.
 
     Transform convention: p_observation_mm = R @ p_stl_mm + t_mm.
     Local optimization does not certify global infeasibility.
     """
+    has_limits = boundary_xyz is not None and len(boundary_xyz) > 0
+    def limits(r, t, exact=False):
+        if not has_limits:
+            return np.array([])
+        local = (boundary_xyz-t)@r
+        if exact:
+            closest = model.nearest(local)[0]
+        else:
+            closest = model.samples[model.tree.query(local)[1]]
+        return penetration_residual(closest@r.T+t, boundary_xyz, boundary_normals, config.tolerance_mm)
     center = contacts.mean(axis=0)
     ca = _axes(contacts)
     ma = _axes(model.samples)
@@ -64,6 +75,9 @@ def fit_model(model, contacts, exclusions, radii, config):
         if len(exclusions):
             ed, _ = model.tree.query((exclusions-t)@r)
             penalty = np.mean(np.maximum(0., radii-ed)**2)
+        boundary_error = limits(r,t)
+        if len(boundary_error):
+            penalty += np.mean(boundary_error**2)
         coarse.append((float(np.mean(d*d)+penalty), r, t))
     coarse.sort(key=lambda item: item[0])
 
@@ -75,6 +89,9 @@ def fit_model(model, contacts, exclusions, radii, config):
             _, ed = model.nearest((exclusions-t)@r)
             # Balance evidence types independently of their point counts.
             d = np.r_[d, np.maximum(0., radii-ed)*np.sqrt(len(contacts)/len(exclusions))]
+        boundary_error = limits(r,t,exact=True)
+        if len(boundary_error):
+            d = np.r_[d, boundary_error*np.sqrt(len(contacts)/len(boundary_error))]
         return d / config.tolerance_mm
 
     fits = []
@@ -89,12 +106,16 @@ def fit_model(model, contacts, exclusions, radii, config):
         contradiction = np.maximum(0., radii-ed)
         rmse = float(np.sqrt(np.mean(d*d)))
         penalty = float(np.sqrt(np.mean(contradiction**2))) if len(ed) else 0.
-        score = float(np.hypot(rmse, penalty)/config.tolerance_mm)
+        boundary_error = limits(r,t,exact=True)
+        boundary_rmse = float(np.sqrt(np.mean(boundary_error**2))) if len(boundary_error) else 0.
+        boundary_max = float(boundary_error.max()) if len(boundary_error) else 0.
+        score = float(np.sqrt(rmse**2+penalty**2+boundary_rmse**2)/config.tolerance_mm)
         transform = np.eye(4)
         transform[:3, :3], transform[:3, 3] = r, t
         fits.append(dict(score=score, rmse_mm=rmse, max_error_mm=float(d.max()),
                          inlier_fraction=float(np.mean(d <= config.tolerance_mm)),
                          exclusion_rmse_mm=penalty,
+                         hand_limit_rmse_mm=boundary_rmse, hand_limit_max_mm=boundary_max,
                          transform=transform.tolist(), optimizer_success=bool(opt.success),
                          evaluations=int(opt.nfev)))
     best = min(fits, key=lambda f: f['score'])
@@ -104,5 +125,6 @@ def fit_model(model, contacts, exclusions, radii, config):
     best['compatible'] = (best['rmse_mm'] <= config.tolerance_mm
                           and best['max_error_mm'] <= 3*config.tolerance_mm
                           and best['inlier_fraction'] >= config.min_inlier_fraction
-                          and best['exclusion_rmse_mm'] <= config.tolerance_mm)
+                          and best['exclusion_rmse_mm'] <= config.tolerance_mm
+                          and best['hand_limit_max_mm'] <= config.tolerance_mm)
     return best
