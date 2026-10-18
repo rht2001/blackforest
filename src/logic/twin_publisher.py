@@ -38,9 +38,19 @@ def robot_snapshot(robot, results):
             values = values.tolist()
         if not isinstance(values, (list, tuple)) or len(values) != height * width:
             continue
+        # Match HandApp.draw: calibrated pressure = max(0, raw - offset).
+        # Validate before subtraction so corrupt raw readings cannot look valid.
+        if not all(number(value, 0, 4095) for value in values):
+            continue
+        offsets = getattr(robot, "sensor_offsets", {}).get(name, [0] * len(values))
+        if hasattr(offsets, "tolist"):
+            offsets = offsets.tolist()
+        if (not isinstance(offsets, (list, tuple)) or len(offsets) != len(values)
+                or not all(number(value, 0, 4095) for value in offsets)):
+            continue
         valid[column] = True
-        for row, value in enumerate(values):
-            tactile[row][column] = value
+        for row, (value, offset) in enumerate(zip(values, offsets)):
+            tactile[row][column] = max(0, value - offset)
     angles = results.get("angles")
     forces = results.get("forces")
     if hasattr(angles, "tolist"):

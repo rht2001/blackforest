@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "digital_twin"))
 from logic.twin_publisher import REGIONS, TwinPublisher, robot_snapshot, twin_payload
-import bridge_server as bridge
+import digital_twin.bridge_server as bridge
 import main as app_main
 
 
@@ -79,7 +79,7 @@ class TwinTests(unittest.TestCase):
             for route in ("/", "/tactile"):
                 with opener.open(base_url + route, timeout=2) as response:
                     self.assertEqual(response.status, 200)
-                    self.assertIn(b"Simulation aus Python", response.read())
+                    self.assertTrue(b'pressureColor' in response.read(), 'Viewer must expose GUI pressure colors')
         finally:
             publisher.close()
             server.shutdown()
@@ -102,28 +102,48 @@ class TwinTests(unittest.TestCase):
 
     def run_app(self, arguments):
         robot, results = self.snapshot()
-        robot.main = Mock(return_value=results)
+        robot.poll = Mock(return_value=results)
         with patch.object(sys, "argv", ["blackforest", *arguments]), \
                 patch.object(app_main, "RobotHandController", return_value=robot), \
                 patch.object(app_main, "HandApp") as app, \
                 patch.object(app_main, "RobotDatabase") as database, \
+                patch.object(app_main, "GraspManager") as manager, \
                 patch.object(app_main, "TwinPublisher") as publisher, \
                 patch.object(app_main.time, "sleep"):
-            app.return_value.main.side_effect = [None, app_main.tk.TclError()]
+            robot.poll.side_effect = [results, app_main.tk.TclError()]
+            manager.return_value.step.return_value = results
             app_main.main()
             database.return_value.main.assert_called_once_with(data=results)
-            robot.main.assert_called_once()
+            self.assertEqual(robot.poll.call_count, 2)
             robot.safe_read.assert_not_called()
             return publisher
 
-    def test_main_without_twin_keeps_database_and_no_publisher(self):
-        self.run_app([]).assert_not_called()
+    def test_main_publishes_telemetry_by_default(self):
+        self.run_app([]).assert_called_once()
 
-    def test_main_with_twin_publishes_once_and_closes(self):
+    def test_main_publishes_once(self):
         publisher = self.run_app(["--twin"])
         publisher.assert_called_once_with("http://127.0.0.1:18765/api/state")
         publisher.return_value.submit.assert_called_once()
-        publisher.return_value.close.assert_called_once()
+        publisher.return_value.submit.assert_called_once()
+
+    def test_pressure_matches_gui_offsets_and_clamping(self):
+        robot, results = self.snapshot()
+        robot.last_sensor_data['little_tip'] = np.array([100, 500, 1000, 1500, 2500, 3500, 4095, 2000, 0])
+        robot.sensor_offsets = {'little_tip': np.array([200, 100, 200, 500, 500, 300, 1000, 0, 0])}
+        payload = twin_payload(robot_snapshot(robot, results))
+        self.assertEqual(payload['tactile_regions']['little_tip'], [[0, 400, 800], [1000, 2000, 3200], [3095, 2000, 0]])
+        self.assertEqual(bridge.normalize(payload)['tactile_regions'], payload['tactile_regions'])
+        self.assertEqual(robot.last_sensor_data['little_tip'][0], 100)
+        self.assertEqual(robot.sensor_offsets['little_tip'][0], 200)
+        robot.safe_read.assert_not_called()
+        robot.send_command.assert_not_called()
+
+    def test_invalid_offset_does_not_invent_pressure(self):
+        robot, results = self.snapshot()
+        for invalid in ([0], [float('nan')]*9, [-1]*9):
+            robot.sensor_offsets = {'little_tip': invalid}
+            self.assertNotIn('little_tip', twin_payload(robot_snapshot(robot, results))['tactile_regions'])
 
 
 if __name__ == "__main__":

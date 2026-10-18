@@ -14,3 +14,7 @@ uv.lock
 *.csv
 
 .mypy_cache/
+
+# Local CAD matching results and dependency cache
+sensor_identification_demo/
+.uv-cache/

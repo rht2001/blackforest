@@ -1,0 +1,1609 @@
+{
+  "schema_version": "2.0",
+  "document_type": "joint_geometry_kinematics_reference_for_digital_twin",
+  "hardware_model": "Inspire Robots RH56DFTP (left hand)",
+  "purpose": "Compare, calibrate and selectively reuse geometry, joint transforms and coupling from two INDEPENDENT URDF PROFILES. Do not mix joint-frame values without aligning model coordinates.",
+  "status": "REFERENCE_ONLY_NO_HARDWARE_VALIDATION",
+  "sources": {
+    "dex_tactile_urdf": {
+      "url": "https://github.com/ChenyuanLiu92/dex-tactile/blob/main/inspire_visualizer/web/public/models/left/left.urdf",
+      "blob_sha": "c900aece9f17df9aacd97b8585eb82ea53383aed",
+      "model": "DEX TACTILE left RH56DFTP URDF",
+      "origin": "SolidWorks to URDF exporter; from repository model manifest"
+    },
+    "dex_tactile_mapping": {
+      "repository": "ChenyuanLiu92/dex-tactile",
+      "path": "inspire_visualizer/backend/src/inspire_visualizer_api/device/mapping.py",
+      "url": "https://github.com/ChenyuanLiu92/dex-tactile/blob/main/inspire_visualizer/backend/src/inspire_visualizer_api/device/mapping.py",
+      "source_blob_sha": "17633a222b7e11fe77a08c5525235c37bf0e657f"
+    },
+    "rh56_tactile_toolkit_urdf": {
+      "url": "https://github.com/AlexArutiunian/tactile-rh56dftp/blob/main/urdf/inspire_hand/FTP_left_hand.urdf",
+      "blob_sha": "ab1c4261eedbfaa721cbba67d8e7e3b233a0c6a2",
+      "model": "FTP left hand URDF with force sensor links"
+    },
+    "mujoco_left": {
+      "repository": "EuncheolIm/Inspire_hand_description",
+      "path": "Inspire_hand/xml/inspire_hand_left.xml",
+      "url": "https://github.com/EuncheolIm/Inspire_hand_description/blob/master/Inspire_hand/xml/inspire_hand_left.xml",
+      "source_blob_sha": "bbac660afaf1ebc1ba64ead98e971f9327f9846f"
+    }
+  },
+  "units": {
+    "positions": "metres",
+    "rotations": "radians",
+    "joint_axis": "unitless vector in joint frame",
+    "hardware_feedback": "raw [0,1000] ANGLE_ACT register values"
+  },
+  "kinematics_convention": {
+    "frame": "origin_xyz and origin_rpy are parent-to-child zero-pose URDF joint transforms, NOT global xyz",
+    "rpy_rotation_order": "Rz(yaw) @ Ry(pitch) @ Rx(roll)",
+    "joint_motion": "T_parent_child(q) = Translation(origin_xyz) @ RPY(origin_rpy) @ Rot(axis_xyz, q)",
+    "fixed_joint": "T_parent_child = origin transform; no rotation axis",
+    "mimic_joint": "q_dependent = multiplier * q_driver + offset_rad (unless explicit different source relation)",
+    "rendering": "Recursively transform each visual mesh using its own parent link frame. STL alone contains no joint definition.",
+    "comparison": "Compare same physical landmark locations after full FK + mesh frame registration, never per-axis raw origin XYZ across profiles."
+  },
+  "hardware": {
+    "channel_order": [
+      "little",
+      "ring",
+      "middle",
+      "index",
+      "thumb_bend",
+      "thumb_rotate"
+    ],
+    "angle_feedback_address": 1546,
+    "angle_setpoint_address": 1486,
+    "position_feedback_address": 1534,
+    "hardware_scale": [
+      0,
+      1000
+    ],
+    "read_only_first": true,
+    "note": "Do not identify ANGLE_SET as real joint feedback. Signals are actuator level and need kinematic expansion."
+  },
+  "primary_profiles": {
+    "dex_tactile_left": {
+      "description": "12 revolute joints: 6 actuator drivers + 6 coupled joints; maps raw ANGLE_ACT using source-provided endpoints.",
+      "source_ref": "dex_tactile_urdf",
+      "mapping_source_ref": "dex_tactile_mapping",
+      "root_link": "base_link",
+      "raw_to_joint_formula": "closed_angle + raw/1000*(open_angle-closed_angle)",
+      "control_mapping": {
+        "little": {
+          "index": 0,
+          "driver_joint": "left_little_1_joint",
+          "raw_at_open": 1000,
+          "angle_at_open_rad": 0.0,
+          "raw_at_closed": 0,
+          "angle_at_closed_rad": 1.6,
+          "mapping_status": "source_defined"
+        },
+        "ring": {
+          "index": 1,
+          "driver_joint": "left_ring_1_joint",
+          "raw_at_open": 1000,
+          "angle_at_open_rad": 0.0,
+          "raw_at_closed": 0,
+          "angle_at_closed_rad": 1.6,
+          "mapping_status": "source_defined"
+        },
+        "middle": {
+          "index": 2,
+          "driver_joint": "left_middle_1_joint",
+          "raw_at_open": 1000,
+          "angle_at_open_rad": 0.0,
+          "raw_at_closed": 0,
+          "angle_at_closed_rad": 1.6,
+          "mapping_status": "source_defined"
+        },
+        "index": {
+          "index": 3,
+          "driver_joint": "left_index_1_joint",
+          "raw_at_open": 1000,
+          "angle_at_open_rad": 0.0,
+          "raw_at_closed": 0,
+          "angle_at_closed_rad": 1.6,
+          "mapping_status": "source_defined"
+        },
+        "thumb_bend": {
+          "index": 4,
+          "driver_joint": "left_thumb_1_joint",
+          "raw_at_open": 1000,
+          "angle_at_open_rad": 0.0,
+          "raw_at_closed": 0,
+          "angle_at_closed_rad": -0.95,
+          "mapping_status": "source_defined"
+        },
+        "thumb_rotate": {
+          "index": 5,
+          "driver_joint": "left_thumb_swing_joint",
+          "raw_at_open": 1000,
+          "angle_at_open_rad": 0.0,
+          "raw_at_closed": 0,
+          "angle_at_closed_rad": 1.7,
+          "mapping_status": "source_defined"
+        }
+      },
+      "joints": [
+        {
+          "name": "left_thumb_swing_joint",
+          "type": "revolute",
+          "parent": "base_link",
+          "child": "left_thumb_swing",
+          "origin_xyz_m": [
+            -0.035227,
+            0.0908,
+            -0.040206
+          ],
+          "origin_rpy_rad": [
+            0,
+            0,
+            0
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 1.7
+        },
+        {
+          "name": "left_thumb_1_joint",
+          "type": "revolute",
+          "parent": "left_thumb_swing",
+          "child": "left_thumb_1",
+          "origin_xyz_m": [
+            -0.0096402,
+            -0.0097687,
+            0.00125
+          ],
+          "origin_rpy_rad": [
+            1.5708,
+            0,
+            0.037536
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            1
+          ],
+          "lower_rad": -0.95,
+          "upper_rad": 0
+        },
+        {
+          "name": "left_thumb_2_joint",
+          "type": "revolute",
+          "parent": "left_thumb_1",
+          "child": "left_thumb_2",
+          "origin_xyz_m": [
+            -0.0385855343215257,
+            0.0137354280979689,
+            -0.00085000000007604
+          ],
+          "origin_rpy_rad": [
+            0,
+            0,
+            0
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 3.14,
+          "mimic_parent": "left_thumb_1_joint",
+          "mimic_multiplier": 0.4,
+          "mimic_offset_rad": 0
+        },
+        {
+          "name": "left_thumb_3_joint",
+          "type": "revolute",
+          "parent": "left_thumb_2",
+          "child": "left_thumb_3",
+          "origin_xyz_m": [
+            -0.0204656980659991,
+            0.00837680232935447,
+            0.000199999999999881
+          ],
+          "origin_rpy_rad": [
+            0,
+            0,
+            0
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 3.14,
+          "mimic_parent": "left_thumb_1_joint",
+          "mimic_multiplier": 0.6,
+          "mimic_offset_rad": 0
+        },
+        {
+          "name": "left_index_1_joint",
+          "type": "revolute",
+          "parent": "base_link",
+          "child": "left_index_1",
+          "origin_xyz_m": [
+            -0.048156,
+            0.11125,
+            0.045404
+          ],
+          "origin_rpy_rad": [
+            1.6057,
+            0,
+            -1.5708
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 1.6
+        },
+        {
+          "name": "left_index_2_joint",
+          "type": "revolute",
+          "parent": "left_index_1",
+          "child": "left_index_2",
+          "origin_xyz_m": [
+            0.00259487212105013,
+            0.0326721877470773,
+            -0.000299999999999988
+          ],
+          "origin_rpy_rad": [
+            0,
+            0,
+            0
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 1.6,
+          "mimic_parent": "left_index_1_joint",
+          "mimic_multiplier": 1.05,
+          "mimic_offset_rad": 0
+        },
+        {
+          "name": "left_middle_1_joint",
+          "type": "revolute",
+          "parent": "base_link",
+          "child": "left_middle_1",
+          "origin_xyz_m": [
+            -0.026577,
+            0.11125,
+            0.046044
+          ],
+          "origin_rpy_rad": [
+            1.5708,
+            0,
+            -1.5708
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 1.6
+        },
+        {
+          "name": "left_middle_2_joint",
+          "type": "revolute",
+          "parent": "left_middle_1",
+          "child": "left_middle_2",
+          "origin_xyz_m": [
+            0.0028436,
+            0.032651,
+            -0.0003
+          ],
+          "origin_rpy_rad": [
+            0,
+            0,
+            0
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 1.6,
+          "mimic_parent": "left_middle_1_joint",
+          "mimic_multiplier": 1.05,
+          "mimic_offset_rad": 0
+        },
+        {
+          "name": "left_ring_1_joint",
+          "type": "revolute",
+          "parent": "base_link",
+          "child": "left_ring_1",
+          "origin_xyz_m": [
+            -0.004945,
+            0.11125,
+            0.045939
+          ],
+          "origin_rpy_rad": [
+            1.5184,
+            0,
+            -1.5708
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 1.6
+        },
+        {
+          "name": "left_ring_2_joint",
+          "type": "revolute",
+          "parent": "left_ring_1",
+          "child": "left_ring_2",
+          "origin_xyz_m": [
+            0.0031431,
+            0.032624,
+            -0.0003
+          ],
+          "origin_rpy_rad": [
+            0,
+            0,
+            0
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 1.6,
+          "mimic_parent": "left_ring_1_joint",
+          "mimic_multiplier": 1.05,
+          "mimic_offset_rad": 0
+        },
+        {
+          "name": "left_little_1_joint",
+          "type": "revolute",
+          "parent": "base_link",
+          "child": "left_little_1",
+          "origin_xyz_m": [
+            0.016446,
+            0.11125,
+            0.042817
+          ],
+          "origin_rpy_rad": [
+            1.4661,
+            0,
+            -1.5708
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 1.6
+        },
+        {
+          "name": "left_little_2_joint",
+          "type": "revolute",
+          "parent": "left_little_1",
+          "child": "left_little_2",
+          "origin_xyz_m": [
+            0.0023072,
+            0.032694,
+            -0.0003
+          ],
+          "origin_rpy_rad": [
+            0,
+            0,
+            0
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 1.6,
+          "mimic_parent": "left_little_1_joint",
+          "mimic_multiplier": 1.05,
+          "mimic_offset_rad": 0
+        }
+      ],
+      "visual_meshes": {
+        "base_link": {
+          "visual_mesh": "package://urdf_left/meshes/base_link.STL"
+        },
+        "left_thumb_swing": {
+          "visual_mesh": "package://urdf_left/meshes/left_thumb_swing.STL"
+        },
+        "left_thumb_1": {
+          "visual_mesh": "package://urdf_left/meshes/left_thumb_1.STL"
+        },
+        "left_thumb_2": {
+          "visual_mesh": "package://urdf_left/meshes/left_thumb_2.STL"
+        },
+        "left_thumb_3": {
+          "visual_mesh": "package://urdf_left/meshes/left_thumb_3.STL"
+        },
+        "left_index_1": {
+          "visual_mesh": "package://urdf_left/meshes/left_index_1.STL"
+        },
+        "left_index_2": {
+          "visual_mesh": "package://urdf_left/meshes/left_index_2.STL"
+        },
+        "left_middle_1": {
+          "visual_mesh": "package://urdf_left/meshes/left_middle_1.STL"
+        },
+        "left_middle_2": {
+          "visual_mesh": "package://urdf_left/meshes/left_middle_2.STL"
+        },
+        "left_ring_1": {
+          "visual_mesh": "package://urdf_left/meshes/left_ring_1.STL"
+        },
+        "left_ring_2": {
+          "visual_mesh": "package://urdf_left/meshes/left_ring_2.STL"
+        },
+        "left_little_1": {
+          "visual_mesh": "package://urdf_left/meshes/left_little_1.STL"
+        },
+        "left_little_2": {
+          "visual_mesh": "package://urdf_left/meshes/left_little_2.STL"
+        }
+      },
+      "known_issues": [
+        "left_thumb_1_joint source limits [-0.95,0], but dependent left_thumb_2_joint and left_thumb_3_joint source limits [0,3.14] while mimic multipliers [0.4,0.6] yield negative angles; check actual viewer interpretation and physical movement before imposing limits.",
+        "The official-looking SolidWorks origin/axis settings are kinematic source data, not experimental calibration."
+      ]
+    },
+    "rh56_tactile_toolkit_left": {
+      "description": "30 joints (12 revolute, 18 fixed) with exact source-defined force sensor attachment frames and cascade thumb mimic.",
+      "source_ref": "rh56_tactile_toolkit_urdf",
+      "root_link": "left_wrist_yaw_link",
+      "control_mapping": {
+        "little": {
+          "index": 0,
+          "driver_joint": "left_little_1_joint",
+          "raw_at_open": 1000,
+          "raw_at_closed": 0,
+          "mapping_status": "candidate_only_not_calibrated",
+          "proposed_open_angle_rad": 0.0,
+          "proposed_closed_angle_rad": 1.4381
+        },
+        "ring": {
+          "index": 1,
+          "driver_joint": "left_ring_1_joint",
+          "raw_at_open": 1000,
+          "raw_at_closed": 0,
+          "mapping_status": "candidate_only_not_calibrated",
+          "proposed_open_angle_rad": 0.0,
+          "proposed_closed_angle_rad": 1.4381
+        },
+        "middle": {
+          "index": 2,
+          "driver_joint": "left_middle_1_joint",
+          "raw_at_open": 1000,
+          "raw_at_closed": 0,
+          "mapping_status": "candidate_only_not_calibrated",
+          "proposed_open_angle_rad": 0.0,
+          "proposed_closed_angle_rad": 1.4381
+        },
+        "index": {
+          "index": 3,
+          "driver_joint": "left_index_1_joint",
+          "raw_at_open": 1000,
+          "raw_at_closed": 0,
+          "mapping_status": "candidate_only_not_calibrated",
+          "proposed_open_angle_rad": 0.0,
+          "proposed_closed_angle_rad": 1.4381
+        },
+        "thumb_bend": {
+          "index": 4,
+          "driver_joint": "left_thumb_2_joint",
+          "raw_at_open": 1000,
+          "raw_at_closed": 0,
+          "mapping_status": "candidate_only_not_calibrated",
+          "proposed_open_angle_rad": 0.0,
+          "proposed_closed_angle_rad": 0.5864
+        },
+        "thumb_rotate": {
+          "index": 5,
+          "driver_joint": "left_thumb_1_joint",
+          "raw_at_open": 1000,
+          "raw_at_closed": 0,
+          "mapping_status": "candidate_only_not_calibrated",
+          "proposed_open_angle_rad": 0.0,
+          "proposed_closed_angle_rad": 1.1641
+        }
+      },
+      "mapping_warning": "Candidate raw-to-angle endpoints here are for experiments only. This URDF does NOT provide a validated Modbus ANGLE_ACT conversion; its associated example scripts read POS_SET and scale /1800, NOT equivalent to Blackforest ANGLE_ACT /1000.",
+      "joints": [
+        {
+          "name": "left_base_joint",
+          "type": "fixed",
+          "parent": "left_wrist_yaw_link",
+          "child": "left_base_link",
+          "origin_xyz_m": [
+            0.0415,
+            0,
+            0
+          ],
+          "origin_rpy_rad": [
+            3.1415926535,
+            -1.5707963267,
+            0
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_palm_force_sensor_joint",
+          "type": "fixed",
+          "parent": "left_base_link",
+          "child": "left_palm_force_sensor",
+          "origin_xyz_m": [
+            0.00036819,
+            0.012296,
+            0.1196
+          ],
+          "origin_rpy_rad": [
+            1.5708,
+            0,
+            3.1416
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_thumb_1_joint",
+          "type": "revolute",
+          "parent": "left_base_link",
+          "child": "left_thumb_1",
+          "origin_xyz_m": [
+            0.0269,
+            0.02101,
+            0.0689
+          ],
+          "origin_rpy_rad": [
+            0,
+            0,
+            0
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 1.1641
+        },
+        {
+          "name": "left_thumb_2_joint",
+          "type": "revolute",
+          "parent": "left_thumb_1",
+          "child": "left_thumb_2",
+          "origin_xyz_m": [
+            0.0073431,
+            0.011232,
+            0.0052
+          ],
+          "origin_rpy_rad": [
+            1.5708,
+            0,
+            -2.8798
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 0.5864
+        },
+        {
+          "name": "left_thumb_force_sensor_1_joint",
+          "type": "fixed",
+          "parent": "left_thumb_2",
+          "child": "left_thumb_force_sensor_1",
+          "origin_xyz_m": [
+            -0.0087121,
+            0.026305,
+            -0.0089605
+          ],
+          "origin_rpy_rad": [
+            1.2213,
+            -1.5708,
+            -3.14
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_thumb_3_joint",
+          "type": "revolute",
+          "parent": "left_thumb_2",
+          "child": "left_thumb_3",
+          "origin_xyz_m": [
+            -0.031403,
+            0.021069,
+            -0.001299
+          ],
+          "origin_rpy_rad": [
+            0,
+            0,
+            0
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 0.5,
+          "mimic_parent": "left_thumb_2_joint",
+          "mimic_multiplier": 0.8024,
+          "mimic_offset_rad": 0
+        },
+        {
+          "name": "left_thumb_force_sensor_2_joint",
+          "type": "fixed",
+          "parent": "left_thumb_3",
+          "child": "left_thumb_force_sensor_2",
+          "origin_xyz_m": [
+            -0.011771,
+            0.01699,
+            -0.0077514
+          ],
+          "origin_rpy_rad": [
+            -1.8405,
+            -1.5705,
+            0
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_thumb_4_joint",
+          "type": "revolute",
+          "parent": "left_thumb_3",
+          "child": "left_thumb_4",
+          "origin_xyz_m": [
+            -0.021903,
+            0.012816,
+            -0.0003
+          ],
+          "origin_rpy_rad": [
+            0,
+            0,
+            0
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 3.14,
+          "mimic_parent": "left_thumb_3_joint",
+          "mimic_multiplier": 0.9487,
+          "mimic_offset_rad": 0
+        },
+        {
+          "name": "left_thumb_force_sensor_3_joint",
+          "type": "fixed",
+          "parent": "left_thumb_4",
+          "child": "left_thumb_force_sensor_3",
+          "origin_xyz_m": [
+            -0.014598,
+            0.014721,
+            -0.0073103
+          ],
+          "origin_rpy_rad": [
+            0.18602,
+            -1.5708,
+            -2.2971
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_thumb_force_sensor_4_joint",
+          "type": "fixed",
+          "parent": "left_thumb_4",
+          "child": "left_thumb_force_sensor_4",
+          "origin_xyz_m": [
+            -0.028987,
+            0.017301,
+            -0.0073513
+          ],
+          "origin_rpy_rad": [
+            2.0775,
+            1.5708,
+            -2.12
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_index_1_joint",
+          "type": "revolute",
+          "parent": "left_base_link",
+          "child": "left_index_1",
+          "origin_xyz_m": [
+            0.038679,
+            0.00056467,
+            0.1564
+          ],
+          "origin_rpy_rad": [
+            1.5359,
+            0,
+            -1.5708
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 1.4381
+        },
+        {
+          "name": "left_index_force_sensor_1_joint",
+          "type": "fixed",
+          "parent": "left_index_1",
+          "child": "left_index_force_sensor_1",
+          "origin_xyz_m": [
+            -0.012046,
+            0.019649,
+            0.006651
+          ],
+          "origin_rpy_rad": [
+            1.5708,
+            -1.5351,
+            -1.7829
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_index_2_joint",
+          "type": "revolute",
+          "parent": "left_index_1",
+          "child": "left_index_2",
+          "origin_xyz_m": [
+            -0.0034259,
+            0.032596,
+            0.00055
+          ],
+          "origin_rpy_rad": [
+            0,
+            0,
+            0
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 3.14,
+          "mimic_parent": "left_index_1_joint",
+          "mimic_multiplier": 1.0843,
+          "mimic_offset_rad": 0
+        },
+        {
+          "name": "left_index_force_sensor_2_joint",
+          "type": "fixed",
+          "parent": "left_index_2",
+          "child": "left_index_force_sensor_2",
+          "origin_xyz_m": [
+            -0.0081655,
+            0.037446,
+            0.0060795
+          ],
+          "origin_rpy_rad": [
+            1.5708,
+            -1.5337,
+            -1.222
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_index_force_sensor_3_joint",
+          "type": "fixed",
+          "parent": "left_index_2",
+          "child": "left_index_force_sensor_3",
+          "origin_xyz_m": [
+            -0.0086237,
+            0.052572,
+            0.0060954
+          ],
+          "origin_rpy_rad": [
+            1.5708,
+            -1.5252,
+            -2.2692
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_middle_1_joint",
+          "type": "revolute",
+          "parent": "left_base_link",
+          "child": "left_middle_1",
+          "origin_xyz_m": [
+            0.0171,
+            0.00056467,
+            0.157
+          ],
+          "origin_rpy_rad": [
+            1.5708,
+            0,
+            -1.5708
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 1.4381
+        },
+        {
+          "name": "left_middle_force_sensor_1_joint",
+          "type": "fixed",
+          "parent": "left_middle_1",
+          "child": "left_middle_force_sensor_1",
+          "origin_xyz_m": [
+            -0.012046,
+            0.019649,
+            0.006651
+          ],
+          "origin_rpy_rad": [
+            0.73473,
+            -1.5708,
+            -0.94682
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_middle_2_joint",
+          "type": "revolute",
+          "parent": "left_middle_1",
+          "child": "left_middle_2",
+          "origin_xyz_m": [
+            -0.0034259,
+            0.032596,
+            0.00055
+          ],
+          "origin_rpy_rad": [
+            0,
+            0,
+            0
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 3.14,
+          "mimic_parent": "left_middle_1_joint",
+          "mimic_multiplier": 1.0843,
+          "mimic_offset_rad": 0
+        },
+        {
+          "name": "left_middle_force_sensor_2_joint",
+          "type": "fixed",
+          "parent": "left_middle_2",
+          "child": "left_middle_force_sensor_2",
+          "origin_xyz_m": [
+            -0.009086,
+            0.040962,
+            0.0061003
+          ],
+          "origin_rpy_rad": [
+            1.8942,
+            -1.5708,
+            -1.5214
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_middle_force_sensor_3_joint",
+          "type": "fixed",
+          "parent": "left_middle_2",
+          "child": "left_middle_force_sensor_3",
+          "origin_xyz_m": [
+            -0.0098294,
+            0.056051,
+            0.0061006
+          ],
+          "origin_rpy_rad": [
+            0.84662,
+            -1.5708,
+            -1.521
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_ring_1_joint",
+          "type": "revolute",
+          "parent": "left_base_link",
+          "child": "left_ring_1",
+          "origin_xyz_m": [
+            -0.0045302,
+            0.00056467,
+            0.15683
+          ],
+          "origin_rpy_rad": [
+            1.6232,
+            0,
+            -1.5708
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 1.4381
+        },
+        {
+          "name": "left_ring_force_sensor_1_joint",
+          "type": "fixed",
+          "parent": "left_ring_1",
+          "child": "left_ring_force_sensor_1",
+          "origin_xyz_m": [
+            -0.012046,
+            0.019649,
+            0.006651
+          ],
+          "origin_rpy_rad": [
+            -1.5708,
+            -1.5172,
+            1.3587
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_ring_2_joint",
+          "type": "revolute",
+          "parent": "left_ring_1",
+          "child": "left_ring_2",
+          "origin_xyz_m": [
+            -0.0034259,
+            0.032596,
+            0.00055
+          ],
+          "origin_rpy_rad": [
+            0,
+            0,
+            0
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 3.14,
+          "mimic_parent": "left_ring_1_joint",
+          "mimic_multiplier": 1.0843,
+          "mimic_offset_rad": 0
+        },
+        {
+          "name": "left_ring_force_sensor_2_joint",
+          "type": "fixed",
+          "parent": "left_ring_2",
+          "child": "left_ring_force_sensor_2",
+          "origin_xyz_m": [
+            -0.0081655,
+            0.037446,
+            0.0060795
+          ],
+          "origin_rpy_rad": [
+            -1.5708,
+            -1.5151,
+            1.9196
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_ring_force_sensor_3_joint",
+          "type": "fixed",
+          "parent": "left_ring_2",
+          "child": "left_ring_force_sensor_3",
+          "origin_xyz_m": [
+            -0.0086237,
+            0.052572,
+            0.0060954
+          ],
+          "origin_rpy_rad": [
+            -1.5708,
+            -1.5025,
+            0.87237
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_little_1_joint",
+          "type": "revolute",
+          "parent": "left_base_link",
+          "child": "left_little_1",
+          "origin_xyz_m": [
+            -0.025916,
+            0.00056467,
+            0.15365
+          ],
+          "origin_rpy_rad": [
+            1.6755,
+            0,
+            -1.5708
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 1.4381
+        },
+        {
+          "name": "left_little_force_sensor_1_joint",
+          "type": "fixed",
+          "parent": "left_little_1",
+          "child": "left_little_force_sensor_1",
+          "origin_xyz_m": [
+            -0.012046,
+            0.019649,
+            0.006651
+          ],
+          "origin_rpy_rad": [
+            -1.5708,
+            -1.4637,
+            1.3587
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_little_2_joint",
+          "type": "revolute",
+          "parent": "left_little_1",
+          "child": "left_little_2",
+          "origin_xyz_m": [
+            -0.0034259,
+            0.032596,
+            0.00055
+          ],
+          "origin_rpy_rad": [
+            0,
+            0,
+            0
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            1
+          ],
+          "lower_rad": 0,
+          "upper_rad": 3.14,
+          "mimic_parent": "left_little_1_joint",
+          "mimic_multiplier": 1.0843,
+          "mimic_offset_rad": 0
+        },
+        {
+          "name": "left_little_force_sensor_2_joint",
+          "type": "fixed",
+          "parent": "left_little_2",
+          "child": "left_little_force_sensor_2",
+          "origin_xyz_m": [
+            -0.0064514,
+            0.027683,
+            0.0061172
+          ],
+          "origin_rpy_rad": [
+            -1.5708,
+            -1.4597,
+            1.9127
+          ],
+          "axis_xyz": null
+        },
+        {
+          "name": "left_little_force_sensor_3_joint",
+          "type": "fixed",
+          "parent": "left_little_2",
+          "child": "left_little_force_sensor_3",
+          "origin_xyz_m": [
+            -0.0063973,
+            0.042707,
+            0.0061154
+          ],
+          "origin_rpy_rad": [
+            -1.5708,
+            -1.4336,
+            0.86551
+          ],
+          "axis_xyz": null
+        }
+      ],
+      "visual_meshes": {
+        "left_wrist_yaw_link": {
+          "visual_mesh": null
+        },
+        "left_base_link": {
+          "visual_mesh": "meshes/left_base_link.STL"
+        },
+        "left_palm_force_sensor": {
+          "visual_mesh": "meshes/left_palm_force_sensor.STL"
+        },
+        "left_thumb_1": {
+          "visual_mesh": "meshes/left_thumb_1.STL"
+        },
+        "left_thumb_2": {
+          "visual_mesh": "meshes/left_thumb_2.STL"
+        },
+        "left_thumb_force_sensor_1": {
+          "visual_mesh": "meshes/left_thumb_force_sensor_1.STL"
+        },
+        "left_thumb_3": {
+          "visual_mesh": "meshes/left_thumb_3.STL"
+        },
+        "left_thumb_force_sensor_2": {
+          "visual_mesh": "meshes/left_thumb_force_sensor_2.STL"
+        },
+        "left_thumb_4": {
+          "visual_mesh": "meshes/left_thumb_4.STL"
+        },
+        "left_thumb_force_sensor_3": {
+          "visual_mesh": "meshes/left_thumb_force_sensor_3.STL"
+        },
+        "left_thumb_force_sensor_4": {
+          "visual_mesh": "meshes/left_thumb_force_sensor_4.STL"
+        },
+        "left_index_1": {
+          "visual_mesh": "meshes/left_index_1.STL"
+        },
+        "left_index_force_sensor_1": {
+          "visual_mesh": "meshes/left_index_force_sensor_1.STL"
+        },
+        "left_index_2": {
+          "visual_mesh": "meshes/left_index_2.STL"
+        },
+        "left_index_force_sensor_2": {
+          "visual_mesh": "meshes/left_index_force_sensor_2.STL"
+        },
+        "left_index_force_sensor_3": {
+          "visual_mesh": "meshes/left_index_force_sensor_3.STL"
+        },
+        "left_middle_1": {
+          "visual_mesh": "meshes/left_middle_1.STL"
+        },
+        "left_middle_force_sensor_1": {
+          "visual_mesh": "meshes/left_middle_force_sensor_1.STL"
+        },
+        "left_middle_2": {
+          "visual_mesh": "meshes/left_middle_2.STL"
+        },
+        "left_middle_force_sensor_2": {
+          "visual_mesh": "meshes/left_middle_force_sensor_2.STL"
+        },
+        "left_middle_force_sensor_3": {
+          "visual_mesh": "meshes/left_middle_force_sensor_3.STL"
+        },
+        "left_ring_1": {
+          "visual_mesh": "meshes/left_ring_1.STL"
+        },
+        "left_ring_force_sensor_1": {
+          "visual_mesh": "meshes/left_ring_force_sensor_1.STL"
+        },
+        "left_ring_2": {
+          "visual_mesh": "meshes/left_ring_2.STL"
+        },
+        "left_ring_force_sensor_2": {
+          "visual_mesh": "meshes/left_ring_force_sensor_2.STL"
+        },
+        "left_ring_force_sensor_3": {
+          "visual_mesh": "meshes/left_ring_force_sensor_3.STL"
+        },
+        "left_little_1": {
+          "visual_mesh": "meshes/left_little_1.STL"
+        },
+        "left_little_force_sensor_1": {
+          "visual_mesh": "meshes/left_little_force_sensor_1.STL"
+        },
+        "left_little_2": {
+          "visual_mesh": "meshes/left_little_2.STL"
+        },
+        "left_little_force_sensor_2": {
+          "visual_mesh": "meshes/left_little_force_sensor_2.STL"
+        },
+        "left_little_force_sensor_3": {
+          "visual_mesh": "meshes/left_little_force_sensor_3.STL"
+        }
+      },
+      "sensor_attachment_joints": [
+        "left_palm_force_sensor_joint",
+        "left_thumb_force_sensor_1_joint",
+        "left_thumb_force_sensor_2_joint",
+        "left_thumb_force_sensor_3_joint",
+        "left_thumb_force_sensor_4_joint",
+        "left_index_force_sensor_1_joint",
+        "left_index_force_sensor_2_joint",
+        "left_index_force_sensor_3_joint",
+        "left_middle_force_sensor_1_joint",
+        "left_middle_force_sensor_2_joint",
+        "left_middle_force_sensor_3_joint",
+        "left_ring_force_sensor_1_joint",
+        "left_ring_force_sensor_2_joint",
+        "left_ring_force_sensor_3_joint",
+        "left_little_force_sensor_1_joint",
+        "left_little_force_sensor_2_joint",
+        "left_little_force_sensor_3_joint"
+      ],
+      "known_issues": [
+        "Different base origin, handedness conventions and joint axes from DEX URDF; align coordinate frames before comparing world coordinates.",
+        "Thumb mimic is cascaded left_thumb_2 -> left_thumb_3 -> left_thumb_4; do not apply left_thumb_4 multiplier directly to left_thumb_2 without multiplying through.",
+        "Source URDF finger child joint upper bounds can exceed the driven proximal range; whether to clamp mimic output depends on the correct target kinematic model."
+      ]
+    }
+  },
+  "auxiliary_reference_not_active": {
+    "mujoco_left": {
+      "source_ref": "mujoco_left",
+      "reason": "Mechanical coupling alternatives in a THIRD geometry/model convention; do not automatically merge with either active URDF profile.",
+      "joint_limits_and_axes": [
+        {
+          "joint": "left_thumb_proximal_yaw_joint",
+          "joint_limits_rad": [
+            0.0,
+            1.308
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            1
+          ]
+        },
+        {
+          "joint": "left_thumb_proximal_pitch_joint",
+          "joint_limits_rad": [
+            0.0,
+            0.6
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "joint": "left_thumb_intermediate_joint",
+          "joint_limits_rad": [
+            0.0,
+            0.8
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "joint": "left_thumb_distal_joint",
+          "joint_limits_rad": [
+            0.0,
+            0.4
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "joint": "left_index_proximal_joint",
+          "joint_limits_rad": [
+            0.0,
+            1.47
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "joint": "left_index_intermediate_joint",
+          "joint_limits_rad": [
+            -0.04545,
+            1.56
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "joint": "left_middle_proximal_joint",
+          "joint_limits_rad": [
+            0.0,
+            1.47
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "joint": "left_middle_intermediate_joint",
+          "joint_limits_rad": [
+            -0.04545,
+            1.56
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "joint": "left_ring_proximal_joint",
+          "joint_limits_rad": [
+            0.0,
+            1.47
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "joint": "left_ring_intermediate_joint",
+          "joint_limits_rad": [
+            -0.04545,
+            1.56
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "joint": "left_pinky_proximal_joint",
+          "joint_limits_rad": [
+            0.0,
+            1.47
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "joint": "left_pinky_intermediate_joint",
+          "joint_limits_rad": [
+            -0.04545,
+            1.56
+          ],
+          "axis_xyz": [
+            0,
+            0,
+            -1
+          ]
+        }
+      ],
+      "coupling_equations": [
+        {
+          "dependent_joint": "left_thumb_intermediate_joint",
+          "driver_joint": "left_thumb_proximal_pitch_joint",
+          "polycoef": [
+            0.0,
+            1.334,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "definition": "dependent = a0 + a1*driver + a2*driver^2 + a3*driver^3 + a4*driver^4",
+          "source_kind": "MuJoCo equality joint polynomial"
+        },
+        {
+          "dependent_joint": "left_thumb_distal_joint",
+          "driver_joint": "left_thumb_proximal_pitch_joint",
+          "polycoef": [
+            0.0,
+            0.667,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "definition": "dependent = a0 + a1*driver + a2*driver^2 + a3*driver^3 + a4*driver^4",
+          "source_kind": "MuJoCo equality joint polynomial"
+        },
+        {
+          "dependent_joint": "left_index_intermediate_joint",
+          "driver_joint": "left_index_proximal_joint",
+          "polycoef": [
+            -0.04545,
+            1.06399,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "definition": "dependent = a0 + a1*driver + a2*driver^2 + a3*driver^3 + a4*driver^4",
+          "source_kind": "MuJoCo equality joint polynomial"
+        },
+        {
+          "dependent_joint": "left_middle_intermediate_joint",
+          "driver_joint": "left_middle_proximal_joint",
+          "polycoef": [
+            -0.04545,
+            1.06399,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "definition": "dependent = a0 + a1*driver + a2*driver^2 + a3*driver^3 + a4*driver^4",
+          "source_kind": "MuJoCo equality joint polynomial"
+        },
+        {
+          "dependent_joint": "left_ring_intermediate_joint",
+          "driver_joint": "left_ring_proximal_joint",
+          "polycoef": [
+            -0.04545,
+            1.06399,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "definition": "dependent = a0 + a1*driver + a2*driver^2 + a3*driver^3 + a4*driver^4",
+          "source_kind": "MuJoCo equality joint polynomial"
+        },
+        {
+          "dependent_joint": "left_pinky_intermediate_joint",
+          "driver_joint": "left_pinky_proximal_joint",
+          "polycoef": [
+            -0.04545,
+            1.06399,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "definition": "dependent = a0 + a1*driver + a2*driver^2 + a3*driver^3 + a4*driver^4",
+          "source_kind": "MuJoCo equality joint polynomial"
+        }
+      ],
+      "actuators": [
+        {
+          "name": "left_thumb_yaw_act",
+          "driven_joint": "left_thumb_proximal_yaw_joint",
+          "ctrlrange": [
+            -1,
+            1
+          ]
+        },
+        {
+          "name": "left_thumb_pitch_act",
+          "driven_joint": "left_thumb_proximal_pitch_joint",
+          "ctrlrange": [
+            -1,
+            1
+          ]
+        },
+        {
+          "name": "left_index_act",
+          "driven_joint": "left_index_proximal_joint",
+          "ctrlrange": [
+            -1,
+            1
+          ]
+        },
+        {
+          "name": "left_middle_act",
+          "driven_joint": "left_middle_proximal_joint",
+          "ctrlrange": [
+            -1,
+            1
+          ]
+        },
+        {
+          "name": "left_ring_act",
+          "driven_joint": "left_ring_proximal_joint",
+          "ctrlrange": [
+            -1,
+            1
+          ]
+        },
+        {
+          "name": "left_pinky_act",
+          "driven_joint": "left_pinky_proximal_joint",
+          "ctrlrange": [
+            -1,
+            1
+          ]
+        }
+      ]
+    }
+  },
+  "codex_integration_plan": [
+    {
+      "step": 1,
+      "task": "Preserve existing Blackforest read-only twin/bridge pipeline and avoid changing Modbus command behavior."
+    },
+    {
+      "step": 2,
+      "task": "Add profile selector for dex_tactile_left and rh56_tactile_toolkit_left, each using its OWN link meshes, joint origins/axes, parent hierarchy and mimic relationships."
+    },
+    {
+      "step": 3,
+      "task": "Use 6 live ANGLE_ACT values read once from existing polling loop; calibrate and independently enable second profile mapping; never double-poll the hand."
+    },
+    {
+      "step": 4,
+      "task": "Render open, half-closed and closed static poses for each profile; visually verify the six driven motions and thumb opposition."
+    },
+    {
+      "step": 5,
+      "task": "Add adjustment settings per profile: root rigid transform, direction/sign, actuator range, zero offsets, each driving joint endpoint and mimic parameters. Save to a DIFFERENT overrides file, never edit source reference."
+    },
+    {
+      "step": 6,
+      "task": "Overlay sensors from Toolkit fixed sensor joints and evaluate contact location alignment with physical hand; do not confuse sensor mount with individual taxel centres."
+    },
+    {
+      "step": 7,
+      "task": "Record reference poses and measured fingertip/joint positions; compute spatial error after alignment, select best validated parameters rather than averaging numerical joint coordinates between frames."
+    },
+    {
+      "step": 8,
+      "task": "Only after validation consider one hybrid model: transform validated mechanical parameters into a chosen canonical link-frame convention. Explicitly document source of each substituted parameter."
+    }
+  ],
+  "calibration_schema_example": {
+    "file": "digital_twin/joint_calibration_overrides.json (create separately; keep this reference immutable)",
+    "source_profile": "dex_tactile_left",
+    "base_alignment": {
+      "translation_m": [
+        0,
+        0,
+        0
+      ],
+      "rpy_rad": [
+        0,
+        0,
+        0
+      ]
+    },
+    "actuator_overrides_example": {
+      "little": {
+        "open_angle_rad": 0,
+        "closed_angle_rad": 1.6,
+        "offset_rad": 0,
+        "reversed": false
+      }
+    },
+    "mimic_overrides_example": {
+      "left_index_2_joint": {
+        "multiplier": 1.05,
+        "offset_rad": 0
+      }
+    },
+    "status": "EXAMPLE_NOT_CALIBRATED"
+  },
+  "safety_and_scope": [
+    "Do not replace source geometry coordinates with estimated values silently.",
+    "Do not drive physical motors from virtual calibration sliders without explicit operator action and motion safety interlocks.",
+    "No collision, dynamics or actual tactile force calibration is supplied by this reference.",
+    "Visual mesh files themselves are not included; acquire model-matching STL files from the cited repositories, checking applicable licensing before redistribution.",
+    "No physical calibration has been performed. All explicit points are extracted from the source URDF/XML, while the suggested toolkit raw-to-angle endpoints are experimentally proposed values."
+  ]
+}

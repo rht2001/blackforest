@@ -83,6 +83,7 @@ STATES = Literal[
     "initialised",
     "open",
     "closing",
+    "thumb_closing",
     "settling",
     "steady_state",
     "cylinder_confirmed",
@@ -98,6 +99,7 @@ class DataDict(TypedDict, total=False):
     tactile_mean_matrix: np.ndarray
     state: STATES
     state_change: bool
+    all_matrices: dict
     slip_detected: bool
     slipping_contacts: list[str]
     probing_results: list[dict]
@@ -107,6 +109,7 @@ default_results: DataDict = {
     "angles": np.zeros(6, dtype=int),
     "forces": np.zeros(6, dtype=float),
     "position": np.zeros(6, dtype=int),
+    "all_matrices": {},
     "tactile_matrix": np.zeros((112, 17), dtype=float),
     "tactile_mean_matrix": np.zeros((1, 17), dtype=float),
     "state": "starting",

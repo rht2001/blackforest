@@ -59,6 +59,11 @@ class GraspManager:
         self.impulse_wait_time = impulse_wait_time
         self.min_closing_time = min_closing_time
         self.reset_cooldown = reset_cooldown
+        self.on_grasp_closed = on_grasp_closed
+        self.fingers_stable_since: float | None = None
+        self.thumb_start_time = 0.0
+        self.thumb_stable_since: float | None = None
+        self.thumb_initial_angles = np.array([1000, 1000])
 
         self.state: STATES = "open"
         self.last_angles: np.ndarray = np.array([1000] * 6)
@@ -226,6 +231,13 @@ class GraspManager:
         """
         now = time.time()
         current_angles = np.asarray(data["angles"])
+        if (current_angles.shape != (6,) or not np.all(np.isfinite(current_angles))
+                or np.any(current_angles < 0) or np.any(current_angles > 1000)):
+            self.fingers_stable_since = None
+            self.thumb_stable_since = None
+            data["state"] = self.state
+            data["state_change"] = False
+            return data
         finger_angles = current_angles[:4]
         mean_matrix = np.asarray(data["tactile_mean_matrix"])
         tactile_matrix = np.asarray(data["tactile_matrix"])
@@ -243,6 +255,7 @@ class GraspManager:
                 print("[GraspManager] State: OPEN -> CLOSING | contact triggered")
                 self.state = "closing"
                 self.closing_start_time = now
+                self.fingers_stable_since = None
                 state_changed = True
                 # Close fingers 0-3 while keeping thumb fully open
                 robot.set_angles([0, 0, 0, 0, 1000, 1000])
@@ -252,7 +265,7 @@ class GraspManager:
             closing_elapsed = now - self.closing_start_time
 
             has_moved = np.any(finger_angles < 900)
-            motion_halted = np.all(diff < 3) and (closing_elapsed >= self.min_closing_time) and has_moved
+            motion_halted = np.all(diff[:4] < 3) and (closing_elapsed >= self.min_closing_time) and has_moved
 
             if motion_halted:
                 self.state = "settling"
@@ -494,6 +507,8 @@ class GraspManager:
                 self.was_slipping = False
                 state_changed = True
                 print(f"[GraspManager] State: RESETTING -> OPEN | hand reopened")
+
+
 
         self.last_angles = current_angles
         data["state"] = self.state

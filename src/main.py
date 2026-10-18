@@ -1,11 +1,14 @@
 import argparse
+import argparse
 import time
 import datetime
 import tkinter as tk
 from interface.robot_control import RobotHandController
 from interface.robot_dataset import RobotDatabase
 from logic.grasp_manager import GraspManager
+from logic.grasp_capture import GraspCapture
 from ui.appInterface import HandApp
+from logic.twin_publisher import TwinPublisher, robot_snapshot
 from logic.twin_publisher import TwinPublisher, robot_snapshot
 STEP_TIME = 0.03
 def main():
@@ -20,6 +23,7 @@ def main():
     app = HandApp(robot, grasp_manager=grasp_manager)
     db = RobotDatabase()
     publisher = TwinPublisher("http://127.0.0.1:18765/api/state")
+    publisher = TwinPublisher("http://127.0.0.1:18765/api/state")
 
     is_running = True
 
@@ -29,13 +33,17 @@ def main():
         app.destroy()
         db.on_close()
         publisher.close()
+        publisher.close()
 
     app.protocol("WM_DELETE_WINDOW", on_close)
 
 
-    while is_running:
-        try:
-            start = time.monotonic()
+
+
+    try:
+        while is_running:
+            try:
+                start = time.monotonic()
 
             results_data = robot.poll()
             grasp_results = grasp_manager.step(robot, results_data)
@@ -52,3 +60,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
