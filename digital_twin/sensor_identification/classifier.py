@@ -124,9 +124,9 @@ def identify_sensor(points, models, config=None, *, boundary_points=(), progress
     exclusions = np.array([[p[k] for k in ('x', 'y', 'z')] for p in negative], dtype=float).reshape(-1, 3)*scale
     radii = np.array([p['surface_clearance_mm'] for p in negative])
     result['certified_exclusions'] = len(negative)
-    kwargs = {}
+    kwargs = dict(contact_pressures=np.array([p['pressure'] for p in active]))
     if limits:
-        kwargs = dict(boundary_xyz=np.array([[p[k] for k in ('x','y','z')] for p in limits])*scale,
+        kwargs.update(boundary_xyz=np.array([[p[k] for k in ('x','y','z')] for p in limits])*scale,
                       boundary_normals=np.array([p['normal'] for p in limits]))
         # Only explicitly identified rigid-palm samples define a grasp prior.
         # Finger normals and arbitrary-frame clouds must not invent a palm.

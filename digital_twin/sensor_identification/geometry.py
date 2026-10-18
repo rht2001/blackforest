@@ -25,7 +25,7 @@ class CandidateModel:
             self.mesh, self.sample_count, seed=1701)
         self.tree = cKDTree(self.samples)
 
-    def nearest_sampled(self, points, neighbors=8):
+    def nearest_sampled(self, points, neighbors=8, *, return_normals=False):
         """Fast local surface query guided by cached STL samples.
 
         Project onto triangles attached to nearby samples. This avoids fitting
@@ -36,6 +36,7 @@ class CandidateModel:
         points = np.asarray(points, dtype=float).reshape(-1, 3)
         closest = np.empty_like(points)
         distance = np.empty(len(points))
+        normals = np.empty_like(points) if return_normals else None
         k = min(neighbors, len(self.samples))
         triangles = self.mesh.triangles
         for start in range(0, len(points), 256):
@@ -49,7 +50,9 @@ class CandidateModel:
             rows = np.arange(len(query))
             closest[start:start+len(query)] = projected[rows, best]
             distance[start:start+len(query)] = np.sqrt(squared[rows, best])
-        return closest, distance
+            if return_normals:
+                normals[start:start+len(query)] = self.mesh.face_normals[self.sample_faces[indices[rows, best]]]
+        return (closest, distance, normals) if return_normals else (closest, distance)
 
     @classmethod
     def from_stl(cls, name, path, *, units):
