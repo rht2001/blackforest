@@ -19,6 +19,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
 
+from received_runs import ReceivedRuns
 from tactile_layout import REGIONS
 from server_config import HOST, PORT, WORKSPACE, source_signature
 
@@ -43,6 +44,14 @@ def identification_service(server):
             from sensor_identification.web_service import IdentificationService
             server.sensor_identification = IdentificationService()
         return server.sensor_identification
+
+def received_runs(server):
+    if not hasattr(server, 'received_runs'):
+        folder = getattr(server, 'capture_directory', None) or os.environ.get('HAND_CAPTURE_DIR') or (
+            Path.home() / 'Documents' / 'ChatGPT' / 'hand' / 'probing_situations' / 'received_runs')
+        server.received_runs = ReceivedRuns(folder)
+    return server.received_runs
+
 
 def vector(value, name, lo, hi):
     if value is None: return None
@@ -102,6 +111,21 @@ def normalize(payload):
                 raise ValueError('Sensor values outside 0..4095')
             clean[key]=matrix
         out['tactile_regions']=clean
+    # Optional run metadata is carried by the sender, never inferred from poses.
+    for key in ('state', 'source_id'):
+        if key in payload:
+            if not isinstance(payload[key], str) or not 1 <= len(payload[key]) <= 160:
+                raise ValueError('Invalid ' + key)
+            out[key] = payload[key]
+    if 'sample_index' in payload:
+        value = payload['sample_index']
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 2**53-1:
+            raise ValueError('Invalid sample_index')
+        out['sample_index'] = value
+    if 'slip_detected' in payload:
+        if type(payload['slip_detected']) is not bool:
+            raise ValueError('Invalid slip_detected')
+        out['slip_detected'] = payload['slip_detected']
     if not out:raise ValueError('No valid fields. Allowed: '+', '.join(FIELDS))
     return out
 
@@ -125,6 +149,23 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ('/sensor_identification/simulation.js', '/sensor_identification/measurements.js', '/sensor_identification/history.js', '/sensor_identification/boundaries.js', '/sensor_identification/runs.js'):
             self.send_data(Path(__file__).with_name('sensor_identification').joinpath(self.path.rsplit('/', 1)[1]).read_bytes(),
                            ctype='text/javascript; charset=utf-8')
+            return
+        if url.path == '/api/probing-runs' or url.path.startswith('/api/probing-runs/'):
+            try:
+                with LOCK:
+                    capture = received_runs(self.server)
+                    if url.path == '/api/probing-runs':
+                        data = capture.snapshot()
+                    else:
+                        data = capture.read(url.path.removeprefix('/api/probing-runs/'))
+                if isinstance(data, bytes):
+                    self.send_data(data, ctype='text/csv; charset=utf-8')
+                else:
+                    self.respond_json(data)
+            except FileNotFoundError:
+                self.respond_json({'error': 'Capture not found'}, 404)
+            except (OSError, ValueError) as error:
+                self.respond_json({'error': str(error)}, 400)
             return
         if url.path in ('/api/identification', '/identification/report'):
             try:
@@ -167,6 +208,33 @@ class Handler(BaseHTTPRequestHandler):
             'workspace':str(WORKSPACE), 'pid':os.getpid(), 'source_signature':SERVER_SIGNATURE})
         else:self.respond_json({'error':'Not found'},404)
     def do_POST(self):
+        if self.path == '/api/probing-runs':
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 1 <= length <= 128:
+                    raise ValueError('Expected a capture action')
+                request = json.loads(self.rfile.read(length))
+                origin = self.headers.get('Origin')
+                if origin is not None and origin not in (f'http://127.0.0.1:{self.server.server_port}', f'http://localhost:{self.server.server_port}'):
+                    self.respond_json({'error': 'Use the local capture controls'}, 403)
+                    return
+                if not isinstance(request, dict) or request.get('action') not in ('start', 'finish', 'auto'):
+                    raise ValueError('Expected start or finish')
+                with LOCK:
+                    capture = received_runs(self.server)
+                    if request['action'] == 'auto':
+                        if type(request.get('enabled')) is not bool:
+                            raise ValueError('Expected boolean enabled')
+                        capture.set_auto(request['enabled'])
+                    elif request['action'] == 'start':
+                        capture.start_manual()
+                    else:
+                        capture.finish_manual()
+                    result = capture.snapshot()
+                self.respond_json(result)
+            except (OSError, ValueError, UnicodeDecodeError) as error:
+                self.respond_json({'error': str(error)}, 400)
+            return
         if self.path == '/api/identification':
             try:
                 length = int(self.headers.get('Content-Length', '0'))
@@ -212,6 +280,7 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.update(changes)
                 STATE['received_at']=time.time();STATE['seq']+=1
                 seq=STATE['seq']
+                received_runs(self.server).add(changes, now)
             self.respond_json({'ok':True,'seq':seq})
         except (ValueError,UnicodeDecodeError,json.JSONDecodeError) as exc:
             self.respond_json({'ok':False,'error':str(exc)},400)
@@ -261,6 +330,10 @@ def main():
         webbrowser.open(f'http://127.0.0.1:{args.port}/')
     try:server.serve_forever()
     except KeyboardInterrupt:pass
-    finally:server.server_close()
+    finally:
+        with LOCK:
+            if hasattr(server, 'received_runs'):
+                server.received_runs.close()
+        server.server_close()
 
 if __name__=='__main__':main()

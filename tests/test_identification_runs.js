@@ -1,7 +1,9 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path');
 const root=path.join(__dirname,'../digital_twin');
-const H=require(root+'/sensor_identification/history.js'),R=require(root+'/sensor_identification/runs.js');
+const H=require(root+'/sensor_identification/history.js'),RunAPI=require(root+'/sensor_identification/runs.js');
+// These regression checks explicitly exercise full-sweep reconstruction.
+const R={...RunAPI,build:(rows,context,options={})=>RunAPI.build(rows,context,{pose_selection:'all',...options}),buildAsync:(rows,context,options={})=>RunAPI.buildAsync(rows,context,{pose_selection:'all',...options})};
 const K=require(root+'/joint_kinematics.js'),T=require(root+'/tactile_points.js'),P=require(root+'/joint_pressure.js');
 const geometry=JSON.parse(fs.readFileSync(root+'/tactile_geometry.json','utf8'));
 const profile=JSON.parse(fs.readFileSync(root+'/joint_geometry_profiles_for_codex.json','utf8')).primary_profiles.rh56_tactile_toolkit_left;

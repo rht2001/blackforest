@@ -12,7 +12,7 @@ def source_signature():
     """Compare running code with files on disk without reusing stale modules."""
     folder = Path(__file__).resolve().parent
     digest = hashlib.sha256()
-    files = [folder/'bridge_server.py', folder/'server_config.py',
+    files = [folder/'bridge_server.py', folder/'received_runs.py', folder/'server_config.py',
              folder/'start_sensor_simulation.py', folder/'hand_twin_6dof.html']
     files += sorted((folder/'sensor_identification').glob('*.py'))
     files += sorted((folder/'sensor_identification').glob('*.js'))

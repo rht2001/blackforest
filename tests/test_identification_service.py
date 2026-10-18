@@ -68,7 +68,7 @@ class ServiceTests(unittest.TestCase):
         started, release = threading.Event(), threading.Event()
         result = {'classification': 'SENSOR_B', 'reason': 'test', 'fits': {}}
 
-        def identify(*args):
+        def identify(*args, **kwargs):
             started.set()
             release.wait(3)
             return result

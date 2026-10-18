@@ -8,10 +8,10 @@ const {chromium}=require('playwright');
   await page.route('http://127.0.0.1:18765/**',route=>route.fulfill({json:{received_at:0,field_received_at:{},angles_act:null,tactile_regions:{}}}));
   let reject=false,request,oldBackend=false,posts=0;
   const matrix=[[0,-1,0,22],[1,0,0,-13],[0,0,1,55],[0,0,0,1]];
-  await page.route('http://127.0.0.1:18768/api/identification',route=>{
-   if(route.request().method()==='GET')return route.fulfill({json:{status:'idle',estimator_revision:oldBackend?null:'strict_hand_v1'}});
+  await page.route('http://127.0.0.1:18765/api/identification',route=>{
+   if(route.request().method()==='GET')return route.fulfill({json:{status:'idle',estimator_revision:oldBackend?null:'sampled_preview_v3'}});
    posts++;request=route.request().postDataJSON();
-   return route.fulfill({json:{status:'complete',estimator_revision:'strict_hand_v1',job_id:'test',input_label:'test capture',report_url:'/identification/report',result:{classification:'AMBIGUOUS',reason:'calibration_unverified',fits:{SENSOR_A:{compatible:!reject,score:.1,rmse_mm:.1,transform:matrix},SENSOR_B:{compatible:!reject,score:.2,rmse_mm:.2,transform:matrix}}}}});
+   return route.fulfill({json:{status:'complete',estimator_revision:'sampled_preview_v3',job_id:'test',input_label:'test capture',report_url:'/identification/report',result:{classification:'AMBIGUOUS',reason:'calibration_unverified',fits:{SENSOR_A:{compatible:!reject,score:.1,rmse_mm:.1,transform:matrix},SENSOR_B:{compatible:!reject,score:.2,rmse_mm:.2,transform:matrix}}}}});
   });
   await page.goto(pathToFileURL(path.resolve(__dirname,'../digital_twin/hand_twin_6dof.html')).href);
   await page.waitForFunction(()=>document.querySelector('#onePageApp')&&window.HandEstimate,null,{timeout:60000});
@@ -40,8 +40,9 @@ const {chromium}=require('playwright');
   assert.equal(await page.evaluate(()=>document.querySelector('#profileScene0').data.find(t=>t.name==='Estimated SENSOR_B').visible),true);
   assert.equal(await page.evaluate(()=>document.querySelector('#profileScene0').data.find(t=>t.name==='Estimated SENSOR_A').visible),false);
   await page.selectOption('#estimateCandidate','SENSOR_A');
-  fs.mkdirSync(path.join(__dirname,'../verification'),{recursive:true});
-  await page.screenshot({path:path.join(__dirname,'../verification/estimate-in-twin.png')});
+  const verification=process.env.HAND_VERIFICATION_DIR||path.join(__dirname,'../verification');
+  fs.mkdirSync(verification,{recursive:true});
+  await page.screenshot({path:path.join(verification,'estimate-in-twin.png')});
   reject=true;await page.click('#estimateButton');
   await page.waitForFunction(()=>document.querySelector('#estimateStatus').textContent.includes('No valid STL pose'));
   assert.equal(await page.evaluate(()=>document.querySelector('#profileScene0').data.filter(t=>t.name?.startsWith('Estimated ')&&t.visible).length),0);

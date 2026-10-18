@@ -13,6 +13,7 @@ class CandidateModel:
     mesh: trimesh.Trimesh
     sample_count: int = 24000
     samples: np.ndarray = field(init=False, repr=False)
+    sample_faces: np.ndarray = field(init=False, repr=False)
     tree: cKDTree = field(init=False, repr=False)
 
     def __post_init__(self):
@@ -20,9 +21,35 @@ class CandidateModel:
         if (not len(self.mesh.faces) or not np.isfinite(self.mesh.vertices).all()
                 or self.mesh.area <= 0 or self.sample_count < 100):
             raise ValueError('Expected a finite, nonempty triangular surface')
-        self.samples, _ = trimesh.sample.sample_surface(
+        self.samples, self.sample_faces = trimesh.sample.sample_surface(
             self.mesh, self.sample_count, seed=1701)
         self.tree = cKDTree(self.samples)
+
+    def nearest_sampled(self, points, neighbors=8):
+        """Fast local surface query guided by cached STL samples.
+
+        Project onto triangles attached to nearby samples. This avoids fitting
+        sampling gaps and does not build global point/triangle candidate lists.
+        It is approximate: final acceptance still uses nearest() and the full
+        hand-patch triangle audit.
+        """
+        points = np.asarray(points, dtype=float).reshape(-1, 3)
+        closest = np.empty_like(points)
+        distance = np.empty(len(points))
+        k = min(neighbors, len(self.samples))
+        triangles = self.mesh.triangles
+        for start in range(0, len(points), 256):
+            query = points[start:start+256]
+            indices = self.tree.query(query, k=k)[1].reshape(len(query), k)
+            faces = self.sample_faces[indices].ravel()
+            repeated = np.repeat(query, k, axis=0)
+            projected = trimesh.triangles.closest_point(triangles[faces], repeated).reshape(-1, k, 3)
+            squared = np.sum((projected-query[:, None, :])**2, axis=2)
+            best = squared.argmin(axis=1)
+            rows = np.arange(len(query))
+            closest[start:start+len(query)] = projected[rows, best]
+            distance[start:start+len(query)] = np.sqrt(squared[rows, best])
+        return closest, distance
 
     @classmethod
     def from_stl(cls, name, path, *, units):
@@ -35,7 +62,15 @@ class CandidateModel:
 
     def nearest(self, points):
         """Exact unsigned triangle distance: valid for open/assembly meshes too."""
-        closest, distance, _ = trimesh.proximity.closest_point(self.mesh, points)
+        # Far-away hand limits can each visit many CAD triangles. Bound
+        # temporary point/triangle arrays without dropping any observations.
+        points = np.asarray(points, dtype=float).reshape(-1, 3)
+        closest = np.empty_like(points)
+        distance = np.empty(len(points))
+        for start in range(0, len(points), 32):
+            stop = start+32
+            closest[start:stop], distance[start:stop], _ = trimesh.proximity.closest_point(
+                self.mesh, points[start:stop])
         return closest, distance
 
     def report(self):

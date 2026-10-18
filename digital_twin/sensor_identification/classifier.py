@@ -15,6 +15,7 @@ class IdentificationConfig:
     hand_tolerance_mm: float = .25
     coordinate_units: str = 'mm'
     calibrated: bool = False
+    quick_preview: bool = False
     min_contacts: int = 8
     min_spread_mm: float = 3.
     min_inlier_fraction: float = 1.
@@ -34,6 +35,8 @@ class IdentificationConfig:
     seed: int = 731
 
     def __post_init__(self):
+        if not isinstance(self.quick_preview, bool):
+            raise ValueError('quick_preview must be boolean')
         if self.coordinate_units not in ('mm', 'm'):
             raise ValueError('coordinate_units must be mm or m')
         for key in ('tolerance_mm', 'hand_tolerance_mm', 'min_spread_mm', 'score_margin', 'stability_margin'):
@@ -73,7 +76,7 @@ def valid_measurements(points):
     return clean, invalid
 
 
-def identify_sensor(points, models, config=None, *, boundary_points=()):
+def identify_sensor(points, models, config=None, *, boundary_points=(), progress=None):
     config = config or IdentificationConfig()
     if set(models) != {'SENSOR_A', 'SENSOR_B'}:
         raise ValueError('Exactly SENSOR_A and SENSOR_B models are required')
@@ -82,7 +85,7 @@ def identify_sensor(points, models, config=None, *, boundary_points=()):
     active = [p for p in clean if p['pressure'] > config.pressure_threshold]
     result = dict(classification='AMBIGUOUS', reason='insufficient_contacts', fits={},
                   valid_points=len(clean), invalid_points=invalid, contacts=len(active),
-                  units='mm', calibrated=config.calibrated,
+                  units='mm', calibrated=config.calibrated, quick_preview=config.quick_preview,
                   search='finite multistart local optimization; not a global infeasibility certificate')
     inactive = valid_boundaries([p for p in clean if p['pressure'] <= config.pressure_threshold and p.get('normal') is not None])
     # Geometry remains valid when pressure is unknown. These points constrain
@@ -122,9 +125,27 @@ def identify_sensor(points, models, config=None, *, boundary_points=()):
     if limits:
         kwargs = dict(boundary_xyz=np.array([[p[k] for k in ('x','y','z')] for p in limits])*scale,
                       boundary_normals=np.array([p['normal'] for p in limits]))
-    result['fits'] = {name: fit_model(model, xyz, exclusions, radii, config, **kwargs)
-                      for name, model in sorted(models.items())}
+        # Only explicitly identified rigid-palm samples define a grasp prior.
+        # Finger normals and arbitrary-frame clouds must not invent a palm.
+        palm = [p for p in limits if p.get('link') == 'left_base_link'
+                or p.get('region') == 'palm']
+        if len(palm) >= 8:
+            kwargs.update(palm_xyz=np.array([[p[k] for k in ('x','y','z')] for p in palm])*scale,
+                          palm_normals=np.array([p['normal'] for p in palm]))
+    result['fits'] = {}
+    for name, model in sorted(models.items()):
+        fit_kwargs = dict(kwargs)
+        if progress:
+            def candidate_progress(event, candidate=name):
+                progress({**event, 'candidate': candidate})
+            fit_kwargs['progress'] = candidate_progress
+            candidate_progress(dict(stage='alignment', completed=0))
+        result['fits'][name] = fit_model(model, xyz, exclusions, radii, config, **fit_kwargs)
     fits = result['fits']
+    if config.quick_preview:
+        result['reason'] = 'quick_placement'
+        result['best_candidate'] = min(fits, key=lambda name: (not fits[name]['compatible'], fits[name]['score']))
+        return result
     compatible = [name for name, fit in fits.items() if fit['compatible']]
     if len(compatible) == 2:
         result['reason'] = 'both_candidates_compatible'

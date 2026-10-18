@@ -1,5 +1,6 @@
 """Read-only telemetry export; never imports or opens a hardware controller."""
 import json
+import uuid
 import math
 import threading
 from urllib.request import ProxyHandler, Request, build_opener
@@ -61,7 +62,9 @@ def robot_snapshot(robot, results):
         forces = [value - 65536 if number(value, 32768, 65535) else value
                   for value in forces]
     return {"simulated": not robot.is_connected, "angles": angles, "forces": forces,
-            "tactile": tactile, "tactile_valid": valid}
+            "tactile": tactile, "tactile_valid": valid,
+            **({"state": results["state"]} if results.get("state") else {}),
+            "slip_detected": bool(results.get("slip_detected", False))}
 
 
 def twin_payload(outputs):
@@ -81,6 +84,8 @@ def twin_payload(outputs):
         fingers.setdefault(key.split("_")[0], []).extend(values)
     return {
         "simulated": bool(outputs["simulated"]),
+        **({"state": outputs["state"]} if outputs.get("state") else {}),
+        "slip_detected": bool(outputs.get("slip_detected", False)),
         # Explicit null clears previous pose values on a failed read.
         "angles_set": None,
         "angles_act": vector(outputs["angles"], 0, 1000),
@@ -95,6 +100,8 @@ class TwinPublisher:
     """One background worker, one pending frame; CSV still keeps every sample."""
     def __init__(self, url="http://127.0.0.1:18765/api/state"):
         self.url = url
+        self.source_id = uuid.uuid4().hex
+        self.sample_index = 0
         self._lock = threading.Lock()
         self._signal = threading.Event()
         self._pending = None
@@ -106,8 +113,11 @@ class TwinPublisher:
         self._worker.start()
 
     def submit(self, outputs):
-        payload = json.dumps(twin_payload(outputs), allow_nan=False).encode("utf-8")
         with self._lock:
+            self.sample_index += 1
+            frame = {**twin_payload(outputs), "source_id": self.source_id,
+                     "sample_index": self.sample_index}
+            payload = json.dumps(frame, allow_nan=False).encode("utf-8")
             if self._closed:
                 return
             self._pending = payload

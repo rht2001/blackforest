@@ -42,9 +42,13 @@
     const out=value();if(i!==tokens.length||!Array.isArray(out))throw Error('Expected a numeric array.');return out;
   }
   const finite=x=>typeof x==='number'&&Number.isFinite(x);
-  function telemetry(row,regions) {
+  function actualAngles(row) {
     const angles=row.angles?.trim()?numericArray(row.angles):angleColumns.map(k=>String(row[k]??'').trim()?Number(row[k]):null);
     if(!Array.isArray(angles)||angles.length!==6||!angles.every(x=>finite(x)&&x>=0&&x<=1000))throw Error('This row does not contain six valid angles in 0..1000.');
+    return angles;
+  }
+  function telemetry(row,regions) {
+    const angles=actualAngles(row);
     const matrix=numericArray(row.tactile_matrix),tactile_regions={};
     if(matrix!==null){
       if(matrix.length!==112||matrix.some(r=>!Array.isArray(r)||r.length!==17))throw Error('tactile_matrix must be a complete 112 × 17 array; truncated exports cannot be reconstructed.');
@@ -62,7 +66,7 @@
     }
     return {angles_act:angles,tactile_regions,index:row.index||row._row,state:row.state||''};
   }
-  root.IdentificationHistory={records,numericArray,telemetry};
+  root.IdentificationHistory={records,numericArray,telemetry,actualAngles};
   if(typeof module!=='undefined')module.exports=root.IdentificationHistory;
 })(typeof globalThis==='undefined'?this:globalThis);
 
@@ -153,7 +157,7 @@
         addLimit({x,y,z,normal:c.normal,pressure:value,
           kind:value===null?'unknown_taxel':value>threshold?'contact_surface':'inactive_taxel',
           region:c.region,taxel_id:c.id,link:c.link,source_index:packet.index});
-        if(value!==null&&value>threshold&&(options.thumb_only===false||c.region.startsWith('thumb_')))cells.push({...c,value});
+        if(value!==null&&value>threshold&&(options.thumb_only!==true||c.region.startsWith('thumb_')))cells.push({...c,value});
       }
       for(const p of bodies){const [x,y,z]=p.xyz;addLimit({x,y,z,normal:p.normal,pressure:null,kind:'hand_boundary',link:p.link,surface_id:p.id,source_index:packet.index})}
       compactLimits();
@@ -195,7 +199,7 @@
         measurement_source:'csv_run',saved_name:options.name||run,received_at:null,field_received_at:{},
         hand_snapshot:handSnapshot,
         timestamp_basis:'CSV sample order; capture times and pose/tactile skew unavailable',
-        accumulation:{run_key:run,threshold,voxel_mm:voxelMm,thumb_only:options.thumb_only!==false,
+        accumulation:{run_key:run,threshold,voxel_mm:voxelMm,thumb_only:options.thumb_only===true,
           states:[...states],first_contact_index:first,last_contact_index:last,...stats,
           limit_spacing_mm:limitSpacing*1000,limit_max_points:maxLimits,
           limit_reduction:'Oriented spatial voxels; opposite normals and evidence roles kept separate. Spacing increases when needed to stay within the limit budget.',
@@ -208,16 +212,51 @@
   }
   function select(rows,key){const run=groups(rows).find(r=>r.key===key);if(!run)throw Error('Select one CSV run.');return {run,rows:rows.slice(run.start,run.end+1)}}
   function single(rows){if(groups(rows).length!==1)throw Error('Build one continuous run at a time; separate grasps require registration.');}
-  function build(rows,context,options={}){single(rows);const a=accumulator(context,options);rows.forEach(a.add);return a.finish()}
+  function selectedPoses(rows,context,options){
+    if(options.pose_selection===undefined||options.pose_selection==='all')return {rows,details:{pose_selection:'whole_sweep'}};
+    if(options.pose_selection!==undefined&&options.pose_selection!=='peak')throw Error('Unknown thumb pose selection.');
+    K.validateCalibration(context.profile,context.calibration);
+    const mapping=context.profile.control_mapping.thumb_bend,a=context.calibration.actuators.thumb_bend;
+    const rotation=context.profile.control_mapping.thumb_rotate;
+    if(!mapping||!a||!rotation)throw Error('Thumb bend and rotation calibration are required.');
+    const states=new Set(options.states||['thumb_probing','probing_complete']),groups=new Map();
+    let eligible=0,skippedState=0,skippedSlip=0;
+    rows.forEach((row,ordinal)=>{
+      if(row.state&&!states.has(row.state)){skippedState++;return}
+      if(row.slip_detected===true||String(row.slip_detected).toLowerCase()==='true'){skippedSlip++;return}
+      let angles;try{angles=H.actualAngles(row)}catch(e){throw Error('CSV row '+(row._row||row.index)+': '+e.message)}
+      let t=(angles[mapping.index]-a.raw_at_closed)/(a.raw_at_open-a.raw_at_closed);
+      if(a.reversed)t=1-t;
+      const bend=Math.abs((1-t)*(a.closed_angle_rad-a.open_angle_rad));
+      const key=angles[rotation.index],previous=groups.get(key);eligible++;
+      // One deepest bend for EACH recorded rotation; equal peaks use the last sample.
+      if(!previous||bend>=previous.bend-1e-12)groups.set(key,{row,angles,bend,ordinal});
+    });
+    if(!groups.size)throw Error('No usable probing poses in the selected run.');
+    const peaks=[...groups.values()].sort((a,b)=>a.ordinal-b.ordinal);
+    const selected=peaks.map(p=>({source_index:p.row.index||p.row._row,
+      thumb_rotation_raw:p.angles[rotation.index],thumb_bend_raw:p.angles[mapping.index],thumb_bend_rad:p.bend}));
+    return {rows:peaks.map(p=>p.row),details:{pose_selection:'maximum_bend_per_thumb_rotation',frames_total:rows.length,
+      frames_skipped_state:skippedState,frames_skipped_slip:skippedSlip,frames_skipped_pose:eligible-peaks.length,
+      thumb_rotation_groups:peaks.length,selected_source_indices:selected.map(p=>p.source_index),selected_poses:selected,
+      rotation_grouping:'Each distinct recorded thumb rotation reading; no interpolation or angle bins.',
+      selection_tie_break:'last sample at equal maximum bend within the same rotation'}};
+  }
+  function finishSelection(frame,selection){Object.assign(frame.accumulation,selection.details);return frame}
+  function build(rows,context,options={}){
+    single(rows);const selection=selectedPoses(rows,context,options),a=accumulator(context,options);
+    selection.rows.forEach(a.add);return finishSelection(a.finish(),selection);
+  }
   async function buildAsync(rows,context,options={}){
     single(rows);
-    const a=accumulator(context,options);
-    for(let i=0;i<rows.length;i++){
+    if(options.cancelled?.())throw Error('Run build cancelled.');
+    const selection=selectedPoses(rows,context,options),a=accumulator(context,options);
+    for(let i=0;i<selection.rows.length;i++){
       if(options.cancelled?.())throw Error('Run build cancelled.');
-      a.add(rows[i]);
-      if(i%20===0){options.progress?.(i+1,rows.length);await new Promise(resolve=>setTimeout(resolve,0))}
+      a.add(selection.rows[i]);
+      if(i%20===0){options.progress?.(i+1,selection.rows.length);await new Promise(resolve=>setTimeout(resolve,0))}
     }
-    return a.finish();
+    return finishSelection(a.finish(),selection);
   }
   function validateFrame(frame){
     if(frame?.valid!==true||frame.frame!=='left_base_link'||frame.units!=='m'||frame.measurement_source!=='csv_run'||!Array.isArray(frame.points)||(!frame.points.length&&!frame.boundary_points?.length)||frame.points.length>20000)throw Error('Expected an accumulated CSV-run cloud in left_base_link metres.');

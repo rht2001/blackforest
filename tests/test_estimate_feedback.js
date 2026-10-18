@@ -1,0 +1,18 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
+const source=fs.readFileSync(path.join(__dirname,'../digital_twin/sensor_identification/simulation.js'),'utf8');
+const context={module:{exports:{}},Date};vm.runInNewContext(source.split('/* One page:')[0],context);
+const {render,elapsed}=context.module.exports;
+assert.equal(elapsed(10,71),'1m 01s');
+const running=render({status:'running',started_at:10,input_label:'<bad>',progress:{stage:'alignment',candidate:'SENSOR_A',completed:24,total:168}},'',71);
+assert.ok(running.includes('1m 01s'));assert.ok(running.includes('24 / 168'));assert.ok(running.includes('&lt;bad&gt;'));assert.ok(!running.includes('<bad>'));
+const fit={compatible:false,rmse_mm:1.2,max_error_mm:3.4,inlier_fraction:.75,hand_limit_max_mm:.8,contact_tolerance_mm:1.5,hand_tolerance_mm:.25,rejection_reasons:['contact_outside_tolerance','hand_penetration']};
+const rejected=render({status:'complete',result:{classification:'AMBIGUOUS',contacts:12,fits:{SENSOR_A:fit}}});
+for(const text of ['Neither model fits','Rejected','3.40 mm','9 / 12','crosses the hand limits','too far from the surface'])assert.ok(rejected.includes(text),text);
+const provisional=render({status:'complete',result:{classification:'AMBIGUOUS',contacts:12,fits:{SENSOR_A:{...fit,compatible:true,rejection_reasons:[]}}}});
+assert.ok(provisional.includes('Provisional fit'));assert.ok(provisional.includes('identity is not confirmed'));
+const noContact=render({status:'complete',result:{classification:'AMBIGUOUS',contacts:0,hand_boundary_points:55,fits:{}}},'Hand sweep constrains space.');
+assert.ok(noContact.includes('No anchored pose'));assert.ok(noContact.includes('55 hand limits'));
+assert.ok(render({status:'connection_error',error:'<script>alert(1)</script>'}).includes('&lt;script&gt;'));
+assert.doesNotThrow(()=>render({status:'complete',result:{fits:{SENSOR_A:{}}}}));
+console.log('PASS running progress, elapsed time, fit diagnostics, ambiguity, no-contact feedback, missing metrics and HTML escaping');

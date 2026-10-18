@@ -64,7 +64,7 @@ their pressures remain unknown. Clouds without a reproducible hand pose retain
 only their recorded points.
 
 Both CAD surfaces receive the same multistart rigid alignment budget, followed
-by exact unsigned triangle refinement. No scaling is allowed. A and B fit well,
+by sampled local-surface refinement and optional full-mesh validation. No scaling is allowed. A and B fit well,
 neither fits within the search, insufficient coverage, calibration uncertainty
 and an unreliable alignment have different ambiguity reasons. Scores are costs,
 not probabilities; local search does not prove global infeasibility.
@@ -169,3 +169,129 @@ poses appear only on request in Fit report. Clouds without a reproducible hand
 pose remain report-only. CSV runs store the last contact-bearing hand pose;
 the overlay and hand-limit checks use that pose, while contact checks use all
 accumulated run contacts. This does not check collision at every earlier pose.
+
+
+### Lightweight run clouds: deepest bend at every rotation
+
+For each distinct recorded thumb rotation reading, reconstruction keeps the
+sample with maximum calibrated thumb bend. Equal bend maxima at the same
+rotation use the last sample. It combines these selected poses into an area
+of contact points and oriented hand-space limits, instead of collapsing the
+entire run to one deepest pose. No rotation bins or interpolated poses are
+introduced. Source order is preserved.
+
+Inactive taxels and hand surfaces are retained even if no contact activates.
+`accumulation.selected_poses` records rotation, bend and source index for every
+selected pose; `frames_skipped_pose` counts discarded intermediate bend frames.
+Reload the original CSV to rebuild a cloud with this selection. Existing JSON
+clouds are unchanged. The API's `pose_selection: 'all'` retains the full sweep
+when explicitly needed; the UI and CLI default to one bend peak per rotation.
+
+
+### Palm-guided initialization
+
+When explicitly labelled rigid-palm samples are available, fitting starts with
+a longitudinal grasp along the dominant palmar surface. Both axial directions,
+two roll orientations and three axial offsets receive the same search budget
+for each candidate. The first stage adjusts three translations and a turn about
+the palm normal (four DOF). Sampled surface refinement releases tilt (six rigid DOF).
+This is a geometric typical-grasp assumption, not a learned most-common pose or
+a requirement that the object touches the palm. No scale or hand articulation
+is fitted. No palm is inferred from arbitrary or finger-only clouds.
+
+Hand penetration residuals, including the worst local violation, now guide
+coarse pose correction and sampled surface refinement. One refinement slot is reserved
+for the best palm start; general multistart alignment remains available. The
+final exact triangle audit and strict contact/penetration gates still apply.
+Result metadata records the selected initialization and palm-start count.
+
+
+## Passive probing capture
+
+The normal local server records incoming probing telemetry without starting a
+probe or reading hardware. Received probing runs appear on the main page.
+Capture starts on the first received `thumb_probing` sample and ends on
+`probing_complete` or a return to `cylinder_confirmed`. Other states interrupt
+the run; 15 seconds without state-bearing telemetry also interrupts it.
+Interrupted runs can be opened explicitly but never auto-open as successful.
+The receiver may join midway through a probe; it cannot verify that it saw the
+physical start. Acquisition times and angle/pressure skew remain unverified.
+
+Completed runs automatically build a point-cloud preview using the existing
+deepest-bend-per-rotation reconstruction. Estimation still requires pressing
+Estimate. The automatic-open checkbox can be disabled. Captures persist across
+page reloads and receiver restarts; active runs at restart become interrupted.
+
+CSV and metadata are saved under
+`~/Documents/ChatGPT/hand/probing_situations/received_runs/` by default.
+Set `HAND_CAPTURE_DIR` on the receiver to override this folder. Capture is
+limited to 128 MiB per run; hitting the limit marks it interrupted. No recordings
+are automatically deleted. `GET /api/probing-runs` lists the latest 50 records;
+`GET /api/probing-runs/<id>` returns a finished run's CSV.
+
+The sender must POST its state together with six `angles_act` readings and
+`tactile_regions` matrices to `http://127.0.0.1:18765/api/state`. Missing regions
+remain unknown; partial packets never borrow cached angles or tactile readings.
+Optional `source_id` identifies one sender session, `sample_index` is a strictly
+increasing integer, and `slip_detected` is boolean. Only one source owns an active
+capture. The bundled `logic.twin_publisher` now forwards state/slip metadata and
+adds session/sample IDs; the sender process must load this updated code.
+The publisher's one-pending-frame policy can drop samples under load. Source
+sequence gaps and invalid skipped samples are reported in the capture metadata
+and cloud export; receiver capture does not promise every hardware sample.
+Scripts that send only angles/pressure need to add state metadata before
+automatic capture can work. The receiver remains bound to localhost; a script
+on another computer needs an explicit forwarding connection to this PC.
+
+
+When another computer runs the probing controller, the hand exposes its sensor
+readings but not that controller's software state. Use **Start capture** before
+their probe and **Finish capture** afterward if the local telemetry has no
+reliable probing states. These controls only open/close a receiver recording;
+they never send a hardware command. POST `/api/probing-runs` with
+`{"action":"start"}` or `{"action":"finish"}` is the equivalent local API.
+Manual captures use an explicit capture window for reconstruction, retain the
+incoming software state in `reported_state`, and export `capture_mode: manual`.
+A manual capture binds to the first sender delivering actual angles and tactile
+regions. It stays armed until those readings arrive, then the 15-second
+telemetry timeout applies. Local software states do not stop a manual capture.
+
+
+**Record when fingers close; finish when hand opens** is enabled by default.
+After observing all four primary fingers at raw angles >=850, the receiver arms.
+At least two primary fingers moving below 800 starts a finger-motion window,
+including up to ten preceding coherent samples from that same sender. All four
+primary fingers returning to >=850 for three consecutive coherent samples ends
+the window. This uses actual angles, not commanded angles, and follows the
+existing raw convention (1000=open). A timeout or receiver restart interrupts
+the window. If the viewer joins while the hand is closed, it waits for an open
+pose; Start capture remains available. Finish capture can end the window before
+the hand reopens. Captures export `capture_mode: closure` and the trigger values.
+This window includes closing/holding/opening rather than identifying exact
+remote probing boundaries. Incoming states are preserved as `reported_state`.
+The checkbox controls receiver detection only and sends no hand commands.
+POST `/api/probing-runs` with `{"action":"auto","enabled":false}` disables
+motion detection for the current receiver session without discarding a capture.
+
+
+### Quick placement (viewer default)
+
+The viewer defaults to Quick placement and a 3 mm position tolerance. This is
+a provisional visual pose estimate, not a validated sensor classification.
+Estimation settings also offers Detailed validation. API/CLI configurations
+retain detailed validation unless `quick_preview: true` is explicitly supplied.
+
+Each cached CAD model has 24,000 deterministic surface samples and a KD tree.
+Refinement uses the eight nearest samples to find nearby STL triangles and
+projects onto those local surfaces. Global nearest-triangle searches no longer
+run inside optimization, even in Detailed validation. Detailed validation uses
+the full mesh once per final pose for contact/clearance scoring and triangle
+penetration auditing. Quick placement skips these full-mesh final queries.
+
+Quick search uses at most 256 spatially spread contacts and 256 oriented hand
+limits, eight coarse iterations and fifteen refinement evaluations. It skips
+per-start hand correction, while hand residuals still rank starts and guide
+palm initialization and final refinement. All supplied contacts and limits
+are scored once at the final pose against sampled local surfaces; recordings
+and exported point clouds are unchanged. Quick scores and penetration values
+are approximate. The reported pose remains provisional even if calibrated.

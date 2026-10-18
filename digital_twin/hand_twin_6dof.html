@@ -95,7 +95,7 @@ const HandRenderer=(()=>{
   const p=program(gl);gl.useProgram(p);
   const locations={position:gl.getAttribLocation(p,'position'),color:gl.getAttribLocation(p,'vertexColor'),normal:gl.getAttribLocation(p,'normal'),
    vp:gl.getUniformLocation(p,'vp'),kind:gl.getUniformLocation(p,'kind'),size:gl.getUniformLocation(p,'pointSize')};
-  gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.clearColor(8/255,17/255,29/255,1);
+  gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.clearColor(16/255,20/255,25/255,1);
   let yaw=Math.atan2(.85,2.2),pitch=.32,zoom=1,dirty=true,frame=false,lost=false;
   const center=[0,15,130],resources=[];
   let viewProjection=null,pickHandler=null,cameraRight=null,cameraUp=null;
@@ -730,7 +730,7 @@ window.HandEstimate={
  show(name,fit,frame,threshold=200){
   this.clear();
   if(frame.frame!=='left_base_link'||!['mm','m'].includes(frame.units))throw Error('Estimate has no matching hand coordinate frame.');
-  if(!fit?.compatible)throw Error('This candidate violates contact or hand limits.');
+  if(!fit?.compatible&&fit?.quick_preview!==true)throw Error('This candidate violates contact or hand limits.');
   const index=['SENSOR_A','SENSOR_B'].indexOf(name),model=data.sensor_objects[index],matrix=fit.transform;
   if(!model||!Array.isArray(matrix)||matrix.length!==4||matrix.some(row=>!Array.isArray(row)||row.length!==4||!row.every(Number.isFinite)))throw Error('Invalid fitted pose.');
   if(!replay?.entry.handAvailable)throw Error('The capture has no reproducible hand pose. Use the fit report for this cloud.');
