@@ -38,11 +38,11 @@ def main():
             start = time.monotonic()
 
             results_data = robot.poll()
-            results_data = grasp_manager.step(robot, results_data)
-            app.main(state=results_data.get("state"))
-            db.main(data=results_data)
+            grasp_results = grasp_manager.step(robot, results_data)
+            app.main(state=grasp_results.get("state"))
+            db.main(data=grasp_results)
             if publisher is not None:
-                publisher.submit(robot_snapshot(robot, results_data))
+                publisher.submit(robot_snapshot(robot, grasp_results))
 
 
             elapsed = time.monotonic() - start
