@@ -33,7 +33,7 @@ class ThumbProber:
     ):
         # Rotation steps (reduced to 4 steps: omits 400 and 250 to minimize scan time, soft-limit at 995)
         self.rotation_steps = (
-            rotation_steps if rotation_steps is not None else [995, 850, 700, 550]
+            rotation_steps if rotation_steps is not None else [995, 850, 700]
         )
         self.retract_bend = retract_bend
         self.min_bend = min_bend
