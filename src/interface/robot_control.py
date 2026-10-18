@@ -10,7 +10,7 @@ DEFAULT_MOVEMENT_SPEED = [400] * 6
 
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 
-DEFAULT_FORCE = 1500
+DEFAULT_FORCE = 2000
 CLOSE_THRESHOLD = 50
 IMPULSE_REJECTION_WAIT_TIME = 0.25
 GRIP_ANGLE_THRESHOLD = 10  # Threshold for detecting if the hand is in a gripping position (0-1000 scale)
@@ -35,7 +35,7 @@ class RobotHandController:
         self.mock_angles = [1000] * 6
         self.last_sensor_data: dict[str, np.ndarray] = {}
         self.last_all_points = np.zeros((112, 17))
-        self.set_max_force(2000)
+        self.set_max_force(DEFAULT_FORCE)
         self.offsets = {
                 "Little": (150, 120),
                 "Ring":   (230, 110),
@@ -134,17 +134,17 @@ class RobotHandController:
             address = REGISTERS[type]
         else:
             raise ValueError(f"Unknown command target: {type}")
-
+        # QUESTION: Why is this here
         if type in ("ANGLES", "ANGLE_SET"):
             clamped_vals = []
-            for i, v in enumerate(value):
-                if v == 65535 or v == -1:
+            for index, send_value in enumerate(value):
+                if send_value == 65535 or send_value == -1:
                     clamped_vals.append(65535)
                 else:
-                    cv = max(SAFE_ANGLE_MIN, min(SAFE_ANGLE_MAX, int(v)))
+                    cv = max(SAFE_ANGLE_MIN, min(SAFE_ANGLE_MAX, int(send_value)))
                     clamped_vals.append(cv)
-                    self.current_angles[i] = cv
-                    self.mock_angles[i] = cv
+                    self.current_angles[index] = cv
+                    self.mock_angles[index] = cv
             value = clamped_vals
 
         if not self.is_connected or self.client is None:
