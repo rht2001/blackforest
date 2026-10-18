@@ -35,6 +35,7 @@ class RobotHandController:
         self.mock_angles = [1000] * 6
         self.last_sensor_data: dict[str, np.ndarray] = {}
         self.last_all_points = np.zeros((112, 17))
+        self.set_max_force(2000)
         self.offsets = {
                 "Little": (150, 120),
                 "Ring":   (230, 110),

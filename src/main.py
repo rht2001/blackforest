@@ -13,7 +13,6 @@ def main():
     Runs continously for continuous polling of GUI.
     """
     robot = RobotHandController(ip="192.168.123.210", port=6000)
-    robot.set_max_force(2000)
     grasp_manager = GraspManager()
     app = HandApp(robot, grasp_manager=grasp_manager)
     db = RobotDatabase()
@@ -33,9 +32,9 @@ def main():
             start = time.monotonic()
 
             results_data = robot.poll()
-            results_data = grasp_manager.step(robot, results_data)
-            app.main(state=results_data.get("state"), data=results_data)
-            db.main(data=results_data)
+            grasp_results = grasp_manager.step(robot, results_data)
+            app.main(state=grasp_results.get("state"), data=grasp_results)
+            db.main(data=grasp_results)
 
 
             elapsed = time.monotonic() - start
