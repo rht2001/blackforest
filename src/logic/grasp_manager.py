@@ -80,6 +80,8 @@ class GraspManager:
 
         self.thumb_prober = ThumbProber()
         self.probing_results: list[dict] = []
+        self.probe_state: str = "none"
+        self.probe_summary: dict[str, Any] = {}
         self.no_slip_start_time: float = 0.0
         self.no_slip_stability_duration: float = 0.4
         self.has_probed: bool = False
@@ -139,6 +141,8 @@ class GraspManager:
         self.was_slipping = False
         self.thumb_prober.reset(robot)
         self.probing_results.clear()
+        self.probe_state = "none"
+        self.probe_summary = {}
         self.no_slip_start_time = 0.0
         self.has_probed = False
         print("[GraspManager] Reset | state=OPEN")
@@ -440,9 +444,11 @@ class GraspManager:
                         print("[GraspManager] State: CYLINDER_CONFIRMED -> THUMB_PROBING | grip stable")
                         self.state = "thumb_probing"
                         self.has_probed = True
+                        self.probe_state = "probing"
+                        self.probe_summary = {}
                         self.contact_loss_start_time = 0.0
                         state_changed = True
-                        self.thumb_prober.start(robot, on_complete=self.on_probing_finished)
+                        self.thumb_prober.start(robot)
                 else:
                     self.no_slip_start_time = 0.0
 
@@ -461,23 +467,29 @@ class GraspManager:
                 self.state = "resetting"
                 self.reset_start_time = now
                 self.contact_loss_start_time = 0.0
+                self.probe_state = "none"
+                self.probe_summary = {}
                 self.slip_detector.reset()
                 self.was_slipping = False
                 state_changed = True
                 robot.open_hand()
             elif self.thumb_prober.is_finished:
                 self.probing_results = list(self.thumb_prober.results)
+                self.probe_state = self.thumb_prober.classification
+                self.probe_summary = dict(self.thumb_prober.summary)
                 self.state = "cylinder_confirmed"
                 self.no_slip_start_time = now
                 self.contact_loss_start_time = 0.0
-                state_changed = True
-                print(
-                    f"[GraspManager] State: THUMB_PROBING -> CYLINDER_CONFIRMED | probing complete (points={len(self.probing_results)})"
-                )
+                if total_finger_force >= 100.0:
+                    self.confirmed_forces = dict(primary_pressures)
+                    self.confirmed_total_force = total_finger_force
                 self.slip_detector.reset()
                 self.was_slipping = False
                 state_changed = True
-                robot.open_hand()
+                print(
+                    f"[GraspManager] State: THUMB_PROBING -> CYLINDER_CONFIRMED | "
+                    f"sensor={self.probe_state} | points={len(self.probing_results)}"
+                )
 
         # State: RESETTING
         elif self.state == "resetting":
@@ -490,6 +502,14 @@ class GraspManager:
                 self.contact_cleared = not contact_still_on
                 self.contact_triggered = False
                 self.state = "open"
+                self.confirmed_total_force = 0.0
+                self.confirmed_forces = {}
+                self.contact_loss_start_time = 0.0
+                self.no_slip_start_time = 0.0
+                self.has_probed = False
+                self.probing_results.clear()
+                self.probe_state = "none"
+                self.probe_summary = {}
                 self.slip_detector.reset()
                 self.was_slipping = False
                 state_changed = True
@@ -507,20 +527,17 @@ class GraspManager:
         data["probing_results"] = (
             self.thumb_prober.results if self.state == "thumb_probing" else self.probing_results
         )
+        data["probe_state"] = (
+            "probing" if self.state == "thumb_probing" else self.probe_state
+        )
+        data["probe_summary"] = self.probe_summary
         return data
 
     def on_probing_finished(self) -> None:
-        """Handles completion callback from the thumb probing routine.
-
-        Saves probed tactile contact points and reverts the state machine to
-        CYLINDER_CONFIRMED holding state.
-        """
-        print(
-            f"[GraspManager] State: THUMB_PROBING -> CYLINDER_CONFIRMED | probing finished (points={len(self.probing_results)})"
-        )
+        """Handles completion callback from the thumb probing routine."""
         self.probing_results = list(self.thumb_prober.results)
-        self.state = "cylinder_confirmed"
-        self.no_slip_start_time = time.time()
+        self.probe_state = self.thumb_prober.classification
+        self.probe_summary = dict(self.thumb_prober.summary)
 
     def restart_probing(self, robot: Any) -> None:
         """Manually triggers or restarts the autonomous thumb probing routine.
@@ -531,6 +548,8 @@ class GraspManager:
         print("[GraspManager] State: -> THUMB_PROBING | manual trigger")
         self.state = "thumb_probing"
         self.has_probed = True
+        self.probe_state = "probing"
+        self.probe_summary = {}
         self.contact_loss_start_time = 0.0
         self.no_slip_start_time = 0.0
-        self.thumb_prober.start(robot, on_complete=self.on_probing_finished)
+        self.thumb_prober.start(robot)
