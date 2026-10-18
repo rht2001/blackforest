@@ -21,7 +21,7 @@ def normalize_frame(frame):
     return frame
 
 
-def identify_frame(frame, models, *, tolerance_mm=3., calibrated=False, pressure_threshold=200., quick_preview=False, progress=None):
+def identify_frame(frame, models, *, tolerance_mm=3., hand_tolerance_mm=3., point_spacing_mm=2., calibrated=False, pressure_threshold=200., quick_preview=False, progress=None):
     """Frame validity must describe pose AND pressure, not just a fresh receipt."""
     if not isinstance(frame, dict) or frame.get('valid') is not True:
         return dict(classification='AMBIGUOUS', reason='invalid_or_stale_frame', fits={})
@@ -29,7 +29,7 @@ def identify_frame(frame, models, *, tolerance_mm=3., calibrated=False, pressure
     if frame.get('units') not in ('mm', 'm') or not isinstance(frame.get('frame'), str):
         raise ValueError('Explicit coordinate units and frame name required')
     return identify_sensor(frame.get('points'), models, IdentificationConfig(
-        coordinate_units=frame['units'], tolerance_mm=tolerance_mm,
+        coordinate_units=frame['units'], tolerance_mm=tolerance_mm, hand_tolerance_mm=hand_tolerance_mm, point_spacing_mm=point_spacing_mm,
         pressure_threshold=pressure_threshold, quick_preview=quick_preview,
         calibrated=calibrated and frame.get('geometry_status') == 'CALIBRATED'),
         boundary_points=frame.get('boundary_points', []), progress=progress)

@@ -12,7 +12,7 @@ from .classifier import IdentificationConfig, identify_sensor
 from .demo import synthetic_points, write_viewer
 from .geometry import load_candidates
 
-ESTIMATOR_REVISION = 'sampled_preview_v3'
+ESTIMATOR_REVISION = 'collision_roll_v4'
 
 
 class IdentificationService:
@@ -63,6 +63,8 @@ class IdentificationService:
             raise ValueError('Choose SENSOR_A, SENSOR_B, shared, or current')
         config = IdentificationConfig(pressure_threshold=request.get('threshold', 200.),
                                       tolerance_mm=request.get('tolerance_mm', 1.5),
+                                      hand_tolerance_mm=request.get('hand_tolerance_mm', 3.),
+                                      point_spacing_mm=request.get('point_spacing_mm', 2.),
                                       quick_preview=request.get('quick_preview', False))
         if mode == 'current' and not isinstance(request.get('frame'), dict):
             raise ValueError('A current measurement frame is required')
@@ -95,6 +97,7 @@ class IdentificationService:
                 # caller's CALIBRATED label as permission to bypass that gate.
                 result = identify_frame(frame, self._models,
                                         tolerance_mm=config.tolerance_mm,
+                                        hand_tolerance_mm=config.hand_tolerance_mm, point_spacing_mm=config.point_spacing_mm,
                                         pressure_threshold=config.pressure_threshold,
                                         calibrated=False, quick_preview=config.quick_preview, progress=self._progress)
                 points = frame.get('points', []) if frame.get('valid') is True else []
@@ -109,7 +112,7 @@ class IdentificationService:
                 model = self._models['SENSOR_A' if mode == 'shared' else mode]
                 points = synthetic_points(model, region='shared' if mode == 'shared' else 'full')
                 result = identify_sensor(points, self._models, IdentificationConfig(
-                    calibrated=True, tolerance_mm=config.tolerance_mm, quick_preview=config.quick_preview,
+                    calibrated=True, tolerance_mm=config.tolerance_mm, hand_tolerance_mm=config.hand_tolerance_mm, point_spacing_mm=config.point_spacing_mm, quick_preview=config.quick_preview,
                     pressure_threshold=config.pressure_threshold), progress=self._progress)
             self._progress(dict(stage='writing_report'))
             self.output.mkdir(parents=True, exist_ok=True)

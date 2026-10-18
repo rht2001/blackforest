@@ -1,6 +1,8 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 import json
 import re
 from dataclasses import replace
@@ -60,8 +62,14 @@ class StrictEstimateTests(unittest.TestCase):
         model=CandidateModel('box',trimesh.creation.box(extents=[10,10,10]),sample_count=1000)
         config=replace(IdentificationConfig(),tolerance_mm=10.,random_starts=1,
                        refine_starts=2,icp_iterations=8,max_nfev=20)
-        fit=fit_model(model,model.mesh.vertices,np.empty((0,3)),np.array([]),config,
-                      boundary_xyz=np.array([[0.,0.,4.]]),boundary_normals=np.array([[0.,0.,1.]]))
+        # Hold the pose fixed: test the acceptance gate independently of a
+        # search that can now move outside the patch at this large tolerance.
+        def freeze(fun, x0, **kwargs):
+            return SimpleNamespace(x=x0, success=True, nfev=1)
+        with patch('digital_twin.sensor_identification.matching.least_squares', side_effect=freeze), \
+             patch('digital_twin.sensor_identification.matching._rigid', return_value=(np.eye(3),np.zeros(3))):
+            fit=fit_model(model,model.mesh.vertices,np.empty((0,3)),np.array([]),config,
+                          boundary_xyz=np.array([[0.,0.,4.]]),boundary_normals=np.array([[0.,0.,1.]]))
         self.assertLess(fit['max_error_mm'],10.)
         self.assertFalse(fit['compatible'])
         self.assertIn('hand_penetration',fit['rejection_reasons'])

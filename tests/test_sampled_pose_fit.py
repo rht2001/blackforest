@@ -1,6 +1,7 @@
 from dataclasses import replace
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 import numpy as np
 import trimesh
@@ -8,6 +9,7 @@ import trimesh
 from digital_twin.sensor_identification.classifier import IdentificationConfig
 from digital_twin.sensor_identification.geometry import CandidateModel
 from digital_twin.sensor_identification.matching import fit_model
+from digital_twin.sensor_identification.limits import triangle_penetrations
 
 
 class SampledPoseFitTests(unittest.TestCase):
@@ -41,7 +43,7 @@ class SampledPoseFitTests(unittest.TestCase):
         self.assertEqual([len(call.args[0]) for call in exact.call_args_list], [8, 1]*fit['refinements'])
         self.assertEqual(fit['validation_method'], 'exact_full_mesh')
 
-    def test_quick_preview_avoids_full_mesh_and_scores_all_contacts(self):
+    def test_quick_preview_samples_contacts_but_audits_all_hand_patches(self):
         contacts = np.tile(self.model.mesh.vertices, (40, 1))
         contacts[-1] = [100., 100., 100.]
         boundary = np.tile([[0., -11., 0.]], (300, 1))
@@ -49,13 +51,17 @@ class SampledPoseFitTests(unittest.TestCase):
         config = replace(self.config, quick_preview=True, refine_starts=1, icp_iterations=2, max_nfev=3)
         with patch.object(self.model, 'nearest', side_effect=AssertionError('full mesh in preview')), \
                 patch('digital_twin.sensor_identification.matching.triangle_penetrations',
-                      side_effect=AssertionError('full audit in preview')):
+                      wraps=triangle_penetrations) as audit:
             fit = fit_model(self.model, contacts, np.empty((0, 3)), np.array([]), config,
                             boundary_xyz=boundary, boundary_normals=normals)
-        self.assertEqual(fit['validation_method'], 'sampled_preview')
-        self.assertEqual(fit['search_contact_points'], 256)
-        self.assertEqual(fit['search_hand_points'], 256)
-        self.assertEqual(fit['scored_contact_points'], len(contacts))
+        self.assertEqual(fit['validation_method'], 'sampled_contacts_exact_hand')
+        self.assertEqual(audit.call_count, fit['refinements'])
+        self.assertEqual(len(audit.call_args.args[3]), 1)
+        self.assertEqual(fit['search_contact_points'], 9)
+        self.assertEqual(fit['search_hand_points'], 1)
+        self.assertEqual(fit['scored_contact_points'], 9)
+        self.assertEqual(fit['input_contact_points'], len(contacts))
+        self.assertEqual(fit['input_hand_points'], len(boundary))
         self.assertGreater(fit['max_error_mm'], config.tolerance_mm)
 
     def test_preview_never_promotes_a_calibrated_pose_to_confirmed_identity(self):
@@ -72,10 +78,16 @@ class SampledPoseFitTests(unittest.TestCase):
 
     def test_exact_audit_rejects_crossings_hidden_by_sampled_nearest_surface(self):
         contacts = self.model.mesh.vertices.copy()
-        fit = fit_model(self.model, contacts, np.empty((0, 3)), np.array([]),
-                        replace(self.config, tolerance_mm=10.),
-                        boundary_xyz=np.array([[0., 0., 29.]]),
-                        boundary_normals=np.array([[0., 0., 1.]]))
+        # Freeze a known crossing pose to isolate the exact audit from the
+        # optimizer's ability to escape a finite hand patch.
+        def freeze(fun, x0, **kwargs):
+            return SimpleNamespace(x=x0, success=True, nfev=1)
+        with patch('digital_twin.sensor_identification.matching.least_squares', side_effect=freeze), \
+             patch('digital_twin.sensor_identification.matching._rigid', return_value=(np.eye(3),np.zeros(3))):
+            fit = fit_model(self.model, contacts, np.empty((0, 3)), np.array([]),
+                            replace(self.config, tolerance_mm=10.),
+                            boundary_xyz=np.array([[0., 0., 29.]]),
+                            boundary_normals=np.array([[0., 0., 1.]]))
         self.assertFalse(fit['compatible'])
         self.assertIn('hand_penetration', fit['rejection_reasons'])
 

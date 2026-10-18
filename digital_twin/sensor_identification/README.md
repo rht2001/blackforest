@@ -157,7 +157,7 @@ or non-contact reading. After refinement, every candidate triangle is audited
 against 8 by 8 mm tangent patches extending inward from the taxels and purple
 hand points. This catches crossings and enclosing shapes hidden by unsigned
 nearest-surface distance. The maximum allowed inward depth is independently
-0.25 mm; increasing contact tolerance never increases this allowance. These
+3 mm (adjustable hand penetration allowance); increasing contact tolerance never increases this allowance. These
 local patches are a conservative surface approximation, not a watertight hand
 collision certificate; unsampled gaps and inaccurate calibration remain limitations.
 
@@ -274,6 +274,22 @@ POST `/api/probing-runs` with `{"action":"auto","enabled":false}` disables
 motion detection for the current receiver session without discarding a capture.
 
 
+### Larger sensor first
+
+Candidates are tried in descending CAD bounding-envelope volume (open assembly
+STLs do not have a reliable solid volume). Quick placement keeps the larger
+sensor if every contact and hand constraint meets its existing tolerance;
+otherwise it tries the smaller sensor. Any hand penetration over 3 mm (adjustable hand penetration allowance) rejects
+a pose; collision counts report violated local hand constraints, not solid
+intersection events. A contact or certified-clearance failure also triggers
+fallback. If neither fits, the viewer automatically shows the rejected pose with the
+lowest fit score. Both rejected candidates remain selectable, with a visible
+warning and their contact/collision diagnostics. Displaying a rejected pose
+does not make it compatible or confirm its identity.
+Detailed validation still fits both candidates and preserves the identity and
+ambiguity gates, while the viewer prefers the larger compatible placement.
+Size preference is a placement prior, not proof of sensor identity.
+
 ### Quick placement (viewer default)
 
 The viewer defaults to Quick placement and a 3 mm position tolerance. This is
@@ -295,3 +311,34 @@ palm initialization and final refinement. All supplied contacts and limits
 are scored once at the final pose against sampled local surfaces; recordings
 and exported point clouds are unchanged. Quick scores and penetration values
 are approximate. The reported pose remains provisional even if calibrated.
+
+
+### Collision and orientation search update
+
+Quick placement now audits every supplied hand patch against the full sensor
+CAD before accepting a placement. Its contact distances remain
+approximate; the separate hand penetration allowance defaults to 3 mm and can
+be adjusted in Estimation settings. Rejected poses stay in the fit report.
+When neither candidate passes, the better rejected fit is displayed in the
+hand viewer with an explicit warning.
+During fitting, deeper sampled surface crossings guide the optimizer alongside
+nearest-surface distances. Palm initialization covers eight rolls over a full
+turn, fallback starts receive hand-aware correction in both modes, and six
+orientation-diverse poses are refined by default. Orientation is still inferred
+from the measured geometry; sparse contacts can leave several rolls plausible.
+These finite local patches still do not certify collision against unsampled
+hand volume.
+
+
+### Estimation point spacing
+
+Estimation settings now offers a separate point spacing, default 2 mm (0 disables
+thinning). A deterministic radius search keeps the first original observation
+and removes neighbors within that distance. Contact points and hand limits are
+reduced separately; hand patches whose normals differ by over 20 degrees remain
+separate. Thinning applies to fitting and final checks in both quality modes.
+The report shows checked/input counts. The original recording, displayed cloud,
+and exports remain intact. Certified clearance constraints are retained.
+This trades local detail for speed: increase spacing for fewer checks or set 0
+to validate every observation. Nearby points can contain distinct errors, so
+reduced checks may miss a violation present in the original dense cloud.

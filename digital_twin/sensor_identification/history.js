@@ -138,6 +138,8 @@
       if(poseCache.size>=24)poseCache.delete(poseCache.keys().next().value);
       poseCache.set(key,value);return value;
     }
+    // Keep one initial contact patch per closing finger; thumb probing continues.
+    const capturedFingers=new Map(),closingFingers=new Set(['little','ring','middle','index']);
     let first=null,last=null,handSnapshot=null;
     function add(row){
       stats.frames_total++;
@@ -151,14 +153,23 @@
       }
       const {solution,cells:surface,bodies}=pose(packet.angles_act),cells=[];
       stats.frames_reconstructed++;
+      const newlyContacting=new Set();
       for(const c of surface){
         const value=samples[c.region]?.values[c.wire_index]??null;
         const [x,y,z]=c.xyz;
         addLimit({x,y,z,normal:c.normal,pressure:value,
           kind:value===null?'unknown_taxel':value>threshold?'contact_surface':'inactive_taxel',
           region:c.region,taxel_id:c.id,link:c.link,source_index:packet.index});
-        if(value!==null&&value>threshold&&(options.thumb_only!==true||c.region.startsWith('thumb_')))cells.push({...c,value});
+        if(value!==null&&value>threshold&&(options.thumb_only!==true||c.region.startsWith('thumb_'))){
+          const finger=c.region.split('_')[0];
+          if(closingFingers.has(finger)){
+            if(capturedFingers.has(finger))continue;
+            newlyContacting.add(finger);
+          }
+          cells.push({...c,value});
+        }
       }
+      for(const finger of newlyContacting)capturedFingers.set(finger,packet.index);
       for(const p of bodies){const [x,y,z]=p.xyz;addLimit({x,y,z,normal:p.normal,pressure:null,kind:'hand_boundary',link:p.link,surface_id:p.id,source_index:packet.index})}
       compactLimits();
       if(cells.length){stats.frames_used++;first??=packet.index;last=packet.index}
@@ -201,6 +212,8 @@
         timestamp_basis:'CSV sample order; capture times and pose/tactile skew unavailable',
         accumulation:{run_key:run,threshold,voxel_mm:voxelMm,thumb_only:options.thumb_only===true,
           states:[...states],first_contact_index:first,last_contact_index:last,...stats,
+          finger_contact_selection:'first_contact_frame_per_finger',
+          finger_first_contact_indices:Object.fromEntries(capturedFingers),
           limit_spacing_mm:limitSpacing*1000,limit_max_points:maxLimits,
           limit_reduction:'Oriented spatial voxels; opposite normals and evidence roles kept separate. Spacing increases when needed to stay within the limit budget.',
           object_motion_assumption:'Object stationary relative to hand base; unverified by CSV.',

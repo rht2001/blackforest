@@ -2,8 +2,31 @@ import itertools
 
 import numpy as np
 from scipy.optimize import least_squares
+from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
-from .limits import penetration_residual, triangle_penetrations
+from .limits import penetration_residual, sampled_patch_penetrations, triangle_penetrations
+
+
+def _spaced_indices(points, spacing_mm, normals=None):
+    """Keep one original observation per radius neighborhood, deterministically.
+
+    Hand patches with normals differing by more than 20 degrees remain distinct.
+    Test true Euclidean distances so points across a voxel edge also merge.
+    """
+    if spacing_mm <= 0 or len(points) < 2:
+        return np.arange(len(points))
+    tree = cKDTree(points)
+    suppressed = np.zeros(len(points), dtype=bool)
+    chosen = []
+    for index in range(len(points)):
+        if suppressed[index]:
+            continue
+        chosen.append(index)
+        neighbors = np.asarray(tree.query_ball_point(points[index], spacing_mm), dtype=int)
+        if normals is not None:
+            neighbors = neighbors[normals[neighbors] @ normals[index] >= np.cos(np.deg2rad(20.))]
+        suppressed[neighbors] = True
+    return np.asarray(chosen, dtype=int)
 
 
 def _axes(points):
@@ -64,7 +87,7 @@ def _palm_starts(model, contacts, points, normals):
     model_center = model.mesh.bounds.mean(axis=0)
     starts = []
     for flip in (0., np.pi):
-        for roll in (0., np.pi/2):
+        for roll in np.arange(8)*np.pi/4:
             r = basis @ Rotation.from_euler('zx', [flip, roll]).as_matrix() @ model_axes.T
             for fraction in (0., -.35, .35):
                 anchor = model_center+fraction*np.ptp(model.samples@model_axes[:, 0])*model_axes[:, 0]
@@ -84,6 +107,16 @@ def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, 
     Transform convention: p_observation_mm = R @ p_stl_mm + t_mm.
     Local optimization does not certify global infeasibility.
     """
+    input_contact_points = len(contacts)
+    input_hand_points = len(boundary_xyz) if boundary_xyz is not None else 0
+    input_contacts = contacts
+    contacts = contacts[_spaced_indices(contacts, config.point_spacing_mm)]
+    if boundary_xyz is not None and len(boundary_xyz):
+        selected = _spaced_indices(boundary_xyz, config.point_spacing_mm, boundary_normals)
+        boundary_xyz, boundary_normals = boundary_xyz[selected], boundary_normals[selected]
+    if palm_xyz is not None and len(palm_xyz):
+        selected = _spaced_indices(palm_xyz, config.point_spacing_mm, palm_normals)
+        palm_xyz, palm_normals = palm_xyz[selected], palm_normals[selected]
     full_contacts = contacts
     full_boundary_xyz, full_boundary_normals = boundary_xyz, boundary_normals
     iterations = min(config.icp_iterations, 8) if config.quick_preview else config.icp_iterations
@@ -93,6 +126,7 @@ def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, 
             selected = _spread_indices(boundary_xyz, 256, boundary_normals)
             boundary_xyz, boundary_normals = boundary_xyz[selected], boundary_normals[selected]
     has_limits = boundary_xyz is not None and len(boundary_xyz) > 0
+    collision_samples = model.samples[_spread_indices(model.samples, 1536)] if has_limits else np.empty((0, 3))
     def limits(r, t, surface=False):
         if not has_limits:
             return np.array([])
@@ -101,9 +135,13 @@ def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, 
             closest = model.nearest_sampled(local)[0]
         else:
             closest = model.samples[model.tree.query(local)[1]]
-        return penetration_residual(closest@r.T+t, boundary_xyz, boundary_normals)
+        nearest = penetration_residual(closest@r.T+t, boundary_xyz, boundary_normals)
+        # The nearest surface may be outside while the far side crosses the
+        # hand. Include deeper surface samples in the optimization itself.
+        depth = sampled_patch_penetrations(collision_samples@r.T+t, boundary_xyz, boundary_normals)
+        return np.maximum(nearest, depth)
     center = contacts.mean(axis=0)
-    ca = _axes(contacts)
+    ca = _axes(contacts if len(contacts) >= 3 else input_contacts)
     ma = _axes(model.samples)
     rng = np.random.default_rng(config.seed)
     rotations = []
@@ -153,7 +191,6 @@ def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, 
         r, t = decode(opt.x)
         error = search_residual(r, t)
         coarse.append((float(np.mean(error**2)), r, t, 'palm_aligned'))
-    preferred_best = min(coarse, key=lambda item: item[0]) if coarse else None
     for start_index, (r, t) in enumerate(starts):
         if progress and start_index % 8 == 0:
             progress(dict(stage='alignment', completed=start_index, total=len(starts)))
@@ -165,14 +202,14 @@ def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, 
             r, t = nr, nt
             if delta < 1e-5:
                 break
-        if has_limits and not config.quick_preview:
+        if has_limits:
             # ICP alone ignores the hand. Correct each fallback pose with
             # contact AND hand residuals before deciding which starts survive.
             r0, t0 = r.copy(), t.copy()
             def decode_free(p):
                 return Rotation.from_rotvec(p[:3]).as_matrix()@r0, t0+p[3:]
             opt = least_squares(lambda p: search_residual(*decode_free(p)), np.zeros(6),
-                                x_scale=[1., 1., 1., 20., 20., 20.], max_nfev=config.icp_iterations)
+                                x_scale=[1., 1., 1., 20., 20., 20.], max_nfev=iterations)
             r, t = decode_free(opt.x)
         if has_limits:
             error = search_residual(r, t)
@@ -192,11 +229,19 @@ def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, 
         t = parameters[3:]
         return search_residual(r, t, surface=True)
     fits = []
-    selected = coarse[:config.refine_starts]
-    # Reserve an exact refinement for the typical grasp even when sampled CAD
-    # distances rank an accidental contact-only orientation ahead of it.
-    if preferred_best is not None and not any(item is preferred_best for item in selected):
-        selected = selected[:max(0, config.refine_starts-1)]+[preferred_best]
+    # Retain different orientations instead of spending all refinements on
+    # starts that converged to the same roll and translation.
+    selected = []
+    for item in coarse:
+        if all(Rotation.from_matrix(item[1]@other[1].T).magnitude() > np.pi/8
+               or np.linalg.norm(item[2]-other[2]) > 5. for other in selected):
+            selected.append(item)
+        if len(selected) == config.refine_starts:
+            break
+    if len(selected) < config.refine_starts:
+        selected.extend(item for item in coarse if not any(item is old for old in selected)
+                        )
+        selected = selected[:config.refine_starts]
     refinement_total = len(selected)
     for refinement_index, (_, r, t, initialization) in enumerate(selected):
         if progress:
@@ -216,12 +261,10 @@ def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, 
         # Audit every triangle in each hand patch before accepting a pose.
         if progress:
             progress(dict(stage='checking_limits', completed=refinement_index, total=refinement_total))
-        if has_limits and config.quick_preview:
-            closest = model.nearest_sampled((full_boundary_xyz-t)@r)[0]@r.T+t
-            boundary_error = penetration_residual(closest, full_boundary_xyz, full_boundary_normals)
-        else:
-            boundary_error = (triangle_penetrations(model, r, t, boundary_xyz, boundary_normals)
-                              if has_limits else np.array([]))
+        # Quick fitting may approximate contacts, but acceptance always audits
+        # the complete CAD against every retained representative hand patch.
+        boundary_error = (triangle_penetrations(model, r, t, full_boundary_xyz, full_boundary_normals)
+                          if has_limits else np.array([]))
         boundary_rmse = float(np.sqrt(np.mean(boundary_error**2))) if len(boundary_error) else 0.
         boundary_max = float(boundary_error.max()) if len(boundary_error) else 0.
         score = float(np.sqrt(rmse**2+penalty**2+boundary_rmse**2)/config.tolerance_mm)
@@ -232,10 +275,12 @@ def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, 
                          exclusion_rmse_mm=penalty,
                          exclusion_max_mm=float(contradiction.max()) if len(contradiction) else 0.,
                          hand_limit_rmse_mm=boundary_rmse, hand_limit_max_mm=boundary_max,
+                         hand_collision_count=int(np.count_nonzero(boundary_error > config.hand_tolerance_mm)),
+                         hand_constraints_checked=len(boundary_error),
                          transform=transform.tolist(), optimizer_success=bool(opt.success),
                          initialization=initialization,
                          refinement_method='sample_guided_local_triangles',
-                         validation_method='sampled_preview' if config.quick_preview else 'exact_full_mesh',
+                         validation_method='sampled_contacts_exact_hand' if config.quick_preview else 'exact_full_mesh',
                          quick_preview=config.quick_preview,
                          evaluations=int(opt.nfev)))
     for fit in fits:
@@ -258,6 +303,9 @@ def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, 
     best['search_contact_points'] = len(contacts)
     best['search_hand_points'] = len(boundary_xyz) if has_limits else 0
     best['scored_contact_points'] = len(full_contacts)
+    best['input_contact_points'] = input_contact_points
+    best['input_hand_points'] = input_hand_points
+    best['point_spacing_mm'] = config.point_spacing_mm
     best['refinements'] = len(fits)
     best['consistent_refinements'] = sum(abs(f['score']-best['score']) <= config.stability_margin for f in fits)
     return best

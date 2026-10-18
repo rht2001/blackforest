@@ -16,3 +16,15 @@ assert.ok(noContact.includes('No anchored pose'));assert.ok(noContact.includes('
 assert.ok(render({status:'connection_error',error:'<script>alert(1)</script>'}).includes('&lt;script&gt;'));
 assert.doesNotThrow(()=>render({status:'complete',result:{fits:{SENSOR_A:{}}}}));
 console.log('PASS running progress, elapsed time, fit diagnostics, ambiguity, no-contact feedback, missing metrics and HTML escaping');
+
+const quickRejected=render({status:'complete',result:{quick_preview:true,fits:{SENSOR_A:{...fit,quick_preview:true}}}});
+assert.ok(quickRejected.includes('Neither model fits'));
+assert.ok(quickRejected.includes('Rejected'));
+assert.ok(!quickRejected.includes('fit-good'));
+
+// Both frontend guards must track the estimator protocol on disk.
+const backendSource=fs.readFileSync(path.join(__dirname,'../digital_twin/sensor_identification/web_service.py'),'utf8');
+const estimatorRevision=backendSource.match(/ESTIMATOR_REVISION = '([^']+)'/)[1];
+const frontendRevisions=[...source.matchAll(/(?:state|backend)\.estimator_revision!=='([^']+)'/g)].map(match=>match[1]);
+assert.deepEqual(frontendRevisions,[estimatorRevision,estimatorRevision]);
+console.log('PASS frontend estimator checks match backend revision');

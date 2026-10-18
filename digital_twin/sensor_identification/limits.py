@@ -111,3 +111,25 @@ def triangle_penetrations(model, rotation, translation, points, normals, radius=
             triangles = (vertices[model.mesh.faces[indices]]-point)@basis
             errors[i] = triangle_patch_depth(triangles, radius)
     return errors
+
+
+def sampled_patch_penetrations(samples, points, normals, radius=4.):
+    """Deepest sampled surface in each inward patch, for search guidance only.
+
+    Use the same square patch frame as the exact triangle audit. Final checks
+    must still catch triangle interiors and small features between samples.
+    """
+    errors = np.zeros(len(points))
+    for start in range(0, len(points), 64):
+        p, n = points[start:start+64], normals[start:start+64]
+        helper = np.eye(3)[np.argmin(np.abs(n), axis=1)]
+        u = np.cross(n, helper)
+        u /= np.linalg.norm(u, axis=1)[:, None]
+        v = np.cross(n, u)
+        delta = samples[None, :, :]-p[:, None, :]
+        x = np.einsum('ijk,ik->ij', delta, u)
+        y = np.einsum('ijk,ik->ij', delta, v)
+        z = np.einsum('ijk,ik->ij', delta, n)
+        inside = (np.abs(x) <= radius) & (np.abs(y) <= radius)
+        errors[start:start+len(p)] = np.maximum(0., np.where(inside, -z, 0.).max(axis=1))
+    return errors

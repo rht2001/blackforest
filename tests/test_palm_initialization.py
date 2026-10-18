@@ -29,7 +29,7 @@ class PalmInitializationTests(unittest.TestCase):
 
     def test_starts_are_rigid_outside_palm_and_equivariant(self):
         starts, normal = _palm_starts(self.model, self.contacts, self.palm, self.normals)
-        self.assertEqual(len(starts), 12)
+        self.assertEqual(len(starts), 48)
         for r, t in starts:
             np.testing.assert_allclose(r.T@r, np.eye(3), atol=1e-10)
             self.assertGreaterEqual(((self.model.mesh.vertices@r.T+t)@normal).min(), -1e-8)
@@ -51,7 +51,7 @@ class PalmInitializationTests(unittest.TestCase):
                         palm_xyz=self.palm, palm_normals=self.normals, progress=events.append)
         self.assertTrue(fit['compatible'], fit)
         self.assertLessEqual(fit['hand_limit_max_mm'], self.config.hand_tolerance_mm)
-        self.assertEqual(fit['palm_starts_evaluated'], 12)
+        self.assertEqual(fit['palm_starts_evaluated'], 48)
         self.assertEqual(fit['palm_initial_dof'], 4)
         self.assertEqual(fit['refinement_dof'], 6)
         self.assertEqual(events[0]['stage'], 'palm_initialization')

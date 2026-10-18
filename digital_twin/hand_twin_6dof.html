@@ -730,7 +730,6 @@ window.HandEstimate={
  show(name,fit,frame,threshold=200){
   this.clear();
   if(frame.frame!=='left_base_link'||!['mm','m'].includes(frame.units))throw Error('Estimate has no matching hand coordinate frame.');
-  if(!fit?.compatible&&fit?.quick_preview!==true)throw Error('This candidate violates contact or hand limits.');
   const index=['SENSOR_A','SENSOR_B'].indexOf(name),model=data.sensor_objects[index],matrix=fit.transform;
   if(!model||!Array.isArray(matrix)||matrix.length!==4||matrix.some(row=>!Array.isArray(row)||row.length!==4||!row.every(Number.isFinite)))throw Error('Invalid fitted pose.');
   if(!replay?.entry.handAvailable)throw Error('The capture has no reproducible hand pose. Use the fit report for this cloud.');

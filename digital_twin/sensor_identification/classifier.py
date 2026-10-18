@@ -12,7 +12,8 @@ from .limits import valid_boundaries
 class IdentificationConfig:
     pressure_threshold: float = 200.
     tolerance_mm: float = 1.5
-    hand_tolerance_mm: float = .25
+    hand_tolerance_mm: float = 3.
+    point_spacing_mm: float = 2.
     coordinate_units: str = 'mm'
     calibrated: bool = False
     quick_preview: bool = False
@@ -23,7 +24,7 @@ class IdentificationConfig:
     stability_margin: float = .35
 
     random_starts: int = 4
-    refine_starts: int = 2
+    refine_starts: int = 6
     icp_iterations: int = 15
     max_nfev: int = 25
     """""
@@ -42,6 +43,8 @@ class IdentificationConfig:
         for key in ('tolerance_mm', 'hand_tolerance_mm', 'min_spread_mm', 'score_margin', 'stability_margin'):
             if not np.isfinite(getattr(self, key)) or getattr(self, key) <= 0:
                 raise ValueError(key+' must be finite and positive')
+        if isinstance(self.point_spacing_mm, bool) or not np.isfinite(self.point_spacing_mm) or self.point_spacing_mm < 0:
+            raise ValueError('point_spacing_mm must be finite and nonnegative')
         if not np.isfinite(self.pressure_threshold) or not 0 <= self.pressure_threshold <= 4095:
             raise ValueError('Invalid pressure threshold')
         if not 0 < self.min_inlier_fraction <= 1 or not isinstance(self.calibrated, bool):
@@ -133,7 +136,13 @@ def identify_sensor(points, models, config=None, *, boundary_points=(), progress
             kwargs.update(palm_xyz=np.array([[p[k] for k in ('x','y','z')] for p in palm])*scale,
                           palm_normals=np.array([p['normal'] for p in palm]))
     result['fits'] = {}
-    for name, model in sorted(models.items()):
+    # Assembly STLs may be open, so signed mesh volume is not a size measure.
+    # Use the CAD bounding envelope in mm, independent of sensor names.
+    ordered = sorted(models, key=lambda name: (-float(np.prod(models[name].mesh.extents)), name))
+    result['candidate_order'] = ordered
+    result['placement_policy'] = 'larger_first_with_smaller_fallback'
+    for name in ordered:
+        model = models[name]
         fit_kwargs = dict(kwargs)
         if progress:
             def candidate_progress(event, candidate=name):
@@ -141,10 +150,22 @@ def identify_sensor(points, models, config=None, *, boundary_points=(), progress
             fit_kwargs['progress'] = candidate_progress
             candidate_progress(dict(stage='alignment', completed=0))
         result['fits'][name] = fit_model(model, xyz, exclusions, radii, config, **fit_kwargs)
+        # Quick placement only needs the first acceptable size. Detailed mode
+        # retains both searches for the independent identity/ambiguity gates.
+        if config.quick_preview and result['fits'][name]['compatible']:
+            break
     fits = result['fits']
+    acceptable = [name for name in ordered if name in fits and fits[name]['compatible']]
+    if acceptable:
+        result['placement_candidate'] = acceptable[0]
+        result['placement_reason'] = ('larger_candidate_fits' if acceptable[0] == ordered[0]
+                                      else 'smaller_candidate_after_larger_rejected')
+    else:
+        result['placement_reason'] = 'neither_candidate_fits'
+    result['larger_rejection_reasons'] = fits[ordered[0]].get('rejection_reasons', [])
     if config.quick_preview:
         result['reason'] = 'quick_placement'
-        result['best_candidate'] = min(fits, key=lambda name: (not fits[name]['compatible'], fits[name]['score']))
+        result['best_candidate'] = result.get('placement_candidate') or min(fits, key=lambda name: (not fits[name]['compatible'], fits[name]['score']))
         return result
     compatible = [name for name, fit in fits.items() if fit['compatible']]
     if len(compatible) == 2:

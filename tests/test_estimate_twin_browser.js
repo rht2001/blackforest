@@ -9,9 +9,9 @@ const {chromium}=require('playwright');
   let reject=false,request,oldBackend=false,posts=0;
   const matrix=[[0,-1,0,22],[1,0,0,-13],[0,0,1,55],[0,0,0,1]];
   await page.route('http://127.0.0.1:18765/api/identification',route=>{
-   if(route.request().method()==='GET')return route.fulfill({json:{status:'idle',estimator_revision:oldBackend?null:'sampled_preview_v3'}});
+   if(route.request().method()==='GET')return route.fulfill({json:{status:'idle',estimator_revision:oldBackend?null:'collision_roll_v4'}});
    posts++;request=route.request().postDataJSON();
-   return route.fulfill({json:{status:'complete',estimator_revision:'sampled_preview_v3',job_id:'test',input_label:'test capture',report_url:'/identification/report',result:{classification:'AMBIGUOUS',reason:'calibration_unverified',fits:{SENSOR_A:{compatible:!reject,score:.1,rmse_mm:.1,transform:matrix},SENSOR_B:{compatible:!reject,score:.2,rmse_mm:.2,transform:matrix}}}}});
+   return route.fulfill({json:{status:'complete',estimator_revision:'collision_roll_v4',job_id:'test',input_label:'test capture',report_url:'/identification/report',result:{classification:'AMBIGUOUS',reason:'calibration_unverified',fits:{SENSOR_A:{compatible:!reject,score:.1,rmse_mm:.1,transform:matrix},SENSOR_B:{compatible:!reject,score:.2,rmse_mm:.2,transform:matrix}}}}});
   });
   await page.goto(pathToFileURL(path.resolve(__dirname,'../digital_twin/hand_twin_6dof.html')).href);
   await page.waitForFunction(()=>document.querySelector('#onePageApp')&&window.HandEstimate,null,{timeout:60000});
@@ -44,9 +44,13 @@ const {chromium}=require('playwright');
   fs.mkdirSync(verification,{recursive:true});
   await page.screenshot({path:path.join(verification,'estimate-in-twin.png')});
   reject=true;await page.click('#estimateButton');
-  await page.waitForFunction(()=>document.querySelector('#estimateStatus').textContent.includes('No valid STL pose'));
-  assert.equal(await page.evaluate(()=>document.querySelector('#profileScene0').data.filter(t=>t.name?.startsWith('Estimated ')&&t.visible).length),0);
-  assert.equal(await page.isDisabled('#showEstimate'),true);
+  await page.waitForFunction(()=>!document.querySelector('#estimatePoseWarning').hidden);
+  assert.equal(await page.evaluate(()=>document.querySelector('#profileScene0').data.find(t=>t.name==='Estimated SENSOR_A').visible),true);
+  assert.equal(await page.isDisabled('#showEstimate'),false);
+  assert.ok((await page.locator('#estimateCandidate option:checked').textContent()).includes('REJECTED'));
+  await page.selectOption('#estimateCandidate','SENSOR_B');
+  assert.equal(await page.evaluate(()=>document.querySelector('#profileScene0').data.find(t=>t.name==='Estimated SENSOR_B').visible),true);
+  assert.equal(await page.isVisible('#estimatePoseWarning'),true);
   await page.click('#dataManual');
   reject=false;
   const accumulated=await page.evaluate(()=>{
@@ -65,6 +69,6 @@ const {chromium}=require('playwright');
   await page.waitForFunction(()=>document.querySelector('#estimateStatus').textContent.includes('Restart the simulation launcher'));
   assert.equal(posts,previousPosts,'An old backend must not run the permissive estimator');
   assert.deepEqual(errors,[]);
-  console.log('PASS frozen hand overlay, STL-mm to base-metres transform, red contacts, rejected-pose removal and mode changes; no browser errors');
+  console.log('PASS frozen hand overlay, STL-mm to base-metres transform, red contacts, best rejected-pose display, candidate switching and mode changes; no browser errors');
  }finally{await browser.close()}
 })().catch(e=>{console.error(e);process.exitCode=1});
