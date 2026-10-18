@@ -187,8 +187,8 @@ class ThumbProber:
         self, blocked_at_start: bool = False, blocked_bend: int | None = None
     ) -> tuple[str, dict[str, Any]]:
         """
-        Distinguishes VEGABAR 38 (object present in thumb probing space) from
-        VEGABAR 29 (free-air thumb flexion where ~35-36g is thumb weight/friction at Bend ~540).
+        Distinguishes VEGABAR 38 (early contact at shallow bend >= 700) from
+        VEGABAR 29 (no contact or deep flexion contact at bend < 700).
         """
         if blocked_at_start:
             self.classification = "VEGABAR 38"
@@ -215,16 +215,20 @@ class ThumbProber:
         mean_bend = float(np.mean(bends))
         mean_force = float(np.mean(forces))
 
+        # A step is a VEGABAR 38 object hit if contact occurs at bend_angle >= 600
+        # with real resistance (force >= 50g, tactile pad touch, preload, or very early stop >= 700).
+        # Contacts below bend_angle < 600 (e.g. 514-564 free-air drift or 262 bottom-out) are VEGABAR 29.
         object_hits = 0
         for r in self.results:
-            is_tactile_hit = r.get("sensor_name", "Thumb Force Sensor") != "Thumb Force Sensor"
-            is_early_bend = float(r.get("bend_angle", 0.0)) >= 700.0
-            is_high_force = float(r.get("contact_force", 0.0)) >= 55.0
-            is_preloaded = float(r.get("resting_force", 0.0)) >= 45.0
-            if is_tactile_hit or is_early_bend or is_high_force or is_preloaded:
+            bend_val = float(r.get("bend_angle", 0.0))
+            force_val = float(r.get("contact_force", 0.0))
+            rest_val = float(r.get("resting_force", 0.0))
+            is_tactile = r.get("sensor_name", "Thumb Force Sensor") != "Thumb Force Sensor"
+
+            if bend_val >= 600.0 and (force_val >= 50.0 or bend_val >= 700.0 or is_tactile or rest_val >= 45.0):
                 object_hits += 1
 
-        if object_hits >= 2 or mean_bend >= 700.0 or mean_force >= 55.0:
+        if object_hits >= 2 or (object_hits >= 1 and mean_bend >= 650.0):
             self.classification = "VEGABAR 38"
         else:
             self.classification = "VEGABAR 29"
