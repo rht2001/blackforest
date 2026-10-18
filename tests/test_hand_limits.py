@@ -43,6 +43,7 @@ class LimitsTests(unittest.TestCase):
         self.assertEqual(len(fn.call_args.args[1]),12)
         # Boundaries never count as contacts, even in a manual snapshot.
         r=identify_sensor([],dict(SENSOR_A=object(),SENSOR_B=object()),boundary_points=[boundary])
-        self.assertEqual(r['reason'],'insufficient_contacts');self.assertFalse(r['fits'])
+        self.assertEqual(r['reason'],'space_constraints_only');self.assertFalse(r['fits'])
+        self.assertTrue(r['space_constraints_available']);self.assertFalse(r['contact_anchor_available'])
 
 if __name__=='__main__':unittest.main()

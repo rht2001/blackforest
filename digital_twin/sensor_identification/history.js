@@ -98,8 +98,42 @@
     const {profile,geometry,calibration}=context;
     K.validateCalibration(profile,calibration);
     if(geometry.profile!==context.id)throw Error('Geometry and hand profile differ.');
+    if(context.boundaries?.geometry_sha256&&context.boundaries.geometry_sha256!==geometry.geometry_sha256)throw Error('Hand boundary geometry differs from the taxel model.');
     const voxels=new Map(),voxel=voxelMm/1000,run=options.run_key||'run',states=new Set(options.states||['thumb_probing','probing_complete']);
-    const stats={frames_total:0,frames_used:0,frames_skipped_state:0,frames_skipped_slip:0,frames_without_contact:0,contact_observations:0,unique_points:0};
+    const stats={frames_total:0,frames_reconstructed:0,frames_used:0,frames_skipped_state:0,frames_skipped_slip:0,frames_without_contact:0,contact_observations:0,limit_observations:0,unique_points:0};
+    let limits=new Map(),limitSpacing=Math.max(2,voxelMm)/1000;
+    const poseCache=new Map(),maxLimits=4096;
+    const limitKey=p=>[p.kind,...[p.x,p.y,p.z].map(v=>Math.floor(v/limitSpacing)),...p.normal.map(v=>Math.round(v*2))].join(':');
+    function addLimit(point){
+      const key=limitKey(point),previous=limits.get(key);
+      if(previous){previous.observations++;previous.last_source_index=point.source_index}
+      else limits.set(key,{...point,observations:1,first_source_index:point.source_index,last_source_index:point.source_index});
+      stats.limit_observations++;
+    }
+    function compactLimits(){
+      while(limits.size>maxLimits){
+        limitSpacing*=1.25;const reduced=new Map();
+        for(const p of limits.values()){
+          const key=limitKey(p),old=reduced.get(key);
+          if(old){old.observations+=p.observations;old.last_source_index=p.last_source_index}
+          else reduced.set(key,p);
+        }
+        limits=reduced;
+      }
+    }
+    function pose(angles){
+      const key=angles.join(',');
+      if(poseCache.has(key))return poseCache.get(key);
+      const solution=K.solve(profile,angles,calibration),inverse=T.inverseRigid(solution.frames.left_base_link);
+      const cells=T.cells(geometry,solution,{},threshold).map(c=>({...c,xyz:K.point(inverse,c.position_world_m),normal:T.direction(inverse,c.normal_world)}));
+      const bodies=(context.boundaries?.points||[]).filter(p=>solution.frames[p.link]).map(p=>{
+        const transform=K.mul(inverse,solution.frames[p.link]);
+        return {...p,xyz:K.point(transform,p.point_m),normal:T.direction(transform,p.normal)};
+      });
+      const value={solution,cells,bodies};
+      if(poseCache.size>=24)poseCache.delete(poseCache.keys().next().value);
+      poseCache.set(key,value);return value;
+    }
     let first=null,last=null,handSnapshot=null;
     function add(row){
       stats.frames_total++;
@@ -109,15 +143,22 @@
       try{packet=H.telemetry(row,P.regions)}catch(e){throw Error('CSV row '+(row._row||row.index)+': '+e.message)}
       const samples={};
       for(const [key,matrix] of Object.entries(packet.tactile_regions)){
-        if(options.thumb_only!==false&&!key.startsWith('thumb_'))continue;
         samples[key]={values:matrix.flat()};
       }
-      if(!Object.values(samples).some(s=>s.values.some(v=>v>threshold))){stats.frames_without_contact++;return}
-      const solution=K.solve(profile,packet.angles_act,calibration);
-      const inverse=T.inverseRigid(solution.frames.left_base_link);
-      const cells=T.cells(geometry,solution,samples,threshold).filter(c=>c.active);
-      if(!cells.length){stats.frames_without_contact++;return}
-      stats.frames_used++;first??=packet.index;last=packet.index;
+      const {solution,cells:surface,bodies}=pose(packet.angles_act),cells=[];
+      stats.frames_reconstructed++;
+      for(const c of surface){
+        const value=samples[c.region]?.values[c.wire_index]??null;
+        const [x,y,z]=c.xyz;
+        addLimit({x,y,z,normal:c.normal,pressure:value,
+          kind:value===null?'unknown_taxel':value>threshold?'contact_surface':'inactive_taxel',
+          region:c.region,taxel_id:c.id,link:c.link,source_index:packet.index});
+        if(value!==null&&value>threshold&&(options.thumb_only===false||c.region.startsWith('thumb_')))cells.push({...c,value});
+      }
+      for(const p of bodies){const [x,y,z]=p.xyz;addLimit({x,y,z,normal:p.normal,pressure:null,kind:'hand_boundary',link:p.link,surface_id:p.id,source_index:packet.index})}
+      compactLimits();
+      if(cells.length){stats.frames_used++;first??=packet.index;last=packet.index}
+      else stats.frames_without_contact++;
       // Keep a reproducible display pose, never the unrelated current hand.
       handSnapshot={schema_version:1,profile:geometry.profile,frame:'left_base_link',units:'metres',
         geometry_status:geometry.geometry_status,geometry_sha256:geometry.geometry_sha256,
@@ -125,9 +166,9 @@
         angles_act:packet.angles_act.slice(),kinematics_calibration:K.clone(calibration),
         joint_angles_rad:{...solution.q},received_at:null,field_received_at:{},
         points:cells.map(c=>({id:c.id,region:c.region,link:c.link,wire_index:c.wire_index,
-          value:c.value,position_m:K.point(inverse,c.position_world_m),normal:T.direction(inverse,c.normal_world)})),centroids:[]};
+          value:c.value,position_m:c.xyz,normal:c.normal})),centroids:[]};
       for(const cell of cells){
-        const [x,y,z]=K.point(inverse,cell.position_world_m);
+        const [x,y,z]=cell.xyz;
         const key=[x,y,z].map(v=>Math.floor(v/voxel)).join(':');
         const point={id:run+':voxel:'+key,x,y,z,pressure:cell.value,region:cell.region,taxel_id:cell.id,source_index:packet.index};
         const previous=voxels.get(key);
@@ -143,7 +184,12 @@
     function finish(){
       stats.unique_points=voxels.size;
       if(voxels.size>20000)throw Error('Run exceeds 20,000 spatial contacts. Increase point spacing or select a shorter run.');
-      if(!voxels.size)throw Error('No valid '+(options.thumb_only===false?'':'thumb ')+'contacts above '+threshold+' in the selected probing run.');
+      if(!limits.size)throw Error('No usable probing poses in the selected run.');
+      const boundaryPoints=[...limits.entries()].map(([key,p])=>({...p,id:run+':limit:'+key}));
+      stats.boundary_points=boundaryPoints.length;
+      stats.inactive_taxel_limits=boundaryPoints.filter(p=>p.kind==='inactive_taxel').length;
+      stats.unknown_taxel_limits=boundaryPoints.filter(p=>p.kind==='unknown_taxel').length;
+      stats.hand_surface_limits=boundaryPoints.filter(p=>p.kind==='hand_boundary').length;
       return {schema_version:1,valid:true,frame:'left_base_link',units:'m',geometry_status:geometry.geometry_status,
         geometry_sha256:geometry.geometry_sha256,reference_sha256:geometry.reference_sha256,
         measurement_source:'csv_run',saved_name:options.name||run,received_at:null,field_received_at:{},
@@ -151,10 +197,12 @@
         timestamp_basis:'CSV sample order; capture times and pose/tactile skew unavailable',
         accumulation:{run_key:run,threshold,voxel_mm:voxelMm,thumb_only:options.thumb_only!==false,
           states:[...states],first_contact_index:first,last_contact_index:last,...stats,
+          limit_spacing_mm:limitSpacing*1000,limit_max_points:maxLimits,
+          limit_reduction:'Oriented spatial voxels; opposite normals and evidence roles kept separate. Spacing increases when needed to stay within the limit budget.',
           object_motion_assumption:'Object stationary relative to hand base; unverified by CSV.',
           pressure_basis:'Recorded sensor units; missing reads and pressure calibration unverified.',
           reduction:'One maximum-pressure observed contact per spatial voxel; observation count does not weight fitting.'},
-        points:[...voxels.values()]};
+        boundary_points:boundaryPoints,points:[...voxels.values()]};
     }
     return {add,finish};
   }
@@ -172,11 +220,19 @@
     return a.finish();
   }
   function validateFrame(frame){
-    if(frame?.valid!==true||frame.frame!=='left_base_link'||frame.units!=='m'||frame.measurement_source!=='csv_run'||!Array.isArray(frame.points)||!frame.points.length||frame.points.length>20000)throw Error('Expected an accumulated CSV-run cloud in left_base_link metres (up to 20,000 contacts).');
+    if(frame?.valid!==true||frame.frame!=='left_base_link'||frame.units!=='m'||frame.measurement_source!=='csv_run'||!Array.isArray(frame.points)||(!frame.points.length&&!frame.boundary_points?.length)||frame.points.length>20000)throw Error('Expected an accumulated CSV-run cloud in left_base_link metres.');
     const ids=new Set();
     for(const p of frame.points){
       if(!p||typeof p.id!=='string'||ids.has(p.id)||!['x','y','z','pressure'].every(k=>typeof p[k]==='number'&&Number.isFinite(p[k]))||['x','y','z'].some(k=>Math.abs(p[k])>10)||p.pressure<0||p.pressure>4095)throw Error('Invalid accumulated contact point.');
       ids.add(p.id);
+    }
+    if(frame.boundary_points!==undefined){
+      if(!Array.isArray(frame.boundary_points)||frame.boundary_points.length>4096)throw Error('Expected up to 4096 oriented hand limits.');
+      for(const p of frame.boundary_points){
+        if(!p||typeof p.id!=='string'||ids.has(p.id)||!['x','y','z'].every(k=>typeof p[k]==='number'&&Number.isFinite(p[k])&&Math.abs(p[k])<=10)||!Array.isArray(p.normal)||p.normal.length!==3||!p.normal.every(Number.isFinite)||Math.abs(Math.hypot(...p.normal)-1)>.1)throw Error('Invalid oriented hand limit.');
+        if(p.pressure!==null&&(typeof p.pressure!=='number'||!Number.isFinite(p.pressure)||p.pressure<0||p.pressure>4095))throw Error('Invalid limit pressure evidence.');
+        ids.add(p.id);
+      }
     }
     return JSON.parse(JSON.stringify(frame));
   }

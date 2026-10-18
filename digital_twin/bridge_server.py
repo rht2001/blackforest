@@ -12,6 +12,7 @@ import argparse
 from copy import deepcopy
 import json
 import math
+import os
 import threading
 import time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -19,6 +20,9 @@ from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
 
 from tactile_layout import REGIONS
+from server_config import HOST, PORT, WORKSPACE, source_signature
+
+SERVER_SIGNATURE = source_signature()
 
 FIELDS = ('angles', 'angles_set', 'angles_act', 'force_act', 'position_act', 'tactile', 'tactile_regions', 'tactile_means', 'source', 'simulated')
 STATE = {'angles_set': None, 'angles_act': None, 'force_act': None, 'tactile': {}, 'tactile_regions': {}, 'field_received_at': {}, 'received_at': 0, 'seq': 0}
@@ -159,7 +163,8 @@ class Handler(BaseHTTPRequestHandler):
             except FileNotFoundError:self.respond_json({'error':'HTML file not found'},404)
         elif self.path in ('/api/state','/api/state/'):
             with LOCK: self.respond_json(dict(STATE))
-        elif self.path == '/health':self.respond_json({'status':'ok','mode':'read-only-from-hand'})
+        elif self.path == '/health':self.respond_json({'status':'ok','mode':'read-only-from-hand',
+            'workspace':str(WORKSPACE), 'pid':os.getpid(), 'source_signature':SERVER_SIGNATURE})
         else:self.respond_json({'error':'Not found'},404)
     def do_POST(self):
         if self.path == '/api/identification':
@@ -241,13 +246,13 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     global HTML
     ap=argparse.ArgumentParser(description='Read-only telemetry bridge for RH56DFTP viewer')
-    ap.add_argument('--port',type=int,default=18765)
+    ap.add_argument('--port',type=int,default=PORT)
     ap.add_argument('--open-browser', action='store_true', help='Open the local viewer')
     ap.add_argument('--view',choices=['3d','tactile'],default='3d')
     args=ap.parse_args()
     if args.view=='tactile':HTML=TACTILE_HTML
     if not 1<=args.port<=65535: ap.error('Invalid TCP port')
-    server=ThreadingHTTPServer(('127.0.0.1',args.port),Handler)
+    server=ThreadingHTTPServer((HOST,args.port),Handler)
     print(f'Hand viewer ({args.view}) available at: http://127.0.0.1:{args.port}/',flush=True)
     print(f'POST endpoint: http://127.0.0.1:{args.port}/api/state (localhost only)',flush=True)
     print('This bridge does NOT send motor commands.',flush=True)

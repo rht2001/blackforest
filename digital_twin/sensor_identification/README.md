@@ -1,7 +1,7 @@
 # One-page tactile identification
 
 Start **Start Sensor Identification.cmd** from this Desktop repository. The UI
-opens at http://127.0.0.1:18768/. Everything happens on that page.
+opens at http://127.0.0.1:18765/. Everything happens on that page.
 
 1. Choose **Manual**, **Live**, or **History**.
 2. Inspect the displayed hand and its data.
@@ -77,9 +77,25 @@ physical scale, taxel locations, joint mapping and timing still need validation.
 Accumulated coordinates assume the object stays stationary relative to the hand
 base. CSV does not establish this assumption or provide object tracking. Separate
 grasps need object-frame registration before their clouds can be merged.
-Run accumulation supplies active contacts only; it does not apply the current
-preview pose's hand limits to historical samples from other poses. Single-row,
-manual and live snapshots retain their existing hand-boundary behavior.
+Run accumulation keeps oriented taxel and hand-surface limits from every valid
+probing/hold pose, including samples without active pressure. Purple points show
+hand surfaces, blue points show recorded inactive taxels, and gray points show
+surfaces whose pressure is unknown. Unknown values never become zero readings.
+The last saved pose is used only for displaying the hand; it does not replace
+limits collected at earlier poses. Single-row/live behavior remains available.
+
+Contact points and space limits are separate arrays. `boundary_points` is passed
+to the same local oriented-surface penetration checks used for individual poses.
+Without active contacts the run still loads, displays and exports its limits;
+Estimate returns `space_constraints_only`, with an ambiguous/unanchored object
+pose rather than inventing a surface match. Limits alone do not identify the
+object or define a bounded global object location.
+
+Spatial reduction retains evidence type and normal direction, so opposing
+surfaces are not merged. Limits start at 2 mm spacing (or the contact spacing if
+larger), coarsening when necessary to remain within 4096 representative limits.
+`accumulation` records the final spacing and observation counts. This is a reduced
+oriented surface sweep, not a watertight swept-volume collision certificate.
 
 The offline command uses the same reconstruction as the UI:
 
@@ -89,8 +105,8 @@ node digital_twin/sensor_identification/build_run_cloud.cjs thumb_frames.csv --l
 node digital_twin/sensor_identification/build_run_cloud.cjs thumb_frames.csv --run run_002 --calibration saved_contact_reference.json --output thumb_cloud.json
 ```
 
-It writes an estimator frame (`units: m`, `frame: left_base_link`) and a companion
-XYZ/pressure CSV. Without `--calibration`, it explicitly uses the current uncalibrated
+It writes an estimator frame (`units: m`, `frame: left_base_link`), a contact
+XYZ/pressure CSV, and a `.limits.csv` with normals, evidence roles and source indices. Without `--calibration`, it explicitly uses the current uncalibrated
 profile defaults. A native contact JSON can supply `kinematics_calibration`; geometry
 fingerprints must match. Historical timing and read validity remain unverified.
 

@@ -114,6 +114,26 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(state['result']['accumulation'], frame['accumulation'])
             self.assertEqual(state['result']['captured_points'], 1)
 
+    def test_constraint_only_run_keeps_limits_and_produces_report(self):
+        self.service._models = {'SENSOR_A': object(), 'SENSOR_B': object()}
+        boundary = dict(id='sweep:1', x=.01, y=.02, z=.03, normal=[0,0,1],
+                        pressure=0, kind='inactive_taxel')
+        frame = dict(valid=True, units='m', frame='left_base_link',
+                     measurement_source='csv_run', points=[], boundary_points=[boundary])
+        def viewer(path, points, models, result, **kwargs):
+            self.assertEqual(points, [])
+            self.assertEqual(kwargs['boundary_points'], [boundary])
+            Path(path).write_text('<html>swept constraints</html>', encoding='utf-8')
+        with patch('sensor_identification.web_service.write_viewer', side_effect=viewer):
+            self.assertEqual(self.request('/api/identification', {'mode': 'current', 'frame': frame})[0], 202)
+            state = self.wait_for_job()
+        self.assertEqual(state['status'], 'complete')
+        self.assertEqual(state['result']['reason'], 'space_constraints_only')
+        self.assertTrue(state['result']['space_constraints_available'])
+        self.assertFalse(state['result']['contact_anchor_available'])
+        self.assertEqual(state['result']['accumulated_inactive_taxel_limits'], 1)
+        self.assertEqual(state['result']['fits'], {})
+
     def test_current_frame_cannot_bypass_calibration_and_errors_are_visible(self):
         result = {'classification': 'AMBIGUOUS', 'reason': 'calibration_unverified', 'fits': {}}
         self.service._models = {}

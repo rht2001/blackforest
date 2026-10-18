@@ -86,7 +86,14 @@ def identify_sensor(points, models, config=None, *, boundary_points=()):
     result.update(hand_boundary_points=len(boundaries), inactive_taxel_limits=len(inactive),
                   surface_taxel_limits=len(surface),
                   limit_method='exact triangle audit of local oriented hand patches; conservative, not a solid collision certificate')
+    result['accumulated_inactive_taxel_limits'] = sum(p.get('kind') == 'inactive_taxel' for p in boundaries)
+    result['accumulated_unknown_taxel_limits'] = sum(p.get('kind') == 'unknown_taxel' for p in boundaries)
+    result['space_constraints_available'] = bool(limits)
+    result['contact_anchor_available'] = bool(active)
     if len(active) < config.min_contacts:
+        if not active and limits:
+            result['reason'] = 'space_constraints_only'
+            result['constraint_interpretation'] = 'Swept hand surfaces restrict candidate space; without contacts or a supplied object pose, global object placement is unanchored.'
         return result
     scale = 1000. if config.coordinate_units == 'm' else 1.
     xyz = np.array([[p[k] for k in ('x', 'y', 'z')] for p in active])*scale

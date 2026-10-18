@@ -56,9 +56,14 @@ def write_viewer(path, points, models, result, *, threshold=200., coordinate_uni
     xyz = np.array(unknown, dtype=float).reshape(-1, 3)
     fig.add_trace(go.Scatter3d(x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2], mode='markers',
                              marker=dict(size=2, color='#8496a6'), name='Pressure unknown'))
-    xyz = np.array([[p[k]*scale for k in ('x','y','z')] for p in boundary_points], dtype=float).reshape(-1,3)
-    fig.add_trace(go.Scatter3d(x=xyz[:,0], y=xyz[:,1], z=xyz[:,2], mode='markers',
-                             marker=dict(size=3,color='#b88aff',symbol='diamond'), name='Hand boundary limits'))
+    for kind, label, color in [('inactive_taxel', 'Inactive taxel limits', '#58bfff'),
+                               ('unknown_taxel', 'Unknown pressure surface limits', '#94a3b8'),
+                               ('other', 'Hand boundary limits', '#b88aff')]:
+        layer = [p for p in boundary_points if
+                 (p.get('kind') == kind if kind != 'other' else p.get('kind') not in ('inactive_taxel', 'unknown_taxel'))]
+        xyz = np.array([[p[k]*scale for k in ('x','y','z')] for p in layer], dtype=float).reshape(-1,3)
+        fig.add_trace(go.Scatter3d(x=xyz[:,0], y=xyz[:,1], z=xyz[:,2], mode='markers',
+                                 marker=dict(size=3,color=color,symbol='diamond'), name=label))
     for name, color in [('SENSOR_A', '#18b79c'), ('SENSOR_B', '#d7a936')]:
         fit = result['fits'].get(name)
         if fit is None:

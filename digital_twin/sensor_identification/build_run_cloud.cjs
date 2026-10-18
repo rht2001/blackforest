@@ -22,7 +22,7 @@ function main(){
     if(saved.reference_sha256&&saved.reference_sha256!==geometry.reference_sha256)throw Error('Calibration reference has a different kinematic profile.');
     calibration=K.validateCalibration(profile,saved.kinematics_calibration||saved);
   }
-  const frame=R.build(rows.slice(selected.start,selected.end+1),{id:geometry.profile,profile,geometry,calibration},{
+  const frame=R.build(rows.slice(selected.start,selected.end+1),{id:geometry.profile,profile,geometry,calibration,boundaries:read('hand_boundaries.json')},{
     threshold:Number(options['--threshold']??200),voxel_mm:Number(options['--voxel-mm']??1),thumb_only:!options['--all-regions'],
     run_key:selected.explicit||selected.key,name:path.basename(input)+' · '+selected.label});
   frame.source={file:path.resolve(input),run_id:selected.explicit||selected.key,first_index:selected.first_index,last_index:selected.last_index,
@@ -33,6 +33,9 @@ function main(){
   const fields=['id','x','y','z','pressure','region','taxel_id','source_index','observations'];
   const quote=v=>'"'+String(v??'').replaceAll('"','""')+'"';
   fs.writeFileSync(csv,fields.join(',')+'\n'+frame.points.map(p=>fields.map(k=>quote(p[k])).join(',')).join('\n')+'\n');
-  console.log(JSON.stringify({output,points_csv:csv,...frame.accumulation},null,2));
+  const limitsCsv=output.replace(/\.json$/i,'')+'.limits.csv';
+  const limitFields=['id','x','y','z','nx','ny','nz','kind','pressure','source_index','observations'];
+  fs.writeFileSync(limitsCsv,limitFields.join(',')+'\n'+frame.boundary_points.map(p=>{const row={...p,nx:p.normal[0],ny:p.normal[1],nz:p.normal[2]};return limitFields.map(k=>quote(row[k])).join(',')}).join('\n')+'\n');
+  console.log(JSON.stringify({output,points_csv:csv,limits_csv:limitsCsv,...frame.accumulation},null,2));
 }
 try{main()}catch(e){console.error(e.message);process.exitCode=1}

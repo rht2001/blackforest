@@ -35,6 +35,7 @@
         <div id="runControls"><label>Run <select id="historyRun"></select></label><label>Contacts <select id="runRegions"><option value="thumb">Thumb only</option><option value="all">All hand regions</option></select></label><label>Point spacing (mm) <input id="runVoxel" type="number" min="0.1" max="10" step="0.1" value="1"></label><button id="buildRun">Build run point cloud</button><p class="hint">Uses probing and completed-hold contacts. Coordinates assume the object stays fixed relative to the hand base.</p></div>
         <div id="rowControls" hidden><label>CSV row <input id="historyRow" type="number" value="1" min="1"></label><div class="data-actions"><button id="historyPrev">Previous</button><button id="historyNext">Next</button></div></div><p id="historyRowInfo" class="hint"></p></div>
         <button id="downloadRun" hidden>Save run point cloud JSON</button>
+        <div id="runLayers" hidden><label><input id="runShowLimits" type="checkbox" checked> Show swept hand-space limits</label><p class="hint"><span style="color:#b88aff">Purple: hand surfaces</span> · <span style="color:#58bfff">Blue: inactive taxels</span> · <span style="color:#94a3b8">Gray: pressure unknown</span>. Bright pressure colors mark active contacts. Each limit follows its recorded hand pose.</p></div>
         <p id="historyStatus" class="hint">Choose a file to preview it before estimating.</p>
       </section>
       <h2>2. Estimate from these points</h2><button id="estimateButton">Estimate</button><p id="estimateStatus" role="status" aria-live="polite">Ready. The selected data source supplies the point cloud.</p>
@@ -57,7 +58,7 @@
     runView.style.cssText='position:absolute;inset:0;z-index:7;background:#08111d';
     runView.innerHTML='<div id="runCloudScene" style="width:100%;height:100%"></div>';
     $('profileWorkspace').append(runView);let runPlot=null,runFrame=null,buildVersion=0;
-    const base=location.protocol==='file:'?'http://127.0.0.1:18768':location.origin;
+    const base=location.protocol==='file:'?'http://127.0.0.1:18765':location.origin;
     let mode='manual',switching=false,historyValid=false,csvRows=null,csvName='',job=null,pollTimer=null,running=false,loading=false,historyFrame=null,loadVersion=0;
     const status=$('estimateStatus');
     let fittedFrame=null,fittedResult=null,fittedThreshold=200;
@@ -79,6 +80,7 @@
       $('showCloud').disabled=mode!=='history'||!historyValid;
       $('buildRun').disabled=loading||!csvRows;
       $('downloadRun').hidden=!runFrame||!historyValid;
+      $('runLayers').hidden=!runFrame||!historyValid;
     }
     function invalidateHistory(message){
       clearEstimate();historyValid=false;historyFrame=null;estimateView.hidden=true;
@@ -134,23 +136,23 @@
     async function drawRun(){
       if(!runFrame)return;
       estimateView.hidden=true;runView.hidden=false;
-      const points=runFrame.points,trace={type:'scatter3d',mode:'markers',visible:true,x:points.map(p=>p.x*1000),y:points.map(p=>p.y*1000),z:points.map(p=>p.z*1000),marker:{size:5,color:points.map(p=>p.pressure)}};
-      if(!runPlot)runPlot=await HandRenderer.create('runCloudScene',[trace]);
-      else await HandRenderer.restyle(runPlot,{'x':[trace.x],'y':[trace.y],'z':[trace.z],'marker.color':[trace.marker.color]},[0]);
-      const center=['x','y','z'].map(k=>points.reduce((s,p)=>s+p[k]*1000,0)/points.length);
-      const radius=Math.max(...points.map(p=>Math.hypot(p.x*1000-center[0],p.y*1000-center[1],p.z*1000-center[2])));
+      const points=runFrame.points,limits=runFrame.boundary_points||[],visible=$('runShowLimits').checked;
+      const layer=(pp,color,size,shown)=>({type:'scatter3d',mode:'markers',visible:shown,x:pp.map(p=>p.x*1000),y:pp.map(p=>p.y*1000),z:pp.map(p=>p.z*1000),marker:{size,color:pp.map(p=>p.pressure||0),...(color?{rgb:pp.map(()=>color)}:{})}});
+      const traces=[layer(limits.filter(p=>p.kind==='inactive_taxel'),[.35,.75,1],3,visible),layer(limits.filter(p=>p.kind==='unknown_taxel'),[.58,.64,.72],2,visible),layer(limits.filter(p=>!['inactive_taxel','unknown_taxel'].includes(p.kind)),[.72,.54,1],3,visible),layer(points,null,5,true)];
+      if(!runPlot)runPlot=await HandRenderer.create('runCloudScene',traces);
+      else await HandRenderer.restyle(runPlot,{'x':traces.map(t=>t.x),'y':traces.map(t=>t.y),'z':traces.map(t=>t.z),'visible':traces.map(t=>t.visible),'marker.rgb':traces.map(t=>t.marker.rgb||null),'marker.color':traces.map(t=>t.marker.color)},[0,1,2,3]);
+      const shown=visible?[...points,...limits]:points.length?points:limits;
+      const center=['x','y','z'].map(k=>shown.reduce((s,p)=>s+p[k]*1000,0)/shown.length);
+      const radius=Math.max(...shown.map(p=>Math.hypot(p.x*1000-center[0],p.y*1000-center[1],p.z*1000-center[2])));
       runPlot._renderer.focus(center,[.5,1,.4],Math.max(30,radius*3));
     }
+    $('runShowLimits').onchange=()=>{if(runFrame)drawRun()};
     async function acceptRun(frame){
       clearEstimate();runFrame=IdentificationRuns.validateFrame(frame);historyFrame=runFrame;historyValid=true;
-      if(runFrame.hand_snapshot){
-        window.HandHistory.show(runFrame.hand_snapshot,'Run: last contact pose');
-        runFrame.boundary_points=[...window.getHandBoundaryPoints(),...window.HandHistory.points().filter(p=>p.normal).map(p=>({...p,id:'pose:'+p.id}))];
-      }
       layoutMode('history');$('selectedHistory').textContent=frame.saved_name;
       const a=frame.accumulation;
-      status.textContent=frame.points.length+' accumulated contact points'+(a?' from '+a.frames_used+' contact-bearing samples ('+a.contact_observations+' observations before reduction).':'.')+' Press Estimate to fit this cloud.';
-      $('historyStatus').textContent='Saved run coordinates in the hand base; capture timing and object motion are unverified.';
+      status.textContent=frame.points.length+' active contacts · '+(frame.boundary_points?.length||0)+' swept space limits'+(a?' from '+(a.frames_reconstructed??a.frames_used)+' probing samples.':'.')+(frame.points.length?' Press Estimate to fit with these limits.':' No contacts: the hand sweep constrains space, but does not uniquely locate the object.');
+      $('historyStatus').textContent='Constraints include poses without activation. Inactive readings do not certify empty space beyond the local hand surface.';
       updateReady();await drawRun();
     }
     async function buildRun(){
@@ -209,11 +211,11 @@
     $('historyRow').onchange=()=>{try{showCSV()}catch(e){invalidateHistory(e.message)}};
     $('historyPrev').onclick=()=>{if(Number($('historyRow').value)>1){$('historyRow').value=Number($('historyRow').value)-1;$('historyRow').onchange()}};
     $('historyNext').onclick=()=>{if(csvRows&&Number($('historyRow').value)<csvRows.length){$('historyRow').value=Number($('historyRow').value)+1;$('historyRow').onchange()}};
-    $('showHand').onclick=()=>{estimateView.hidden=true;runView.hidden=true;if(mode==='history'&&historyValid&&!runFrame)$('savedHand').click()};
+    $('showHand').onclick=()=>{estimateView.hidden=true;runView.hidden=true;if(mode==='history'&&historyValid){if(runFrame?.hand_snapshot)window.HandHistory.show(runFrame.hand_snapshot,'Run: last recorded probing pose');$('savedHand').click()}};
     $('showCloud').onclick=()=>{if(mode==='history'&&historyValid){if(runFrame)drawRun();else{estimateView.hidden=true;$('savedCloud').click()}}};
     $('showEstimate').onclick=placeEstimate;
     $('showFitReport').onclick=()=>{estimateView.hidden=false;runView.hidden=true};
-    const reasons={both_candidates_compatible:'Both shapes fit.',neither_candidate_compatible_within_search:'Neither shape fits sufficiently within this search.',insufficient_contacts:'Not enough valid contact pressure.',insufficient_spatial_coverage:'Contacts cover too little of the object.',calibration_unverified:'Geometry needs calibration before a confident label.',score_margin_too_small:'The score difference is too small.',alignment_search_unstable:'Alignment did not settle reliably.',invalid_or_stale_frame:'No valid synchronized snapshot.',one_candidate_clearly_more_consistent:'One shape fits clearly better.'};
+    const reasons={space_constraints_only:'Hand sweep constrains space; object pose is unanchored without contacts.',both_candidates_compatible:'Both shapes fit.',neither_candidate_compatible_within_search:'Neither shape fits sufficiently within this search.',insufficient_contacts:'Not enough valid contact pressure.',insufficient_spatial_coverage:'Contacts cover too little of the object.',calibration_unverified:'Geometry needs calibration before a confident label.',score_margin_too_small:'The score difference is too small.',alignment_search_unstable:'Alignment did not settle reliably.',invalid_or_stale_frame:'No valid synchronized snapshot.',one_candidate_clearly_more_consistent:'One shape fits clearly better.'};
     function display(state){
       if(state.estimator_revision!=='strict_hand_v1')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
       running=state.status==='running';updateReady();clearTimeout(pollTimer);
@@ -222,7 +224,7 @@
         job=state.job_id;pollTimer=setTimeout(refresh,1500);
       }else if(state.status==='complete'){
         const result=state.result,errors=Object.entries(result.fits||{}).map(([name,fit])=>name.replace('SENSOR_','')+': '+(fit.compatible?'valid':'rejected')+' (max contact '+(fit.max_error_mm??fit.rmse_mm).toFixed(2)+' mm, hand '+(fit.hand_limit_max_mm??0).toFixed(2)+' mm)').join(' · ');
-        status.textContent='Last estimate: '+result.classification+' · '+(reasons[result.reason]||result.reason)+' Snapshot: '+state.input_label+(errors?' · '+errors:'');
+        status.textContent='Last estimate: '+result.classification+' · '+(result.contacts===0&&result.hand_boundary_points>0?'Hand sweep restricts space; object pose has no contact anchor.':reasons[result.reason]||result.reason)+' Snapshot: '+state.input_label+(errors?' · '+errors:'');
         estimateView.querySelector('iframe').src=base+state.report_url+'?job='+state.job_id;
         estimateView.hidden=true;runView.hidden=true;$('showFitReport').disabled=false;
         fittedResult=result;
@@ -231,7 +233,7 @@
         $('estimateCandidateLabel').hidden=candidates.length<2;
         $('showEstimate').disabled=!candidates.length||!fittedFrame?.hand_snapshot;
         if(candidates.length&&fittedFrame?.hand_snapshot){status.textContent+=' Provisional pose shown in the frozen hand'+(fittedFrame.measurement_source==='csv_run'?' at the last contact sample.':'.');placeEstimate();}
-        else{window.HandEstimate?.clear();status.textContent+=candidates.length?' No reproducible hand pose; see Fit report.':' No valid STL pose; see Fit report for rejected candidates.';}
+        else{window.HandEstimate?.clear();status.textContent+=result.contacts===0&&result.hand_boundary_points>0?' Swept limits are retained for later contact or pose evidence.':candidates.length?' No reproducible hand pose; see Fit report.':' No valid STL pose; see Fit report for rejected candidates.';}
       }else if(state.status==='error')status.textContent='Estimate failed: '+state.error;
     }
     async function refresh(){try{

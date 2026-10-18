@@ -638,7 +638,7 @@ function leaveSaved(){
  $('savedInfo').textContent='Saved captures remain in the list. Select one to view it again.';
 }
 window.HandHistory={
- context(){return K.clone({id,profile,geometry,calibration})},
+ context(){return K.clone({id,profile,geometry,calibration,boundaries:boundaryData})},
  show(payload,name){
   const entry=SavedContacts.prepare(payload,{id,profile,referenceHash:data.reference_sha256,geometryHash:geometry.geometry_sha256});
   if(entry.cloud.identification_points!==undefined){
