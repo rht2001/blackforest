@@ -228,8 +228,21 @@
         estimateView.querySelector('iframe').src=base+state.report_url+'?job='+state.job_id;
         estimateView.hidden=true;runView.hidden=true;$('showFitReport').disabled=false;
         fittedResult=result;
-        const candidates=Object.entries(result.fits||{}).filter(([,fit])=>fit.compatible).sort((a,b)=>a[1].score-b[1].score);
-        $('estimateCandidate').replaceChildren(...candidates.map(([name])=>{const option=document.createElement('option');option.value=name;option.textContent=name+' · provisional fit';return option}));
+        const candidates = Object.entries(result.fits || {})
+        .filter(([, fit]) =>
+          Number.isFinite(fit.score) &&
+          Array.isArray(fit.transform)
+        )
+        .sort((a, b) => {
+          if (a[1].compatible !== b[1].compatible)
+            return a[1].compatible ? -1 : 1;
+
+          return a[1].score - b[1].score;
+        });
+        $('estimateCandidate').replaceChildren(...candidates.map(([name])=>{const option=document.createElement('option');option.textContent = name +
+  (result.fits[name].compatible
+    ? ' · compatible'
+    : ' · REJECTED (debug only)');
         $('estimateCandidateLabel').hidden=candidates.length<2;
         $('showEstimate').disabled=!candidates.length||!fittedFrame?.hand_snapshot;
         if(candidates.length&&fittedFrame?.hand_snapshot){status.textContent+=' Provisional pose shown in the frozen hand'+(fittedFrame.measurement_source==='csv_run'?' at the last contact sample.':'.');placeEstimate();}

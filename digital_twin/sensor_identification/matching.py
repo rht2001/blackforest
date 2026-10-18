@@ -1,4 +1,3 @@
-"""Deterministic multistart rigid ICP, followed by exact triangle refinement."""
 import itertools
 
 import numpy as np

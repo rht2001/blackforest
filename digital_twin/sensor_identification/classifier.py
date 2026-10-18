@@ -20,10 +20,17 @@ class IdentificationConfig:
     min_inlier_fraction: float = 1.
     score_margin: float = 1.
     stability_margin: float = .35
+
+    random_starts: int = 4
+    refine_starts: int = 2
+    icp_iterations: int = 15
+    max_nfev: int = 25
+    """""
     random_starts: int = 24
     refine_starts: int = 4
     icp_iterations: int = 50
     max_nfev: int = 80
+    """""
     seed: int = 731
 
     def __post_init__(self):
