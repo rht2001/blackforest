@@ -97,12 +97,14 @@ class DataDict(TypedDict):
     tactile_mean_matrix: np.ndarray
     state: STATES
     state_change: bool
+    all_matrices: dict
 
 
 default_results: DataDict = {
     "angles": np.zeros(6, dtype=int),
     "forces": np.zeros(6, dtype=float),
     "position": np.zeros(6, dtype=int),
+    "all_matrices": {},
     "tactile_matrix": np.zeros((112, 17), dtype=float),
     "tactile_mean_matrix": np.zeros((1, 17), dtype=float),
     "state": "starting",

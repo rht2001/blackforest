@@ -96,6 +96,11 @@ class RobotHandController:
         self.mean_matrix: np.ndarray = np.zeros((1, 17))
         self.all_points: np.ndarray = np.zeros((112, 17))
 
+        self.matrices = {
+            name: np.zeros((rows, cols), dtype=np.float32)
+            for name, _, rows, cols, *_ in self.sensor_groups
+        }
+
         if not mock:
             try:
                 self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
@@ -299,10 +304,13 @@ class RobotHandController:
             return None
         return self.client.read_holding_registers(address=REGISTERS["ERROR"], count=6, device_id=1)
 
-    def read_tactile_data(self) -> tuple[np.ndarray, np.ndarray]:
+    def read_tactile_data(self) -> tuple[np.ndarray, np.ndarray, dict]:
         """Reads tactile matrix data across all 17 sensor groups and caches results."""
+
+
         data_matrix = np.zeros((1, 17))
         all_points = np.zeros((112, 17))
+        matr = {}
         raw_cache = {}
 
         for index, (name, addr, h, w, key, rel) in enumerate(self.sensor_groups):
@@ -317,10 +325,9 @@ class RobotHandController:
             data_matrix[0, index] = np.mean(matrix)
             all_points[0:len(raw), index] = matrix
             raw_cache[name] = raw
+            matr[name] = matrix.reshape(h,w)
 
-        self.last_sensor_data = raw_cache
-        self.last_all_points = all_points
-        return data_matrix, all_points
+        return data_matrix, all_points, matr
 
     def build_result_data(self) -> DataDict:
         """Packages polled kinematics, telemetry, and tactile data into DataDict."""
@@ -330,8 +337,10 @@ class RobotHandController:
             "position": np.array(self.read_command("POSITION")),
             "tactile_matrix": self.all_points,
             "tactile_mean_matrix": self.mean_matrix,
+            "all_matrices": self.matrices,
             "state": self.state,
             "state_change": self.state_change,
+
         }
         return self.results
 
@@ -340,7 +349,7 @@ class RobotHandController:
         Pure hardware polling method.
         Acquires tactile matrices and joint telemetry without decision logic.
         """
-        self.mean_matrix, self.all_points = self.read_tactile_data()
+        self.mean_matrix, self.all_points, self.matrices = self.read_tactile_data()
         current_pos = np.array(self.read_command())
         self.angle_array = current_pos
         return self.build_result_data()
