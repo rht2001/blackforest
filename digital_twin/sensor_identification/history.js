@@ -140,6 +140,8 @@
     }
     // Keep one initial contact patch per closing finger; thumb probing continues.
     const capturedFingers=new Map(),closingFingers=new Set(['little','ring','middle','index']);
+    const contactPoseLimits=new Map();
+    const fingerOf=p=>p.region?.split('_')[0]||p.link?.match(/^left_(little|ring|middle|index)_/)?.[1];
     let first=null,last=null,handSnapshot=null,thumbClosureSample=null,thumbClosureBend=-Infinity;
     function add(row){
       stats.frames_total++;
@@ -175,7 +177,25 @@
         thumbClosureBend=thumbBend;
         thumbClosureSample={angles_act:packet.angles_act.slice(),thumb_pressures:thumbPressures,source_index:packet.index};
       }
-      for(const finger of newlyContacting)capturedFingers.set(finger,packet.index);
+      for(const finger of newlyContacting){
+        capturedFingers.set(finger,packet.index);
+        // Preserve the exact initial contact pose for the cloud display. Swept
+        // constraints below remain available to the estimator independently.
+        const visible=[];
+        for(const c of surface.filter(c=>c.region.split('_')[0]===finger)){
+          const pressure=samples[c.region]?.values[c.wire_index]??null;
+          const [x,y,z]=c.xyz;
+          visible.push({id:run+':contact-pose:'+c.id,x,y,z,normal:c.normal,pressure,
+            kind:pressure===null?'unknown_taxel':pressure>threshold?'contact_surface':'inactive_taxel',
+            region:c.region,link:c.link,source_index:packet.index});
+        }
+        for(const p of bodies.filter(p=>fingerOf(p)===finger)){
+          const [x,y,z]=p.xyz;
+          visible.push({id:run+':contact-pose:'+p.id,x,y,z,normal:p.normal,pressure:null,
+            kind:'hand_boundary',link:p.link,source_index:packet.index});
+        }
+        contactPoseLimits.set(finger,visible);
+      }
       for(const p of bodies){const [x,y,z]=p.xyz;addLimit({x,y,z,normal:p.normal,pressure:null,kind:'hand_boundary',link:p.link,surface_id:p.id,source_index:packet.index})}
       compactLimits();
       if(cells.length){stats.frames_used++;first??=packet.index;last=packet.index}
@@ -225,6 +245,7 @@
           object_motion_assumption:'Object stationary relative to hand base; unverified by CSV.',
           pressure_basis:'Recorded sensor units; missing reads and pressure calibration unverified.',
           reduction:'One maximum-pressure observed contact per spatial voxel; observation count does not weight fitting.'},
+        display_boundary_points:[...boundaryPoints.filter(p=>!capturedFingers.has(fingerOf(p))),...Array.from(contactPoseLimits.values()).flat()],
         boundary_points:boundaryPoints,points:[...voxels.values()]};
     }
     return {add,finish};

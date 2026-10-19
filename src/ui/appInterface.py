@@ -2,8 +2,6 @@ import tkinter as tk
 import numpy as np
 from PIL import Image, ImageTk
 import os
-import json
-import time
 from interface.robot_control import RobotHandController
 
 
@@ -12,10 +10,8 @@ class HandApp(tk.Tk):
         super().__init__()
         self.robot = robot
 
-        self.SAVE_FILE = "positions.json"
         self.pixel = 6
-        self.positions = {}
-        self.sliders: list[tk.Scale] = []
+        self.angle_labels: list[tk.Label] = []
 
         self.offsets = {
             "Little": (150, 120),
@@ -28,10 +24,9 @@ class HandApp(tk.Tk):
 
         self.setup_window()
         self.setup_ui()
-        self.load_positions()
 
     def setup_window(self):
-        self.title("Dexterous Hand Controller & Tactile Visualizer")
+        self.title("Hand Telemetry Receiver & Tactile Visualizer")
         self.geometry("1200x900")
 
         self.left_frame = tk.Frame(self)
@@ -70,91 +65,15 @@ class HandApp(tk.Tk):
 
             tk.Label(f, text=names[i], width=15).pack(side="left")
 
-            s = tk.Scale(f, from_=0, to=1000, orient="horizontal", length=250)
-            s.set(1000)
-            s.pack(side="left")
-            s.bind("<ButtonRelease-1>", lambda e: self.send_angles())
+            label = tk.Label(f, text="—", width=10)
+            label.pack(side="left")
+            self.angle_labels.append(label)
 
-            self.sliders.append(s)
-
-        bf = tk.Frame(self.left_frame)
-        bf.pack(pady=10)
-
-        tk.Button(bf, text="Open", command=self.open_hand).pack(side="left", padx=2)
-        tk.Button(bf, text="Close", command=self.close_hand).pack(side="left", padx=2)
-        tk.Button(bf, text="Step +", command=self.step_plus).pack(side="left", padx=2)
-        tk.Button(bf, text="Step -", command=self.step_minus).pack(side="left", padx=2)
-
-        self.entry = tk.Entry(self.left_frame)
-        self.entry.pack(fill="x", pady=5)
-
-        tk.Button(self.left_frame, text="Save Position", command=self.save_position).pack(fill="x")
-
-        self.saved_frame = tk.Frame(self.left_frame)
-        self.saved_frame.pack(fill="both", expand=True)
-
-    def send_angles(self):
-        angles = [s.get() for s in self.sliders]
-        self.robot.set_angles(angles)
+        tk.Label(self.left_frame, text="Receive only · movement controlled externally").pack(pady=10)
 
     def update_angles_from_robot(self):
-        registers = self.robot.get_angles()
-        if registers:
-            for i in range(min(6, len(registers))):
-                self.sliders[i].set(registers[i])
-
-    def open_hand(self):
-        for s in self.sliders:
-            s.set(1000)
-        self.robot.open_hand()
-
-    def close_hand(self):
-        vals = [0, 0, 0, 0, 234, 670]
-        for i in range(6):
-            self.sliders[i].set(vals[i])
-        self.robot.close_hand()
-    def step_plus(self):
-        for s in self.sliders:
-            s.set(min(1000, s.get() + 20))
-        self.send_angles()
-
-    def step_minus(self):
-        for s in self.sliders:
-            s.set(max(0, s.get() - 20))
-        self.send_angles()
-
-    def save_position(self):
-        name = self.entry.get()
-        if not name:
-            return
-
-        values = [s.get() for s in self.sliders]
-        self.positions[name] = values
-        self.save_to_file()
-        self.create_button(name, values)
-
-    def create_button(self, name, values):
-        def apply():
-            for i in range(6):
-                self.sliders[i].set(values[i])
-            self.send_angles()
-
-        tk.Button(self.saved_frame, text=name, command=apply).pack(fill="x")
-
-    def save_to_file(self):
-        with open(self.SAVE_FILE, "w") as f:
-            json.dump(self.positions, f)
-
-    def load_positions(self):
-        if not os.path.exists(self.SAVE_FILE):
-            return
-
-        with open(self.SAVE_FILE, "r") as f:
-            data = json.load(f)
-
-        for name, values in data.items():
-            self.positions[name] = values
-            self.create_button(name, values)
+        for label, value in zip(self.angle_labels, self.robot.current_angles):
+            label.config(text=str(value))
 
     def draw(self):
         self.canvas.delete("all")
@@ -219,11 +138,12 @@ class HandApp(tk.Tk):
     def update_state_display(self, state: str):
         if hasattr(self, "state_label"):
             self.state_label.config(text=f"STATE: {state.upper()}")
-            self.title(f"Hand Controller - [{state.upper()}]")
+            self.title(f"Hand Receiver - [{state.upper()}]")
 
     def main(self, state: str | None = None):
         if state:
             self.update_state_display(state)
+        self.update_angles_from_robot()
         self.draw()
         try:
             self.update_idletasks()

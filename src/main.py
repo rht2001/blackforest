@@ -11,7 +11,7 @@ from logic.twin_publisher import TwinPublisher, robot_snapshot
 STEP_TIME = 0.03
 def main():
     """
-    Main function to run the Dexterous Hand Controller & Tactile Visualizer application.
+    Main function to run the Hand Telemetry Receiver & Tactile Visualizer application.
     Initializes the robot hand controller as access point of the TCP protocol and starts the Tkinter GUI application.
     Runs continously for continuous polling of GUI.
     """
@@ -54,6 +54,8 @@ def main():
                 break
     finally:
         capture.close()
+        if robot.client is not None:
+            robot.client.close()
 
 if __name__ == "__main__":
     main()

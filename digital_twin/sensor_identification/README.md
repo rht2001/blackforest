@@ -1,5 +1,26 @@
 # One-page tactile identification
 
+## Recorded grasp starting poses
+
+For the original two CAD exports in `left_base_link`, Estimate starts near the
+common poses derived from 53 recordings. Bounding-box centers (mm), followed by
+XYZ Euler angles (degrees, Rz × Ry × Rx):
+
+- VEGABAR 29: (20.01, 23.57, 129.25), (-3.18, -2.77, 91.19).
+- VEGABAR 38: (13.35, 35.86, 128.96), (-179.58, -3.30, 90.44).
+
+Quick placement adjusts about these centers within ±(30, 12, 15) mm and permits
+±30 degrees of local X/Z tilt and ±180 degrees of shaft roll (local Y).
+These are search windows, not measured confidence intervals. Every optimization
+stage keeps the center within that window. Detailed validation also refines the
+empirical seed, while retaining the wider multistart search for unusual grasps.
+Only the matching source SHA256 and explicit base frame enable this prior;
+arbitrary-frame inputs and other CAD retain their existing initialization.
+Contact/clearance and full hand triangle checks still decide compatibility.
+The prior never establishes identity or overrides the calibration gate. Empty
+or insufficient-contact clouds retain their existing ambiguity result.
+
+
 Start **Start Sensor Identification.cmd** from this Desktop repository. The UI
 opens at http://127.0.0.1:18765/. Everything happens on that page.
 
@@ -364,3 +385,22 @@ a feasible pose, so a rejected quick result does not prove the sensor cannot fit
 It stops refining at the first pose passing the existing
 contact, clearance and full-CAD hand checks. The 85% heuristic reflects the
 observed grasp behavior, not a calibrated probability or a physical guarantee.
+
+## Pressure-patch direction
+
+Quick and detailed estimation use pressure-weighted local contact planes to guide
+orientation during coarse ranking and refinement. The bounded quick search and
+thumb-first candidate order are preserved. Each patch needs six distinct points
+within 12 mm, at least 1 mm of independent width and a smallest-to-middle PCA
+variance ratio below 0.03. Sparse, line-like or strongly curved patches are
+ignored. Pressure weights are capped and the unsigned normal residual has a
+maximum 3 mm lever arm; it is a soft orientation cue, not a calibrated force.
+At most 128 neighborhoods are computed before point thinning. Contact-distance
+and hand-collision acceptance checks are unchanged. A patch cannot resolve
+rotation about its normal, and symmetric surfaces can remain ambiguous. The fit
+card reports the contributing patch count; JSON also reports its mm-equivalent
+directional residual. Old estimates are invalidated by the estimator revision.
+
+Quick placement uses one standard centered pose when thumb contacts or a rigid palm are available. It adjusts angle about the CAD center, translates toward the thumb contact boundaries, and refines once before the full hand triangle audit. Detailed validation retains the multistart search. Rejected poses are available for explicit inspection but are never shown automatically as the estimate.
+
+During estimation the viewer follows unvalidated STL trial poses. Switch off Follow live STL position or drag Inspect search poses to pause and inspect the last 256 sampled poses, including candidate switches. Pose updates preserve the camera. History remains available after completion; rejected results are hidden until explicitly inspected.

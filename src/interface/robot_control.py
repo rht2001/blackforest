@@ -1,34 +1,22 @@
-import json
 import time
 from pymodbus.client import ModbusTcpClient
 import numpy as np
 from typing import Literal
-from config.config_parameters import RegisterName, DataDict, default_results, STATES, REGISTERS
-DEFAULT_MOVEMENT_SPEED = [400] * 6
-
-
+from config.config_parameters import DataDict, default_results, STATES, REGISTERS
 DataTypes = Literal["ANGLES", "FORCES", "POSITION"]
 
-DEFAULT_FORCE = 3000
-CLOSE_THRESHOLD = 50
-IMPULSE_REJECTION_WAIT_TIME = 0.25
-GRIP_ANGLE_THRESHOLD = 10  # Threshold for detecting if the hand is in a gripping position (0-1000 scale)
 
 class RobotHandController:
     def __init__(self, ip: str = "192.168.123.211", port: int = 6000, mock: bool = False):
         """
-        Lightweight Python wrapper for Modbus TCP control of the RH56DFTP dexterous hand.
+        Read-only Modbus telemetry receiver for the RH56DFTP dexterous hand.
         """
         self.ip = ip
         self.port = port
         self.client: ModbusTcpClient | None = None
-        self.auto_mode_active = True
-        self.auto_contact_trigerred = False
-        self.contact_start_time = 0.0
         self.is_connected = False
         self.current_angles = [1000] * 6
         self.angle_array = np.array(self.current_angles)
-        self.mock_angles = [1000] * 6
         self.last_sensor_data: dict[str, np.ndarray] = {}
         self.last_all_points = np.zeros((112, 17))
         self.offsets = {
@@ -42,28 +30,10 @@ class RobotHandController:
 
         self.results: DataDict = default_results
 
-        try:
-            self.client = ModbusTcpClient(self.ip, port=self.port, timeout=1.0)
-            print(f"[RobotHandController] Attempting connection to {self.ip}:{self.port}...")
-            if self.client.connect():
-                self.is_connected = True
-                print(f"[RobotHandController] Connected to hand at {self.ip}:{self.port}")
-            else:
-                print(f"[RobotHandController] Could not reach {self.ip}:{self.port}. Running in simulation/disconnected mode.")
-        except Exception as e:
-            print(f"[RobotHandController] Connection error ({e}). Running in simulation/disconnected mode.")
-            self.client = None
-
-        self.send_addresses = {
-            "ANGLES": 1486,
-            "FORCES": 1498,
-            "POSITION": 1474,
-        }
-
         self.receive_addresses = {
             "ANGLES": 1546,
             "FORCES": 1582,
-            "POSITION": 1594,
+            "POSITION": REGISTERS["POS_ACT"],
         }
 
         self.sensor_groups = [
@@ -111,37 +81,12 @@ class RobotHandController:
             self.client = None
             print("[RobotHandController] Explicitly initialized in mock mode.")
 
-        if self.is_connected:
-            self.startup()
-        else:
-            self.state = "initialised"
+        self.state = "initialised"
 
     # ==========================================
-    # Unified Command Bus (read_command / send_command)
+    # Read-only telemetry access
     # ==========================================
 
-    def send_command(self, value: list[int], type: DataTypes | RegisterName = "ANGLES") -> bool:
-        """
-        Unified write access point for commands and register settings.
-        `type` can be a standard data category ('ANGLES', 'FORCES', 'POSITION')
-        or a specific register key from REGISTERS.
-        """
-        if type in self.send_addresses:
-            address = self.send_addresses[type]
-        elif type in REGISTERS.keys():
-            address = REGISTERS[type]
-        else:
-            raise ValueError(f"Unknown command target: {type}")
-
-        if type in ("ANGLES", "ANGLE_SET"):
-            self.current_angles = list(value)
-            self.mock_angles = list(value)
-
-        if not self.is_connected or self.client is None:
-            return True
-
-        res = self.client.write_registers(address=address, values=value, device_id=1)
-        return not res.isError()
 
     def read_command(self, type: DataTypes | str = "ANGLES", count: int = 6) -> list[int]:
         """
@@ -168,11 +113,7 @@ class RobotHandController:
             return list(res.registers)
 
         print(f"[RobotHandController] Failed to read {type} from address {address}")
-        return [0] * count
-
-    def write_data(self, target: DataTypes | str, values: list[int]) -> bool:
-        """Compatibility wrapper for send_command."""
-        return self.send_command(value=values, type=target)
+        return [-1] * count if type in ("ANGLES", "ANGLE_ACT") else [0] * count
 
     def read_data(self, target: DataTypes | str, count: int = 6) -> list[int]:
         """Compatibility wrapper for read_command."""
@@ -195,65 +136,19 @@ class RobotHandController:
         return values
 
     # ==========================================
-    # High-Level Semantic Facades
+    # Telemetry and local tactile calibration
     # ==========================================
 
-    def startup(self, max_force: int = 1500):
-        """Initializes speed, force limit, opens hand, and calibrates offsets on startup."""
-        self.set_default_speed()
-        self.set_max_force(max_force)
-        self.open_hand()
-        if self.is_connected:
-            self.calibrate_offsets()
-        print(f"[RobotHandController] Hand opened and ready (max force: {max_force}g).")
-        self.state = "initialised"
-
-    def set_max_force(self, force_g: int = 1500) -> bool:
-        """
-        Sets the maximum gripping force threshold for all 6 DOFs (range: 100 - 3000g).
-        Writes to both active FORCES register (1498) and DEFAULT_FORCE_SET register (1044).
-        """
-        force_val = max(100, min(3000, int(force_g)))
-        self.set_forces([force_val] * 6)
-        return self.send_command([force_val] * 6, "DEFAULT_FORCE_SET")
-
-
-
-    def set_default_speed(self):
-        """Sets the default speed for all 6 DOFs."""
-        return self.send_command(DEFAULT_MOVEMENT_SPEED, "DEFAULT_SPEED_SET")
-
-    def set_angles(self, angles: list[int]) -> bool:
-        """Sets target angles for all 6 DOFs (0=closed, 1000=open)."""
-        return self.send_command(angles, "ANGLES")
 
     def get_angles(self) -> list[int]:
         """Reads actual joint angles for all 6 DOFs."""
         return self.read_command("ANGLES")
 
-    def set_forces(self, forces: list[int]) -> bool:
-        """Sets the force control threshold for all 6 DOFs (0-3000g)."""
-        return self.send_command(forces, "FORCES")
 
     def get_forces(self) -> list[int]:
         """Reads actual force values for all 6 DOFs."""
         return self.read_command("FORCES")
 
-    def open_hand(self):
-        """Opens all fingers fully (angle 1000) and re-arms automatic grip detection."""
-        self.set_angles([1000] * 6)
-        self.auto_mode_active = True
-        self.auto_contact_trigerred = False
-        self.contact_start_time = 0.0
-        time.sleep(0.5)  # Allow time for the hand to open before further commands
-
-    def close_hand(self):
-        """Closes hand to standard grasp position and disarms automatic grip detection."""
-        self.set_angles([0, 0, 0, 0, 234, 670])
-        self.auto_mode_active = False
-        self.auto_contact_trigerred = False
-        self.contact_start_time = 0.0
-        time.sleep(0.5)  # Allow time for the hand to close before further commands
 
     def calibrate_offsets(self):
         """Calibrates baseline tactile sensor readings."""
@@ -263,35 +158,6 @@ class RobotHandController:
             data = self.safe_read(addr, h * w)
             self.sensor_offsets[name] = np.array(data) if data else np.zeros(h * w)
 
-    def close_on_contact(self) -> bool:
-        """Triggers grip closure if tactile pressure exceeds contact threshold with impulse rejection."""
-        if not self.auto_mode_active:
-            return False
-
-        contact_present = np.count_nonzero(self.all_points > CLOSE_THRESHOLD) >= 10
-
-        # Step 1: Contact detected for the first time -> start debounce timer
-        if contact_present and not self.auto_contact_trigerred:
-            self.auto_contact_trigerred = True
-            self.contact_start_time = time.time()
-            print("Found contact once, waiting for impulse rejection...")
-            return False
-
-        # Step 2: Contact lost before wait time elapsed -> reset (impulse rejected)
-        if not contact_present and self.auto_contact_trigerred:
-            self.auto_contact_trigerred = False
-            return False
-
-        # Step 3: Contact persisted longer than the rejection window -> confirm trigger
-        if contact_present and self.auto_contact_trigerred:
-            if time.time() - self.contact_start_time >= IMPULSE_REJECTION_WAIT_TIME:
-                self.auto_mode_active = False
-                self.auto_contact_trigerred = False
-                self.set_angles([0, 0, 0, 0, 1000, 1000])
-                print("Contact confirmed and sustained. Grip closed.")
-                return True
-
-        return False
 
     def read_error(self):
         """Reads error code bitfields from actuators."""

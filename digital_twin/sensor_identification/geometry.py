@@ -1,4 +1,5 @@
 """STL geometry in millimetres; never infer scale from an observed grasp."""
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -12,6 +13,7 @@ class CandidateModel:
     name: str
     mesh: trimesh.Trimesh
     sample_count: int = 24000
+    source_sha256: str | None = field(init=False, default=None, repr=False)
     samples: np.ndarray = field(init=False, repr=False)
     sample_faces: np.ndarray = field(init=False, repr=False)
     tree: cKDTree = field(init=False, repr=False)
@@ -25,7 +27,7 @@ class CandidateModel:
             self.mesh, self.sample_count, seed=1701)
         self.tree = cKDTree(self.samples)
 
-    def nearest_sampled(self, points, neighbors=8):
+    def nearest_sampled(self, points, neighbors=8, *, return_normals=False):
         """Fast local surface query guided by cached STL samples.
 
         Project onto triangles attached to nearby samples. This avoids fitting
@@ -36,6 +38,7 @@ class CandidateModel:
         points = np.asarray(points, dtype=float).reshape(-1, 3)
         closest = np.empty_like(points)
         distance = np.empty(len(points))
+        normals = np.empty_like(points) if return_normals else None
         k = min(neighbors, len(self.samples))
         triangles = self.mesh.triangles
         for start in range(0, len(points), 256):
@@ -49,7 +52,9 @@ class CandidateModel:
             rows = np.arange(len(query))
             closest[start:start+len(query)] = projected[rows, best]
             distance[start:start+len(query)] = np.sqrt(squared[rows, best])
-        return closest, distance
+            if return_normals:
+                normals[start:start+len(query)] = self.mesh.face_normals[self.sample_faces[indices[rows, best]]]
+        return (closest, distance, normals) if return_normals else (closest, distance)
 
     @classmethod
     def from_stl(cls, name, path, *, units):
@@ -58,7 +63,9 @@ class CandidateModel:
             raise ValueError('STL units must explicitly be mm or m')
         mesh = trimesh.load_mesh(path, process=True)
         mesh.apply_scale(scale)
-        return cls(name, mesh)
+        model = cls(name, mesh)
+        model.source_sha256 = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        return model
 
     def nearest(self, points):
         """Exact unsigned triangle distance: valid for open/assembly meshes too."""

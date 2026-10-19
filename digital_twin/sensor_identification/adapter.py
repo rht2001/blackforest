@@ -33,7 +33,7 @@ def identify_frame(frame, models, *, tolerance_mm=3., hand_tolerance_mm=3., poin
         coordinate_units=frame['units'], tolerance_mm=tolerance_mm, hand_tolerance_mm=hand_tolerance_mm, point_spacing_mm=point_spacing_mm,
         pressure_threshold=pressure_threshold, quick_preview=quick_preview,
         calibrated=calibrated and frame.get('geometry_status') == 'CALIBRATED'),
-        boundary_points=frame.get('boundary_points', []), progress=progress,
+        boundary_points=frame.get('boundary_points', []), progress=progress, coordinate_frame=frame['frame'],
         thumb_hint=thumb_closure_hint(frame, pressure_threshold))
 
 

@@ -1,4 +1,4 @@
-"""Automatic closure ordering and CSV capture; no motor connection is opened."""
+"""Observed external closure and CSV capture; no motor connection is opened."""
 import csv
 from copy import deepcopy
 from pathlib import Path
@@ -22,94 +22,83 @@ class ClosureTests(unittest.TestCase):
     def setUp(self):
         self.saved = Mock()
         self.manager = GraspManager(on_grasp_closed=self.saved)
-        self.robot = Mock()
-        self.robot.set_angles.return_value = True
+        # No actuation or hardware methods may be called during observation.
+        self.robot = Mock(spec=[])
         self.angles = [1000] * 6
 
-    def step(self, now, angles=None):
+    def step(self, now, angles=None, contact=True):
         if angles is not None:
             self.angles = angles
         data = {'angles': np.array(self.angles), 'tactile_mean_matrix': np.zeros((1,17)),
-                'tactile_matrix': np.zeros((112,17))}
+                'tactile_matrix': np.full((112,17), 100 if contact else 0)}
         with patch('logic.grasp_manager.time.time', return_value=now):
-            return self.manager.step(self.robot, data)
+            result = self.manager.step(self.robot, data)
+        self.assertEqual(self.robot.mock_calls, [])
+        return result
 
-    def fingers_closed(self):
-        with patch.object(self.manager, 'check_contact_trigger', return_value=True):
-            self.step(10)
-        self.robot.set_angles.assert_called_once_with([0,0,0,0,1000,1000])
-        self.step(10.8, [300]*4 + [1000,1000])
-        self.step(10.9)
-        self.assertEqual(self.manager.state, 'closing')
-        self.step(11.3)
+    def closed(self, start=10):
+        self.step(start, [300]*4 + [450,750])
+        self.step(start + .1)
+        self.step(start + .9)
 
-    def test_fingers_then_thumb_then_single_capture_even_when_thumb_contacts_early(self):
-        self.fingers_closed()
-        self.robot.set_angles.assert_called_with([0,0,0,0,234,670])
-        self.assertEqual(self.manager.state, 'thumb_closing')
-        self.saved.assert_not_called()
-        self.step(12.1, [300]*4 + [450,750])
-        self.step(12.2)
-        self.step(12.6)
+    def test_external_closure_captures_once_including_late_attachment(self):
+        self.closed()
         self.assertEqual(self.manager.state, 'settling')
         self.saved.assert_called_once_with()
-        self.step(12.7)
+        self.step(11)
         self.saved.assert_called_once_with()
 
-    def test_unmoved_thumb_times_out_without_capture(self):
-        self.fingers_closed()
-        self.step(14.4)
+    def test_moving_thumb_prevents_capture(self):
+        self.step(10, [300]*4 + [1000,1000])
+        self.step(10.8, [300]*4 + [700,900])
+        self.step(11.6, [300]*4 + [450,750])
+        self.saved.assert_not_called()
+        self.step(11.7)
+        self.step(12.5)
+        self.saved.assert_called_once_with()
+
+    def test_open_hand_or_missing_contact_does_not_capture(self):
+        for now in (10, 11, 12):
+            self.step(now)
+        self.saved.assert_not_called()
+        for now in (13, 14, 15):
+            self.step(now, [300]*6, contact=False)
+        self.saved.assert_not_called()
+
+    def test_invalid_telemetry_restarts_stability_window(self):
+        self.step(10, [300]*6)
+        self.step(10.1)
+        self.step(11, [65535]*6)
+        self.step(12, [300]*6)
+        self.step(12.1)
+        self.saved.assert_not_called()
+        self.step(12.9)
+        self.saved.assert_called_once_with()
+
+    def test_timeout_waits_for_external_reopening_and_second_capture(self):
+        self.closed()
+        with patch('logic.grasp_manager.confirm_grip', return_value=(False, 'empty', {})):
+            self.step(14)
         self.assertEqual(self.manager.state, 'resetting')
-        self.robot.open_hand.assert_called_once()
-        self.saved.assert_not_called()
-
-    def test_thumb_command_failure_resets(self):
-        self.robot.set_angles.side_effect = [True, False]
-        self.fingers_closed()
+        self.step(30)
         self.assertEqual(self.manager.state, 'resetting')
-        self.robot.open_hand.assert_called_once()
-        self.saved.assert_not_called()
-
-    def test_failed_initial_command_does_not_close_thumb(self):
-        self.robot.set_angles.return_value = False
-        with patch.object(self.manager, 'check_contact_trigger', return_value=True):
-            self.step(10)
-        self.assertEqual(self.manager.state, 'resetting')
-        self.robot.set_angles.assert_called_once_with([0,0,0,0,1000,1000])
-        self.saved.assert_not_called()
-
-    def test_invalid_telemetry_cannot_complete_thumb_closure(self):
-        self.fingers_closed()
-        self.step(12.1, [65535]*6)
-        self.step(12.6)
-        self.assertEqual(self.manager.state, 'thumb_closing')
-        self.saved.assert_not_called()
-
-    def test_moving_finger_does_not_trigger_thumb(self):
-        self.manager.state = 'closing'
-        self.manager.closing_start_time = 10
-        for now, value in ((11, 500), (11.2, 480), (11.6, 460)):
-            self.step(now, [value]*4 + [1000,1000])
-        self.robot.set_angles.assert_not_called()
-        self.saved.assert_not_called()
-
-    def test_second_grasp_can_capture_again(self):
-        for _ in range(2):
-            self.manager.state = 'open'
-            self.manager.last_angles = np.array([1000]*6)
-            self.angles = [1000]*6
-            self.fingers_closed_without_assertions()
+        self.step(31, [1000]*6)
+        self.assertEqual(self.manager.state, 'open')
+        self.closed(33)
         self.assertEqual(self.saved.call_count, 2)
 
-    def fingers_closed_without_assertions(self):
-        with patch.object(self.manager, 'check_contact_trigger', return_value=True):
-            self.step(10)
-        self.step(10.8, [300]*4 + [1000,1000])
-        self.step(10.9)
-        self.step(11.3)
-        self.step(12.1, [300]*4 + [234,670])
-        self.step(12.2)
-        self.step(12.6)
+    def test_confirmation_needs_continuously_valid_stable_measurements(self):
+        self.closed()
+        with patch('logic.grasp_manager.confirm_grip', return_value=(True, 'ok', {})):
+            self.step(11)
+            self.step(11.5)
+        with patch('logic.grasp_manager.confirm_grip', return_value=(False, 'lost', {})):
+            self.step(11.6)
+        with patch('logic.grasp_manager.confirm_grip', return_value=(True, 'ok', {})):
+            self.step(11.7)
+            self.assertEqual(self.manager.state, 'settling')
+            self.step(12.8)
+        self.assertEqual(self.manager.state, 'cylinder_confirmed')
 
 
 class CaptureTests(relay_tests.TaxelRelayTests):

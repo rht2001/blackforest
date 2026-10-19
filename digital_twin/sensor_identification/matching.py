@@ -1,9 +1,11 @@
 import itertools
+import time
 
 import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
+from .contact_directions import pressure_directions, direction_residual
 from .limits import penetration_residual, sampled_patch_penetrations, triangle_penetrations
 
 
@@ -101,11 +103,11 @@ def _palm_starts(model, contacts, points, normals):
 
 
 def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, boundary_normals=None,
-              palm_xyz=None, palm_normals=None, progress=None):
+              palm_xyz=None, palm_normals=None, contact_pressures=None, thumb_xyz=None, progress=None, initial_pose=None):
     """Quick placement uses a bounded search; detailed mode uses all starts."""
     kwargs = dict(boundary_xyz=boundary_xyz, boundary_normals=boundary_normals,
                   palm_xyz=palm_xyz, palm_normals=palm_normals,
-                  progress=progress)
+                  contact_pressures=contact_pressures, thumb_xyz=thumb_xyz, progress=progress, initial_pose=initial_pose)
     if config.quick_preview:
         attempt = _fit_model(model, contacts, exclusions, radii, config, fast_attempt=True, **kwargs)
         attempt['search_pass'] = 'quick_short_search'
@@ -116,7 +118,7 @@ def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, 
 
 
 def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, boundary_normals=None,
-               palm_xyz=None, palm_normals=None, contact_pressures=None, progress=None, fast_attempt=False):
+               palm_xyz=None, palm_normals=None, contact_pressures=None, thumb_xyz=None, progress=None, fast_attempt=False, initial_pose=None):
     """Both candidates receive the same budget within each search pass.
 
     Transform convention: p_observation_mm = R @ p_stl_mm + t_mm.
@@ -125,6 +127,8 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
     input_contact_points = len(contacts)
     input_hand_points = len(boundary_xyz) if boundary_xyz is not None else 0
     input_contacts = contacts
+    directions = pressure_directions(contacts, contact_pressures, config.pressure_threshold)
+    has_directions = bool(len(directions[0]))
     contacts = contacts[_spaced_indices(contacts, config.point_spacing_mm)]
     if boundary_xyz is not None and len(boundary_xyz):
         selected = _spaced_indices(boundary_xyz, config.point_spacing_mm, boundary_normals)
@@ -197,9 +201,113 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
             weight = config.tolerance_mm/config.hand_tolerance_mm
             d = np.r_[d, boundary_error*np.sqrt(len(contacts)/len(boundary_error))*weight,
                       boundary_error.max()*np.sqrt(len(contacts))*weight]
+        if has_directions:
+            angular = direction_residual(model, r, t, directions)
+            d = np.r_[d, angular*np.sqrt(len(contacts)/len(directions[0]))]
         return d/config.tolerance_mm
 
+    preview_time = 0.
+    preview_stage = None
+    preview_step = 0
+    def publish_pose(stage, r, t, force=False):
+        nonlocal preview_time, preview_stage, preview_step
+        if progress is None:
+            return
+        now = time.monotonic()
+        if not force and stage == preview_stage and now-preview_time < .25:
+            return
+        preview_time, preview_stage = now, stage
+        preview_step += 1
+        transform = np.eye(4)
+        transform[:3, :3], transform[:3, 3] = r, t
+        progress(dict(stage=stage, transform=transform.tolist(), pose_step=preview_step,
+                      preview=True))
+
+    def evaluated(stage, r, t, surface=False):
+        publish_pose(stage, r, t)
+        return search_residual(r, t, surface=surface)
+
+    # Empirical poses are supplied only for matching CAD in left_base_link.
+    # Parameterize translation by the bounding-box center, not the CAD origin.
+    model_center = model.mesh.bounds.mean(axis=0)
+    if initial_pose is not None:
+        prior_center = np.array(initial_pose['center_mm'], dtype=float)
+        prior_r = Rotation.from_euler('xyz', initial_pose['rotation_xyz_deg'], degrees=True).as_matrix()
+        position_window = np.array(initial_pose['position_window_mm'], dtype=float)
+        angular_window = np.deg2rad([30., 180., 30.])
+        prior_bounds = (np.r_[-angular_window, -position_window], np.r_[angular_window, position_window])
+        def prior_rotation(p):
+            # Apply shaft roll before tilt to avoid a gimbal at a 90-degree roll.
+            return prior_r @ Rotation.from_euler('yxz', [p[1], p[0], p[2]]).as_matrix()
+        def decode_prior(p):
+            rotation = prior_rotation(p)
+            return rotation, prior_center+p[3:]-rotation@model_center
+        def encode_prior(rotation, translation):
+            angles = Rotation.from_matrix(prior_r.T@rotation).as_euler('yxz')
+            angles = angles[[1, 0, 2]]
+            values = np.r_[angles, rotation@model_center+translation-prior_center]
+            return np.clip(values, prior_bounds[0]+1e-9, prior_bounds[1]-1e-9)
     coarse = []
+    if initial_pose is not None and not fast_attempt:
+        r, t = decode_prior(np.zeros(6))
+        publish_pose('standard_placement', r, t, force=True)
+        seed = least_squares(lambda p: evaluated('alignment', *decode_prior(p)), np.zeros(6),
+                             bounds=prior_bounds, x_scale=[1., 1., 1., 20., 20., 20.],
+                             max_nfev=min(config.max_nfev, 18), diff_step=1e-4)
+        r, t = decode_prior(seed.x)
+        coarse.append((float(np.mean(search_residual(r, t)**2)), r, t, 'empirical_grasp_prior'))
+    staged = fast_attempt and (initial_pose is not None or bool(preferred) or (thumb_xyz is not None and len(thumb_xyz) >= 3))
+    if staged:
+        # One standard placement. Rotate about the CAD center, then slide;
+        # never let rotation implicitly swing the object around the STL origin.
+        model_center = model.mesh.bounds.mean(axis=0)
+        r = preferred[0][0].copy() if preferred else ca @ ma.T
+        anchor = center.copy()
+        if preferred:
+            palm_center = palm_xyz.mean(axis=0)
+            anchor = palm_center + palm_normal * np.dot(center-palm_center, palm_normal)
+            low = ((model.mesh.vertices-model_center) @ r.T + anchor) @ palm_normal
+            anchor += palm_normal * max(0., np.median(palm_xyz @ palm_normal)-low.min())
+        if initial_pose is not None:
+            r, anchor = prior_r.copy(), prior_center.copy()
+        t = anchor-r@model_center
+        initial_transform = np.eye(4)
+        initial_transform[:3, :3], initial_transform[:3, 3] = r, t
+        thumb = thumb_xyz if thumb_xyz is not None and len(thumb_xyz) else contacts
+        thumb = thumb[_spread_indices(thumb, 128)]
+
+        placement_stage = 'adjusting_angle'
+        def placement_residual(rotation, translation):
+            error = evaluated(placement_stage, rotation, translation)
+            distance = model.tree.query((thumb-translation)@rotation)[0]
+            return np.r_[error, distance/config.tolerance_mm,
+                         distance.max()*np.sqrt(len(thumb))/config.tolerance_mm]
+
+        publish_pose('standard_placement', r, t, force=True)
+        if progress:
+            progress(dict(stage='adjusting_angle', completed=0, total=1))
+        r0 = r.copy()
+        def turn(p):
+            rotation = (prior_rotation(p) if initial_pose is not None
+                        else Rotation.from_rotvec(p).as_matrix()@r0)
+            return rotation, anchor-rotation@model_center
+        angle_options = {'bounds': (-angular_window, angular_window)} if initial_pose is not None else {}
+        angle_fit = least_squares(lambda p: placement_residual(*turn(p)), np.zeros(3), **angle_options,
+                                  max_nfev=min(config.max_nfev, 12), diff_step=1e-4)
+        r, t = turn(angle_fit.x)
+        publish_pose('adjusting_angle', r, t, force=True)
+        placement_stage = 'moving_to_thumb'
+        if progress:
+            progress(dict(stage='moving_to_thumb', completed=0, total=1))
+        slide_options = {'bounds': (t-position_window, t+position_window)} if initial_pose is not None else {}
+        slide_fit = least_squares(lambda p: placement_residual(r, p), t, **slide_options,
+                                  x_scale=[20., 20., 20.], max_nfev=min(config.max_nfev, 18),
+                                  diff_step=1e-4)
+        t = slide_fit.x
+        publish_pose('moving_to_thumb', r, t, force=True)
+        coarse.append((float(np.mean(search_residual(r, t)**2)), r, t, 'empirical_grasp_prior' if initial_pose is not None else 'center_angle_thumb_slide'))
+        # The existing final refinement and full CAD audit still apply.
+        starts, preferred = [], []
     # First slide/turn a longitudinal grasp along the palm (four DOF). Tilt
     # becomes available in sampled-surface six-DOF refinement.
     for index, (r0, t0) in enumerate(preferred):
@@ -207,7 +315,7 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
             progress(dict(stage='palm_initialization', completed=index, total=len(preferred)))
         def decode(p):
             return Rotation.from_rotvec(p[0]*palm_normal).as_matrix()@r0, t0+p[1:]
-        opt = least_squares(lambda p: search_residual(*decode(p)), np.zeros(4),
+        opt = least_squares(lambda p: evaluated('palm_initialization', *decode(p)), np.zeros(4),
                             x_scale=[1., 20., 20., 20.], max_nfev=iterations)
         r, t = decode(opt.x)
         error = search_residual(r, t)
@@ -215,24 +323,26 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
     for start_index, (r, t) in enumerate(starts):
         if progress and start_index % 8 == 0:
             progress(dict(stage='alignment', completed=start_index, total=len(starts)))
+        publish_pose('alignment', r, t, force=True)
         for _ in range(iterations):
             local = (contacts-t)@r
             _, index = model.tree.query(local)
             nr, nt = _rigid(model.samples[index], contacts)
             delta = np.linalg.norm(nt-t) + np.linalg.norm(nr-r)
             r, t = nr, nt
+            publish_pose('alignment', r, t)
             if delta < 1e-5:
                 break
-        if has_limits:
-            # ICP alone ignores the hand. Correct each fallback pose with
-            # contact AND hand residuals before deciding which starts survive.
+        if has_limits or has_directions:
+            # Correct positional ICP with hand limits and reliable patch
+            # directions before deciding which starts survive.
             r0, t0 = r.copy(), t.copy()
             def decode_free(p):
                 return Rotation.from_rotvec(p[:3]).as_matrix()@r0, t0+p[3:]
-            opt = least_squares(lambda p: search_residual(*decode_free(p)), np.zeros(6),
+            opt = least_squares(lambda p: evaluated('alignment', *decode_free(p)), np.zeros(6),
                                 x_scale=[1., 1., 1., 20., 20., 20.], max_nfev=iterations)
             r, t = decode_free(opt.x)
-        if has_limits:
+        if has_limits or has_directions:
             error = search_residual(r, t)
             cost = float(np.mean(error**2))
         else:
@@ -248,7 +358,7 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
     def residual(parameters):
         r = Rotation.from_rotvec(parameters[:3]).as_matrix()
         t = parameters[3:]
-        return search_residual(r, t, surface=True)
+        return evaluated('refining', r, t, surface=True)
     fits = []
     # Retain different orientations instead of spending all refinements on
     # starts that converged to the same roll and translation.
@@ -264,15 +374,27 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
         selected.extend(item for item in coarse if not any(item is old for old in selected)
                         )
         selected = selected[:refine_count]
+    if initial_pose is not None and not fast_attempt:
+        empirical = next(item for item in coarse if item[3] == 'empirical_grasp_prior')
+        if not any(item is empirical for item in selected):
+            selected = [empirical] + selected
     refinement_total = len(selected)
     for refinement_index, (_, r, t, initialization) in enumerate(selected):
         if progress:
             progress(dict(stage='refining', completed=refinement_index, total=refinement_total))
-        opt = least_squares(residual, np.r_[Rotation.from_matrix(r).as_rotvec(), t],
+        use_prior = initialization == 'empirical_grasp_prior'
+        refine_fun = (lambda p: evaluated('refining', *decode_prior(p), surface=True)) if use_prior else residual
+        refine_start = encode_prior(r, t) if use_prior else np.r_[Rotation.from_matrix(r).as_rotvec(), t]
+        refine_options = {'bounds': prior_bounds, 'x_scale': [1., 1., 1., 20., 20., 20.]} if use_prior else {}
+        opt = least_squares(refine_fun, refine_start, **refine_options,
                             max_nfev=min(config.max_nfev, 15) if config.quick_preview else config.max_nfev, diff_step=1e-4,
                             ftol=1e-5, xtol=1e-5, gtol=1e-5)
-        r = Rotation.from_rotvec(opt.x[:3]).as_matrix()
-        t = opt.x[3:]
+        if use_prior:
+            r, t = decode_prior(opt.x)
+        else:
+            r = Rotation.from_rotvec(opt.x[:3]).as_matrix()
+            t = opt.x[3:]
+        publish_pose('checking_limits', r, t, force=True)
         final_nearest = model.nearest_sampled if config.quick_preview else model.nearest
         _, d = final_nearest((full_contacts-t)@r)
         ed = final_nearest((exclusions-t)@r)[1] if len(exclusions) else np.array([])
@@ -289,7 +411,9 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
                           if has_limits else np.array([]))
         boundary_rmse = float(np.sqrt(np.mean(boundary_error**2))) if len(boundary_error) else 0.
         boundary_max = float(boundary_error.max()) if len(boundary_error) else 0.
-        score = float(np.sqrt(rmse**2+penalty**2+boundary_rmse**2)/config.tolerance_mm)
+        angular = direction_residual(model, r, t, directions)
+        direction_rmse = float(np.sqrt(np.sum(angular**2)/len(directions[0]))) if has_directions else 0.
+        score = float(np.sqrt(rmse**2+penalty**2+boundary_rmse**2+direction_rmse**2)/config.tolerance_mm)
         transform = np.eye(4)
         transform[:3, :3], transform[:3, 3] = r, t
         fits.append(dict(score=score, rmse_mm=rmse, max_error_mm=float(d.max()),
@@ -301,6 +425,9 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
                          hand_constraints_checked=len(boundary_error),
                          transform=transform.tolist(), optimizer_success=bool(opt.success),
                          initialization=initialization,
+                         pressure_direction_patches=len(directions[0]),
+                         pressure_direction_rmse_mm=direction_rmse,
+                         pressure_direction_method='pressure_weighted_local_planes_unsigned_soft',
                          refinement_method='sample_guided_local_triangles',
                          validation_method='sampled_contacts_exact_hand' if config.quick_preview else 'exact_full_mesh',
                          quick_preview=config.quick_preview,
@@ -323,7 +450,18 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
             fit['rejection_reasons'].append('hand_penetration')
     # Feasibility takes precedence over average fit error.
     best = min(fits, key=lambda f: (not f['compatible'], f['score']))
-    best['starts_evaluated'] = len(starts)+len(preferred)
+    best['starts_evaluated'] = 1 if staged else len(starts)+len(preferred)
+    if staged:
+        best['initial_transform'] = initial_transform.tolist()
+        best['placement_sequence'] = ['hand_center', 'angle', 'thumb_translation', 'refinement', 'full_hand_audit']
+        best['angle_evaluations'] = int(angle_fit.nfev)
+        best['translation_evaluations'] = int(slide_fit.nfev)
+    if initial_pose is not None:
+        best['pose_prior'] = initial_pose
+        best['pose_prior_used'] = best['initialization'] == 'empirical_grasp_prior'
+        best['starts_evaluated'] += int(not staged)
+        if staged:
+            best['placement_sequence'][0] = 'empirical_grasp_pose'
     best['palm_starts_evaluated'] = len(preferred)
     best['palm_initial_dof'] = 4 if preferred else None
     best['refinement_dof'] = 6

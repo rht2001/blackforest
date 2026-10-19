@@ -12,7 +12,7 @@ from .classifier import IdentificationConfig, identify_sensor
 from .demo import synthetic_points, write_viewer
 from .geometry import load_candidates
 
-ESTIMATOR_REVISION = 'thumb_first_v7'
+ESTIMATOR_REVISION = 'empirical_grasp_pose_v11'
 
 
 class IdentificationService:
@@ -46,6 +46,18 @@ class IdentificationService:
         with self._lock:
             if self._state.get('status') == 'running':
                 self._state['progress'] = {**event, 'updated_at': time.time()}
+                if event.get('preview') is True and event.get('candidate') in ('SENSOR_A', 'SENSOR_B'):
+                    sequence = self._state.get('pose_sequence', 0)+1
+                    self._state['pose_sequence'] = sequence
+                    pose = dict(candidate=event['candidate'], stage=event['stage'],
+                                transform=copy.deepcopy(event['transform']), sequence=sequence,
+                                elapsed_seconds=time.time()-self._state['started_at'])
+                    self._state['preview_pose'] = pose
+                    history = self._state.setdefault('pose_history', [])
+                    history.append(pose)
+                    del history[:-256]
+                if 'candidate_decisions' in event:
+                    self._state['candidate_decisions'] = copy.deepcopy(event['candidate_decisions'])
                 if event.get('first_guess'):
                     self._state['first_guess'] = copy.deepcopy(event['first_guess'])
 

@@ -6,6 +6,7 @@ import numpy as np
 
 from .matching import fit_model
 from .limits import valid_boundaries
+from .grasp_prior import empirical_pose
 
 
 @dataclass(frozen=True)
@@ -79,7 +80,7 @@ def valid_measurements(points):
     return clean, invalid
 
 
-def identify_sensor(points, models, config=None, *, boundary_points=(), progress=None, thumb_hint=None):
+def identify_sensor(points, models, config=None, *, boundary_points=(), progress=None, thumb_hint=None, coordinate_frame=None):
     config = config or IdentificationConfig()
     if set(models) != {'SENSOR_A', 'SENSOR_B'}:
         raise ValueError('Exactly SENSOR_A and SENSOR_B models are required')
@@ -124,9 +125,13 @@ def identify_sensor(points, models, config=None, *, boundary_points=(), progress
     exclusions = np.array([[p[k] for k in ('x', 'y', 'z')] for p in negative], dtype=float).reshape(-1, 3)*scale
     radii = np.array([p['surface_clearance_mm'] for p in negative])
     result['certified_exclusions'] = len(negative)
-    kwargs = {}
+    kwargs = dict(contact_pressures=np.array([p['pressure'] for p in active]))
+    thumb = [p for p in active if str(p.get('region', '')).startswith('thumb_')
+             or str(p.get('taxel_id', p['id'])).startswith('thumb_')]
+    if len(thumb) >= 3:
+        kwargs['thumb_xyz'] = np.array([[p[k] for k in ('x', 'y', 'z')] for p in thumb])*scale
     if limits:
-        kwargs = dict(boundary_xyz=np.array([[p[k] for k in ('x','y','z')] for p in limits])*scale,
+        kwargs.update(boundary_xyz=np.array([[p[k] for k in ('x','y','z')] for p in limits])*scale,
                       boundary_normals=np.array([p['normal'] for p in limits]))
         # Only explicitly identified rigid-palm samples define a grasp prior.
         # Finger normals and arbitrary-frame clouds must not invent a palm.
@@ -146,17 +151,31 @@ def identify_sensor(points, models, config=None, *, boundary_points=(), progress
         result['placement_policy'] = 'thumb_closure_first_with_geometric_fallback'
         result['first_guess'] = {**thumb_hint, 'candidate': ordered[0]}
     result['candidate_order'] = ordered
+    result['candidate_decisions'] = []
     if progress and thumb_hint:
         progress(dict(stage='thumb_first_guess', first_guess=result['first_guess']))
-    for name in ordered:
+    for index, name in enumerate(ordered):
+        previous = ordered[index-1] if index else None
+        reason = ('thumb_first' if thumb_hint else 'larger_first') if not index else (
+            'comparison' if result['fits'][previous]['compatible'] else 'fallback')
+        result['candidate_decisions'].append(dict(kind='trying', candidate=name,
+            reason=reason, previous_candidate=previous))
         model = models[name]
         fit_kwargs = dict(kwargs)
+        prior = empirical_pose(model, coordinate_frame)
+        if prior is not None:
+            fit_kwargs['initial_pose'] = prior
         if progress:
             def candidate_progress(event, candidate=name):
-                progress({**event, 'candidate': candidate, **({'first_guess': result['first_guess']} if thumb_hint else {})})
+                progress({**event, 'candidate': candidate, 'candidate_decisions': [dict(d) for d in result['candidate_decisions']], **({'first_guess': result['first_guess']} if thumb_hint else {})})
             fit_kwargs['progress'] = candidate_progress
             candidate_progress(dict(stage='alignment', completed=0))
         result['fits'][name] = fit_model(model, xyz, exclusions, radii, config, **fit_kwargs)
+        fit = result['fits'][name]
+        result['candidate_decisions'].append(dict(kind='checked', candidate=name,
+            compatible=fit['compatible'], rejection_reasons=list(fit.get('rejection_reasons', []))))
+        if progress:
+            candidate_progress(dict(stage='candidate_checked'))
         # Quick placement only needs the first acceptable size. Detailed mode
         # retains both searches for the independent identity/ambiguity gates.
         if config.quick_preview and result['fits'][name]['compatible']:

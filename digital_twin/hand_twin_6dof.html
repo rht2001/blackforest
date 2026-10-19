@@ -727,7 +727,7 @@ estimatePointIndex=traces.length;traces.push({name:'Frozen estimate measurements
 window.HandEstimate={
  clear(){estimateActive=false;savedVisibility();for(const slot of [...estimateIndices,estimatePointIndex])traces[slot].visible=false;
   if(view.ready)HandRenderer.restyle(view.plot,{visible:[...estimateIndices,estimatePointIndex].map(()=>false)},[...estimateIndices,estimatePointIndex]);},
- show(name,fit,frame,threshold=200){
+ show(name,fit,frame,threshold=200,options={}){
   this.clear();
   if(frame.frame!=='left_base_link'||!['mm','m'].includes(frame.units))throw Error('Estimate has no matching hand coordinate frame.');
   const index=['SENSOR_A','SENSOR_B'].indexOf(name),model=data.sensor_objects[index],matrix=fit.transform;
@@ -749,7 +749,7 @@ window.HandEstimate={
   estimateActive=true;savedVisibility();trace.visible=true;dots.visible=true;traces[pointIndex].visible=false;
   for(let i=objectStart;i<objectEnd;i++)traces[i].visible=false;
   const slots=traces.map((_,i)=>i);HandRenderer.restyle(view.plot,{x:traces.map(t=>t.x),y:traces.map(t=>t.y),z:traces.map(t=>t.z),visible:traces.map(t=>t.visible)},slots);
-  fitView();return {candidate:name,vertices:trace.x.length};
+  if(!options.preserveCamera)fitView();return {candidate:name,vertices:trace.x.length};
  }
 };
 function fitView(){fit()}

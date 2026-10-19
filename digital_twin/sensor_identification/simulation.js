@@ -3,18 +3,8 @@
 (function(root){
  'use strict';
  const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
- const mm=value=>typeof value==='number'&&Number.isFinite(value)?value.toFixed(2)+' mm':'—';
- const elapsed=(start,end)=>{if(!Number.isFinite(start))return '';const seconds=Math.max(0,Math.floor((end-start)));return seconds<60?seconds+'s':Math.floor(seconds/60)+'m '+String(seconds%60).padStart(2,'0')+'s'};
- const stages={thumb_first_guess:'Thumb nearly closed: trying the smaller sensor first',queued:'Starting estimate',loading_models:'Loading sensor models',preparing:'Checking measurements',palm_initialization:'Fitting a palm-aligned starting pose',alignment:'Matching surfaces',refining:'Refining pose',checking_limits:'Checking hand penetration',writing_report:'Preparing result'};
- const rejection={contact_outside_tolerance:'Some red contacts are too far from the surface.',hand_penetration:'The model crosses the hand limits.',certified_clearance_violated:'The model violates a certified clearance region.'};
+  const elapsed=(start,end)=>{if(!Number.isFinite(start))return '';const seconds=Math.max(0,Math.floor((end-start)));return seconds<60?seconds+'s':Math.floor(seconds/60)+'m '+String(seconds%60).padStart(2,'0')+'s'};
  const sensorName=(name,context={})=>context.models?.[['SENSOR_A','SENSOR_B'].indexOf(name)]?.name||({SENSOR_A:'VEGABAR 29',SENSOR_B:'VEGABAR 38'}[name])||name;
- function identityBox(result,compatible,context){
-  const confirmed=result.classification&&result.classification!=='AMBIGUOUS'&&result.fits?.[result.classification]?.compatible===true;
-  const selected=result.placement_candidate&&result.fits?.[result.placement_candidate]?.compatible===true?result.placement_candidate:compatible.length===1?compatible[0][0]:null;
-  const label=confirmed?sensorName(result.classification,context):selected?sensorName(selected,context)+' (provisional)': 'Undetermined';
-  const detail=confirmed?'Identified by the estimate.':selected?'Provisional placement; sensor identity is not confirmed.':compatible.length?'Possible sensors: '+compatible.map(([name])=>sensorName(name,context)).join(' or ')+'.':'No sensor model passed the fit checks.';
-  return '<section class="sensor-identity" aria-label="Sensor identification"><strong>Sensor: '+escape(label)+'</strong><p class="fit-small">'+escape(detail)+'</p></section>';
- }
  // STL bounding-box center transformed into the observation frame (millimetres).
  function sensorPose(fit,model){
   const t=fit?.transform,c=model?.source_center_mm;
@@ -26,51 +16,23 @@
   const yaw=horizontal>1e-8?Math.atan2(t[1][0],t[0][0]):Math.atan2(-t[0][1],t[1][1]);
   return {center,pitch:pitch*180/Math.PI,yaw:yaw*180/Math.PI,roll:roll*180/Math.PI};
  }
- function poseBox(name,fit,context){
-  const index=['SENSOR_A','SENSOR_B'].indexOf(name),model=index<0?null:context.models?.[index],pose=sensorPose(fit,model);
-  const frame=escape(context.frame||'observation frame');
-  if(!pose)return '<section class="sensor-pose"><h4>Estimated sensor center &amp; orientation</h4><p class="fit-small">Pose unavailable for this candidate.</p></section>';
-  const value=n=>(Math.abs(n)<.005?0:n).toFixed(2);
-  const metric=(label,n,unit)=>'<div><dt>'+label+'</dt><dd>'+value(n)+' '+unit+'</dd></div>';
-  return '<section class="sensor-pose" aria-label="'+escape(name)+' estimated pose"><h4>Estimated sensor center &amp; orientation</h4><p class="fit-small">'+escape(model.name||name)+' · '+frame+(fit.compatible===true?'':' · Rejected candidate pose')+'</p><dl>'+['X','Y','Z'].map((axis,k)=>metric(axis,pose.center[k],'mm')).join('')+['pitch','yaw','roll'].map(axis=>metric(axis[0].toUpperCase()+axis.slice(1),pose[axis],'°')).join('')+'</dl><p class="fit-small">Center: STL bounding-box midpoint. Pitch about Y, yaw about Z, roll about X; R = Rz(yaw) Ry(pitch) Rx(roll).</p></section>';
- }
- function card(name,fit,contacts,context){
-  const compatible=fit.compatible===true;
-  const fraction=Number.isFinite(fit.inlier_fraction)?Math.max(0,Math.min(1,fit.inlier_fraction)):null;
-  const within=fraction===null?'—':Number.isInteger(contacts)?Math.round(fraction*contacts)+' / '+contacts:Math.round(fraction*100)+'%';
-  const reasons=(fit.rejection_reasons||[]).map(key=>rejection[key]||key);
-  if(fit.optimizer_success===false)reasons.push('The pose search did not converge.');
-  if(!fit.quick_preview&&!compatible&&!reasons.length)reasons.push('This candidate did not satisfy the fit checks.');
-  const metric=(label,value)=>'<div><dt>'+escape(label)+'</dt><dd>'+escape(value)+'</dd></div>';
-  return '<details class="fit-card" open><summary>'+escape(sensorName(name,context))+' <span class="fit-badge '+(compatible?'fit-good':'fit-bad')+'">'+(compatible?(fit.quick_preview?'Quick placement':'Geometry fits'):'Rejected')+'</span></summary><dl>'+
-   metric('Contact error (RMS)',mm(fit.rmse_mm))+metric('Worst contact error',mm(fit.max_error_mm))+
-   metric('Contacts in tolerance',within)+metric('Max hand penetration',mm(fit.hand_limit_max_mm))+metric('Hand limits exceeded',Number.isInteger(fit.hand_collision_count)?fit.hand_collision_count+' / '+fit.hand_constraints_checked:'—')+'</dl><p class="fit-small">Allowed: contact '+escape(mm(fit.contact_tolerance_mm))+' · hand '+escape(mm(fit.hand_tolerance_mm))+'</p>'+
-   (Number.isInteger(fit.input_contact_points)?'<p class="fit-small">Checked '+escape(fit.scored_contact_points)+' / '+escape(fit.input_contact_points)+' contact points · '+escape(fit.hand_constraints_checked)+' / '+escape(fit.input_hand_points)+' hand limits · spacing '+escape(mm(fit.point_spacing_mm))+'</p>':'')+
-   reasons.map(reason=>'<p class="fit-reason">'+escape(reason)+'</p>').join('')+poseBox(name,fit,context)+'</details>';
- }
  function render(state,explanation='',now=Date.now()/1000,context={}){
-  const source=state.input_label?'<p class="fit-small">Snapshot: '+escape(state.input_label)+'</p>':'';
-  if(state.status==='running'){
-   const p=state.progress||{},hasCount=Number.isFinite(p.completed)&&Number.isFinite(p.total)&&p.total>0;
-   const label=(p.candidate?p.candidate+' · ':'')+(stages[p.stage]||'Estimating frozen snapshot');
-   return '<h3>Estimating… <span class="fit-time">'+escape(elapsed(state.started_at,now))+'</span></h3>'+source+'<p>'+escape(label)+'</p><progress aria-label="Current estimation stage" '+(hasCount?'max="'+p.total+'" value="'+Math.max(0,Math.min(p.total,p.completed))+'"':'')+'></progress>'+
-    (hasCount?'<p class="fit-small">'+escape(p.completed+' / '+p.total)+' '+(p.stage==='alignment'?'starting poses':'pose refinements')+'</p>':'')+
-    (state.first_guess?'<p class="fit-small">First guess: '+escape(sensorName(state.first_guess.candidate,context))+' · thumb '+Math.round(state.first_guess.closure_fraction*100)+'% closed with contact. Provisional; checking geometry.</p>':'')+'<p class="fit-small">You can keep inspecting the hand while the pose is fitted.</p>';
-  }
-  if(state.status==='error'||state.status==='connection_error')return '<h3>'+(state.status==='connection_error'?'Connection lost':'Estimate failed')+'</h3>'+source+'<p class="fit-reason">'+escape(state.error||'No error details were returned.')+'</p>'+(state.status==='connection_error'?'<p class="fit-small">The job may still be running.</p><button id="retryEstimateStatus">Check status</button>':'');
-  if(state.status!=='complete')return '';
-  const result=state.result||{},fits=Object.entries(result.fits||{}),compatible=fits.filter(([,f])=>f.compatible===true);
-  const title=result.quick_preview&&compatible.length?'Quick placement':result.classification&&result.classification!=='AMBIGUOUS'?'Estimated '+sensorName(result.classification,context):!fits.length?'No anchored pose':compatible.length===2?'Both models fit':compatible.length===1?'Provisional fit':'Neither model fits';
-  const duration=elapsed(state.started_at,state.finished_at??now);
-  const counts=[];if(Number.isInteger(result.contacts))counts.push(result.contacts+' red contacts');
-  const limits=(result.hand_boundary_points||0)+(result.surface_taxel_limits||0);if(limits)counts.push(limits+' hand limits');
-  if(result.invalid_points)counts.push(result.invalid_points+' invalid readings ignored');
-  return '<h3>'+escape(title)+(duration?' <span class="fit-time">'+escape(duration)+'</span>':'')+'</h3>'+source+'<p>'+escape(explanation||result.reason||'Estimate complete.')+'</p><p class="fit-small">'+escape(counts.join(' · '))+'</p>'+
-   (result.classification==='AMBIGUOUS'&&compatible.length?'<p class="fit-small">A geometric fit is provisional; the sensor identity is not confirmed.</p>':'')+
-   (result.placement_candidate?'<p class="fit-small">'+(result.first_guess?'Thumb nearly closed · smaller sensor first · selected ':'Larger sensor first · selected ')+escape(sensorName(result.placement_candidate,context))+(result.placement_reason==='smaller_candidate_after_larger_rejected'?' after the larger sensor failed the fit limits.':'.')+'</p>':'')+
-   identityBox(result,compatible,context)+fits.map(([name,fit])=>card(name,fit,fit.scored_contact_points??result.contacts,context)).join('')+
-   (!fits.length?'<p class="fit-small">More valid, spatially spread contact readings are needed to locate the object.</p>':'')+
-   '<p class="fit-small">Open Fit report for the full geometry comparison.</p>';
+  if(state.status==='idle')return '';
+  const result=state.result||{},fits=result.fits||{},running=state.status==='running';
+  const candidate=running?(state.progress?.candidate||state.first_guess?.candidate):
+   (context.candidate||result.placement_candidate||result.best_candidate||Object.keys(fits).find(name=>fits[name]?.compatible===true)||Object.keys(fits)[0]);
+  const model=context.models?.[['SENSOR_A','SENSOR_B'].indexOf(candidate)];
+  const pose=sensorPose(fits[candidate],model);
+  const currentStages={queued:'Starting',loading_models:'Loading sensors',preparing:'Checking data',thumb_first_guess:'Choosing sensor',standard_placement:'Positioning',adjusting_angle:'Adjusting angle',moving_to_thumb:'Moving to thumb',palm_initialization:'Positioning',alignment:'Matching surfaces',refining:'Refining position',checking_limits:'Checking fit',candidate_checked:'Fit checked',writing_report:'Finishing'};
+  const status=running?(currentStages[state.progress?.stage]||'Estimating'):
+   state.status==='connection_error'?'Connection lost':state.status==='error'?'Estimate failed':
+   !candidate?'No position found':fits[candidate]?.compatible!==true?'Rejected fit':
+   result.classification===candidate?'Identified':'Provisional fit';
+  const metric=(label,value,unit)=>'<div><dt>'+label+'</dt><dd>'+(Number.isFinite(value)?escape((Math.abs(value)<.005?0:value).toFixed(2)+' '+unit):'—')+'</dd></div>';
+  return '<h3>'+escape(candidate?sensorName(candidate,context):'Sensor')+'</h3><p class="current-state" role="status">'+escape(status)+'</p><dl class="current-pose">'+
+   ['X','Y','Z'].map((axis,k)=>metric(axis,pose?.center[k],'mm')).join('')+
+   ['pitch','yaw','roll'].map(axis=>metric(axis[0].toUpperCase()+axis.slice(1),pose?.[axis],'°')).join('')+'</dl>'+
+   (state.status==='connection_error'?'<button id="retryEstimateStatus">Retry</button>':'');
  }
  root.EstimateFeedback={render,elapsed,sensorPose};
  if(typeof module!=='undefined')module.exports=root.EstimateFeedback;
@@ -138,7 +100,7 @@
       #onePageApp .channel-name{color:#dce2e9!important;font-weight:500}
       #onePageApp .channel-info{color:#a6afb9}
       #onePageApp :is(#profileControls,#savedCaptures,#sensorEditor){background:transparent;border:0;border-radius:0;padding:0}
-      #estimateFeedback{margin:16px 0;padding:14px 0;border:0;border-top:1px solid var(--line);border-radius:0;background:transparent}
+      #estimateFeedback{position:fixed;top:16px;right:16px;z-index:60;box-sizing:border-box;width:min(340px,calc(100vw - 392px));max-height:calc(100vh - 32px);overflow-y:auto;overscroll-behavior:contain;margin:0;padding:16px;border:1px solid var(--line);border-radius:6px;background:var(--panel);box-shadow:0 8px 24px #0005;scrollbar-width:thin}
       #estimateFeedback h3{font-size:13px;margin:0 0 7px}#estimateFeedback progress{width:100%;height:6px;accent-color:#98b9dc}
       #estimateFeedback .fit-small{font-size:12px;color:#a6afb9;overflow-wrap:anywhere}#estimateFeedback .fit-time{float:right;font-size:12px;color:#a6afb9;font-weight:400}
       #estimateFeedback .fit-card{padding:10px 0 2px;margin:12px 0 0;border-top:1px solid var(--line)}#estimateFeedback summary{font-weight:600;cursor:pointer}
@@ -151,10 +113,12 @@
       #estimateFeedback .sensor-pose h4{font-size:12px;margin:0 0 6px;color:#d8e6f4}
       #estimateFeedback .sensor-pose dl{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 6px}
       #estimateFeedback .sensor-pose dd{white-space:nowrap;font-size:13px}
+      #estimateFeedback .sensor-decisions{border:1px solid #536476;background:#202c38;padding:12px;margin:12px 0}#estimateFeedback .sensor-decisions h4{margin:0 0 8px;font-size:12px}#estimateFeedback .sensor-decisions ol{padding-left:18px;margin:0}#estimateFeedback .sensor-decisions li{margin:8px 0;font-size:12px;line-height:1.5}
+      #estimateFeedback .current-pose{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 6px;margin:12px 0 0}#estimateFeedback .current-pose dd{font-size:13px;white-space:nowrap}#estimateFeedback .current-state{margin:4px 0;color:#a6afb9;font-size:12px}
       #estimateFeedback .fit-reason{font-size:12px;color:#edb6be}
       #estimateView{position:absolute;inset:0;z-index:8;background:#fff}#estimateView[hidden]{display:none}#estimateView iframe{width:100%;height:100%;border:0}
-      @media(min-width:621px) and (max-width:900px){#panel{width:310px;padding:22px 18px}body.profile-mode #profileWorkspace{left:310px}}
-      @media(max-width:620px){#panel{width:100%;height:50vh;max-height:50vh;padding:18px;border-right:0;border-bottom:1px solid var(--line)}body.profile-mode #profileWorkspace{left:0;top:50vh}body.profile-mode .profile-caption{top:14px;left:18px}#onePageApp .app-heading{margin-bottom:18px;padding-bottom:14px}#onePageApp .app-heading h1{font-size:19px}}
+      @media(min-width:621px) and (max-width:900px){#estimateFeedback{width:min(340px,calc(100vw - 342px))}#panel{width:310px;padding:22px 18px}body.profile-mode #profileWorkspace{left:310px}}
+      @media(max-width:620px){#estimateFeedback{top:calc(50vh + 16px);width:calc(100vw - 32px);max-height:calc(50vh - 32px)}#panel{width:100%;height:50vh;max-height:50vh;padding:18px;border-right:0;border-bottom:1px solid var(--line)}body.profile-mode #profileWorkspace{left:0;top:50vh}body.profile-mode .profile-caption{top:14px;left:18px}#onePageApp .app-heading{margin-bottom:18px;padding-bottom:14px}#onePageApp .app-heading h1{font-size:19px}}
     </style><header class="app-heading"><h1>Hand twin</h1><p>RH56DFTP / Sensor identification</p></header><h2>Data source</h2>
 
       <div class="data-modes" role="tablist" aria-label="Data mode">
@@ -171,7 +135,7 @@
 
         <div id="csvControls" hidden><label>Use CSV as <select id="csvScope"><option value="run">Whole probing run</option><option value="row">Single row</option></select></label>
 
-        <div id="runControls"><label>Run <select id="historyRun"></select></label><label>Contacts <select id="runRegions"><option value="all">All hand regions</option><option value="thumb">Thumb only</option></select></label><label>Point spacing (mm) <input id="runVoxel" type="number" min="0.1" max="10" step="0.1" value="1"></label><button id="buildRun">Build run point cloud</button><p class="hint">Keeps the first contact patch for each closing finger. Thumb probing and palm contacts use all valid recorded poses. Coordinates assume the object stays fixed relative to the hand base.</p></div>
+        <div id="runControls"><label>Run <select id="historyRun"></select></label><label>Contacts <select id="runRegions"><option value="all">All hand regions</option><option value="thumb">Thumb only</option></select></label><label>Point spacing (mm) <input id="runVoxel" type="number" min="0.1" max="10" step="0.1" value="1"></label><button id="buildRun">Build run point cloud</button><p class="hint">Shows each contacting finger at its first contact pose, removing its other angles from the cloud. Thumb and palm retain their recorded poses. Estimation retains the full hand sweep. Coordinates assume the object stays fixed relative to the hand base.</p></div>
 
         <div id="rowControls" hidden><label>CSV row <input id="historyRow" type="number" value="1" min="1"></label><div class="data-actions"><button id="historyPrev">Previous</button><button id="historyNext">Next</button></div></div><p id="historyRowInfo" class="hint"></p></div>
 
@@ -197,9 +161,9 @@
       </section>
       <h2>Sensor estimation</h2><button id="estimateButton">Estimate sensor</button><p id="estimateStatus" role="status" aria-live="polite">Ready. The selected data source supplies the point cloud.</p><section id="estimateFeedback" hidden aria-label="Estimate feedback"></section>
 
-      <div class="data-actions"><button id="showHand">Hand view</button><button id="showCloud" disabled>Point cloud</button><button id="showEstimate" disabled>Estimate in hand</button><button id="showFitReport" disabled>Fit report</button></div><label id="estimateCandidateLabel" hidden>Fitted candidate <select id="estimateCandidate"></select></label><p id="estimatePoseWarning" role="status" hidden style="color:#edb6be">Rejected fit shown for comparison. Contact or collision limits are exceeded.</p><div id="viewActions" class="data-actions"></div>
+      <div class="data-actions"><button id="showHand">Hand view</button><button id="showCloud" disabled>Point cloud</button><button id="showEstimate" disabled>Estimate in hand</button><button id="showFitReport" disabled>Fit report</button></div><label id="estimateCandidateLabel" hidden>Fitted candidate <select id="estimateCandidate"></select></label><section id="estimatePreview" hidden aria-label="Estimation pose history"><label><input id="estimateFollow" type="checkbox" checked> Follow live STL position</label><p id="estimatePreviewStatus" role="status"></p><label>Inspect search poses <input id="estimatePoseStep" type="range" min="0" max="0" value="0" step="1"></label><p class="hint">Trial pose · not yet validated. Drag the slider to pause live following and inspect earlier positions.</p></section><p id="estimatePoseWarning" role="status" hidden style="color:#edb6be">Rejected fit shown for comparison. Contact or collision limits are exceeded.</p><div id="viewActions" class="data-actions"></div>
 
-      <p class="hint">Purple and gray: hand surface limits · red: measured contacts</p><div id="boundaryDisplay"></div><details id="estimateSettings"><summary>Estimation settings</summary><label>Fit quality <select id="estimateQuality"><option value="quick" selected>Quick placement</option><option value="detailed">Detailed validation</option></select></label><label>Contact threshold <input id="estimateThreshold" type="number" min="0" max="4095" value="200"></label><label>Position tolerance (mm) <input id="estimateTolerance" type="number" min="0.1" max="20" step="0.1" value="3"></label><label>Hand penetration allowance (mm) <input id="estimateHandTolerance" type="number" min="0.1" max="20" step="0.1" value="3"></label><label>Estimation point spacing (mm) <input id="estimatePointSpacing" type="number" min="0" max="20" step="0.1" value="2"></label><p class="hint">Nearby contacts and hand limits share one representative within this spacing; 0 keeps all points. Opposing hand surfaces remain separate. A thumb at least 85% closed with measured thumb contact gives a provisional smaller-sensor first guess. Quick placement uses a short search and stops at the first pose passing its fit checks. If neither candidate passes, Detailed validation searches more starting poses. Quick placement approximates contact distances; both modes check hand penetration against the full CAD with the adjustable hand penetration allowance (default 3 mm). Detailed validation also checks exact contact distances. Fitting starts with a longitudinal palm-aligned grasp when rigid palm geometry is available: several rolls around the full axis, then free rotation and translation. Hand limits guide the search and use conservative local surface patches requiring calibrated geometry.</p></details>
+      <p class="hint">Purple and gray: hand surface limits · red: measured contacts</p><div id="boundaryDisplay"></div><details id="estimateSettings"><summary>Estimation settings</summary><label>Fit quality <select id="estimateQuality"><option value="quick" selected>Quick placement</option><option value="detailed">Detailed validation</option></select></label><label>Contact threshold <input id="estimateThreshold" type="number" min="0" max="4095" value="200"></label><label>Position tolerance (mm) <input id="estimateTolerance" type="number" min="0.1" max="20" step="0.1" value="3"></label><label>Hand penetration allowance (mm) <input id="estimateHandTolerance" type="number" min="0.1" max="20" step="0.1" value="3"></label><label>Estimation point spacing (mm) <input id="estimatePointSpacing" type="number" min="0" max="20" step="0.1" value="2"></label><p class="hint">Nearby contacts and hand limits share one representative within this spacing; 0 keeps all points. Opposing hand surfaces remain separate. A thumb at least 85% closed with measured thumb contact gives a provisional smaller-sensor first guess. Quick placement starts in the middle of the hand, adjusts the STL angle, then moves it to the thumb contacts. It uses one starting pose per candidate and stops at the first pose passing its fit checks. If neither candidate passes, Detailed validation searches more starting poses. Quick placement approximates contact distances; both modes check hand penetration against the full CAD with the adjustable hand penetration allowance (default 3 mm). Detailed validation also checks exact contact distances. Detailed fitting tries several palm-aligned orientations, then refines rotation and translation. Hand limits guide the search and use conservative local surface patches requiring calibrated geometry.</p></details>
 
       <details id="advancedData"><summary>Advanced display & connection</summary></details>`;
 
@@ -244,7 +208,7 @@
     let feedbackState=null;
     function paintFeedback(state){
       feedbackState=state;const host=$('estimateFeedback');host.hidden=state.status==='idle';
-      host.innerHTML=EstimateFeedback.render(state,reasons[state.result?.reason]||state.result?.reason||'',Date.now()/1000,{models:poseModels,frame:fittedFrame?.frame});
+      host.innerHTML=EstimateFeedback.render(state,reasons[state.result?.reason]||state.result?.reason||'',Date.now()/1000,{models:poseModels,frame:fittedFrame?.frame,candidate:fittedResult===state.result?$('estimateCandidate').value:null});
       const retry=$('retryEstimateStatus');if(retry)retry.onclick=refresh;
     }
     setInterval(()=>{if(feedbackState?.status==='running'){
@@ -255,7 +219,49 @@
 
     let fittedFrame=null,fittedResult=null,fittedThreshold=200;
 
-    function clearEstimate(){window.HandEstimate?.clear();fittedFrame=null;fittedResult=null;$('estimatePoseWarning').hidden=true;$('showEstimate').disabled=true;$('showFitReport').disabled=true;$('estimateCandidateLabel').hidden=true;}
+    let previewHistory=[],previewSequence=null,previewHandReady=false;
+    function showPreviewPose(pose){
+      if(!pose||!fittedFrame?.hand_snapshot)return;
+      try{
+        if(!previewHandReady){
+          window.HandHistory.show(fittedFrame.hand_snapshot,'Estimation: frozen hand');
+          previewHandReady=true;
+        }
+        estimateView.hidden=true;runView.hidden=true;
+        window.HandEstimate.show(pose.candidate,{transform:pose.transform},fittedFrame,fittedThreshold,{preserveCamera:true});
+        const index=['SENSOR_A','SENSOR_B'].indexOf(pose.candidate),name=poseModels[index]?.name||pose.candidate;
+        $('estimatePreviewStatus').textContent=name+' · '+pose.stage.replaceAll('_',' ')+' · '+Number(pose.elapsed_seconds||0).toFixed(1)+' s · trial pose';
+        $('estimatePoseWarning').hidden=true;
+        previewSequence=pose.sequence;
+      }catch(error){$('estimatePreviewStatus').textContent='Preview unavailable: '+error.message;}
+    }
+    function updatePreview(state){
+      if(!fittedFrame||!Array.isArray(state.pose_history)||!state.pose_history.length)return;
+      const selected=previewHistory[Number($('estimatePoseStep').value)]?.sequence;
+      previewHistory=state.pose_history;
+      $('estimatePreview').hidden=false;
+      $('estimatePoseStep').max=previewHistory.length-1;
+      if($('estimateFollow').checked&&state.status==='running'){
+        $('estimatePoseStep').value=previewHistory.length-1;
+        const latest=previewHistory.at(-1);
+        if(latest.sequence!==previewSequence)showPreviewPose(latest);
+      }else if(selected!=null){
+        const index=previewHistory.findIndex(p=>p.sequence===selected);
+        $('estimatePoseStep').value=Math.max(0,index);
+      }
+    }
+    $('estimatePoseStep').oninput=()=>{
+      $('estimateFollow').checked=false;
+      showPreviewPose(previewHistory[Number($('estimatePoseStep').value)]);
+    };
+    $('estimateFollow').onchange=()=>{
+      if($('estimateFollow').checked&&previewHistory.length){
+        $('estimatePoseStep').value=previewHistory.length-1;
+        showPreviewPose(previewHistory.at(-1));
+      }
+    };
+
+    function clearEstimate(){previewHistory=[];previewSequence=null;previewHandReady=false;$('estimatePreview').hidden=true;$('estimateFollow').checked=true;window.HandEstimate?.clear();fittedFrame=null;fittedResult=null;$('estimatePoseWarning').hidden=true;$('showEstimate').disabled=true;$('showFitReport').disabled=true;$('estimateCandidateLabel').hidden=true;}
 
     function placeEstimate(){
 
@@ -280,7 +286,7 @@
 
     }
 
-    $('estimateCandidate').onchange=placeEstimate;
+    $('estimateCandidate').onchange=()=>{placeEstimate();if(feedbackState)paintFeedback(feedbackState)};
 
     function updateReady(){
 
@@ -408,7 +414,7 @@
 
       estimateView.hidden=true;runView.hidden=false;
 
-      const points=runFrame.points,limits=runFrame.boundary_points||[],visible=$('runShowLimits').checked;
+      const points=runFrame.points,limits=runFrame.display_boundary_points||runFrame.boundary_points||[],visible=$('runShowLimits').checked;
 
       const layer=(pp,color,size,shown)=>({type:'scatter3d',mode:'markers',visible:shown,x:pp.map(p=>p.x*1000),y:pp.map(p=>p.y*1000),z:pp.map(p=>p.z*1000),marker:{size,color:pp.map(p=>p.pressure||0),...(color?{rgb:pp.map(()=>color)}:{})}});
 
@@ -446,6 +452,7 @@
 
     }
 
+    let selectedFileCapture=null;
     async function buildRun(){
 
       if(!csvRows)return;
@@ -468,7 +475,7 @@
 
         });
 
-        const capture=receivedMetadata.get(selected.run.explicit);
+        const capture=selectedFileCapture?.id===selected.run.explicit?selectedFileCapture:receivedMetadata.get(selected.run.explicit);
         if(capture)frame.accumulation.received_capture=capture;
         if(version===buildVersion)await acceptRun(frame);
 
@@ -516,7 +523,7 @@
 
       $('selectedHistory').textContent=file.name;
 
-      csvRows=null;$('csvControls').hidden=true;
+      csvRows=null;selectedFileCapture=null;$('csvControls').hidden=true;
 
       try{
 
@@ -524,9 +531,22 @@
 
         const text=await file.text();if(version!==loadVersion)return;
 
-        if(file.name.toLowerCase().endsWith('.csv')){
+        const isCSV=file.name.toLowerCase().endsWith('.csv');
+        const payload=isCSV?null:JSON.parse(text);
+        const capture=payload&&typeof payload.id==='string'&&/^\d{8}T\d{6}Z_[a-f0-9]{12}$/.test(payload.id)&&
+          ['recording','complete','interrupted'].includes(payload.status)&&Number.isInteger(payload.samples);
+        let csvText=text;
+        if(capture){
+          if(payload.status==='recording')throw Error('This run is still recording. Finish it before loading.');
+          const response=await fetch(base+'/api/probing-runs/'+encodeURIComponent(payload.id),{signal:AbortSignal.timeout(15000)});
+          if(version!==loadVersion)return;
+          if(!response.ok)throw Error('The matching recording is unavailable on this receiver. Choose '+payload.id+'.csv from the same folder.');
+          csvText=await response.text();if(version!==loadVersion)return;
+          selectedFileCapture=payload;
+        }
+        if(isCSV||capture){
 
-          csvRows=IdentificationHistory.records(text);csvName=file.name;
+          csvRows=IdentificationHistory.records(csvText);csvName=capture?payload.id+'.csv':file.name;
 
           const runs=IdentificationRuns.groups(csvRows);
 
@@ -539,8 +559,6 @@
           if(runs.length===1)await buildRun();
 
         }else{
-
-          const payload=JSON.parse(text);
 
           if(payload.measurement_source==='csv_run')await acceptRun(payload);
 
@@ -572,8 +590,9 @@
 
     function display(state){
 
-      if(state.estimator_revision!=='thumb_first_v7')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
+      if(state.estimator_revision!=='empirical_grasp_pose_v11')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
       paintFeedback(state);
+      updatePreview(state);
 
       running=state.status==='running';updateReady();clearTimeout(pollTimer);
 
@@ -581,7 +600,7 @@
 
         status.textContent='Estimating frozen snapshot: '+(state.input_label||mode)+'. You can keep inspecting the hand.';
 
-        job=state.job_id;pollTimer=setTimeout(refresh,1500);
+        job=state.job_id;pollTimer=setTimeout(refresh,400);
 
       }else if(state.status==='complete'){
 
@@ -628,11 +647,12 @@
 
         $('showEstimate').disabled=!candidates.length||!fittedFrame?.hand_snapshot;
 
-        if(candidates.length&&fittedFrame?.hand_snapshot){status.textContent+=(result.fits[candidates[0][0]].compatible?' Provisional pose shown in the frozen hand':' Best rejected fit shown in the frozen hand')+(fittedFrame.measurement_source==='csv_run'?' at the last contact sample.':'.');placeEstimate();}
+        if(candidates.length&&result.fits[candidates[0][0]].compatible&&fittedFrame?.hand_snapshot){status.textContent+=' Provisional pose shown in the frozen hand'+(fittedFrame.measurement_source==='csv_run'?' at the last contact sample.':'.');placeEstimate();}
+        else if(candidates.length&&fittedFrame?.hand_snapshot){window.HandEstimate?.clear();$('estimatePoseWarning').hidden=true;status.textContent+=' No valid placement found. Rejected poses are available for explicit inspection with Estimate in hand.';}
 
         else{window.HandEstimate?.clear();status.textContent+=result.contacts===0&&result.hand_boundary_points>0?' Swept limits are retained for later contact or pose evidence.':candidates.length?' No reproducible hand pose; see Fit report.':' No valid STL pose; see Fit report for rejected candidates.';}
 
-      }else if(state.status==='error')status.textContent='Estimate failed: '+state.error;
+      }else if(state.status==='error'){window.HandEstimate?.clear();status.textContent='Estimate failed: '+state.error;}
 
     }
 
@@ -681,7 +701,7 @@
 
         if(!check.ok)throw Error(backend.error||'Could not reach estimator');
 
-        if(backend.estimator_revision!=='thumb_first_v7')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
+        if(backend.estimator_revision!=='empirical_grasp_pose_v11')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
 
         const response=await fetch(base+'/api/identification',{method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(15000),body:JSON.stringify({mode:'current',frame:frozen,threshold,tolerance_mm:tolerance,hand_tolerance_mm:handTolerance,point_spacing_mm:pointSpacing,quick_preview:$('estimateQuality').value==='quick',input_label:label})});
 

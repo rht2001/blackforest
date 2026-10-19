@@ -1,4 +1,5 @@
 const assert=require('node:assert/strict'),fs=require('node:fs');
+const estimatorRevision=fs.readFileSync(require('node:path').join(__dirname,'../digital_twin/sensor_identification/web_service.py'),'utf8').match(/ESTIMATOR_REVISION = '([^']+)'/)[1];
 const {chromium}=require(process.env.PLAYWRIGHT_PACKAGE||'playwright');
 (async()=>{
  const base=process.env.TEST_RECEIVER_URL;
@@ -17,9 +18,9 @@ const {chromium}=require(process.env.PLAYWRIGHT_PACKAGE||'playwright');
    await route.fulfill({body:csv.replaceAll('chosen-run','incoming'),contentType:'text/csv'});
   });
   await page.route(base+'/api/identification',route=>{
-   if(route.request().method()==='GET')return route.fulfill({json:{status:'idle',estimator_revision:'thumb_first_v7'}});
+   if(route.request().method()==='GET')return route.fulfill({json:{status:'idle',estimator_revision:estimatorRevision}});
    request=route.request().postDataJSON();
-   return route.fulfill({json:{status:'complete',job_id:'source-test',estimator_revision:'thumb_first_v7',report_url:'/identification/report',result:{classification:'AMBIGUOUS',reason:'quick_placement',quick_preview:true,contacts:request.frame.points.length,fits:{}}}});
+   return route.fulfill({json:{status:'complete',job_id:'source-test',estimator_revision:estimatorRevision,report_url:'/identification/report',result:{classification:'AMBIGUOUS',reason:'quick_placement',quick_preview:true,contacts:request.frame.points.length,fits:{}}}});
   });
   await page.goto(base,{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>window.HandHistory?.context()?.geometry&&document.querySelector('#receivedRuns'),null,{timeout:60000});
