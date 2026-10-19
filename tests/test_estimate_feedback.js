@@ -36,3 +36,9 @@ for(const text of ['Contact / hand-model conflict','at least','Checked witness v
 assert.ok(!conflicting.includes('Max hand penetration'));
 assert.ok(!conflicting.includes('fit-good'));
 console.log('PASS conflicting-evidence previews are rejected and partial hand checks are labelled as lower bounds');
+
+const visible=render({status:'complete',result:{classification:'AMBIGUOUS',pose_evidence:'oriented_surface_preview',geometry_conflict:{},
+ contacts:12,fits:{SENSOR_A:{...fit,compatible:false,visible_surface_inlier_fraction:.75,visible_surface_hit_fraction:.9,
+ visible_surface_rmse_mm:2.3,rejection_reasons:['visible_contact_mismatch']}}}});
+for(const text of ['First-surface fit preview','75%','90%','recorded taxel directions','Nearest surface error'])assert.ok(visible.includes(text),text);
+assert.ok(!visible.includes('fit-good'));

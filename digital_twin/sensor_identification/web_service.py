@@ -12,7 +12,7 @@ from .classifier import IdentificationConfig, identify_sensor
 from .demo import synthetic_points, write_viewer
 from .geometry import load_candidates
 
-ESTIMATOR_REVISION = 'evidence_conflicts_v8'
+ESTIMATOR_REVISION = 'first_surface_v9'
 
 
 class IdentificationService:

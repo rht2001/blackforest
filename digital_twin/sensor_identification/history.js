@@ -212,7 +212,7 @@
       for(const cell of cells){
         const [x,y,z]=cell.xyz;
         const key=[x,y,z].map(v=>Math.floor(v/voxel)).join(':');
-        const point={id:run+':voxel:'+key,x,y,z,pressure:cell.value,region:cell.region,taxel_id:cell.id,source_index:packet.index};
+        const point={id:run+':voxel:'+key,x,y,z,normal:cell.normal.slice(),pressure:cell.value,region:cell.region,taxel_id:cell.id,source_index:packet.index};
         const previous=voxels.get(key);
         if(!previous)voxels.set(key,{...point,observations:1,first_source_index:packet.index,last_source_index:packet.index});
         else{

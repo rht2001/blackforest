@@ -125,6 +125,19 @@ def identify_sensor(points, models, config=None, *, boundary_points=(), progress
     radii = np.array([p['surface_clearance_mm'] for p in negative])
     result['certified_exclusions'] = len(negative)
     kwargs = dict(contact_pressures=np.array([p['pressure'] for p in active]))
+    # Normals must come from the same observed pose as each taxel. Never
+    # reconstruct them from a nearby point in an accumulated hand sweep.
+    normals=[]
+    for point in active:
+        n=point.get('normal')
+        if (not isinstance(n,(list,tuple)) or len(n)!=3
+                or any(isinstance(v,bool) or not isinstance(v,(int,float)) or not np.isfinite(v) for v in n)
+                or not .9 <= np.linalg.norm(n) <= 1.1):
+            break
+        normals.append(np.asarray(n)/np.linalg.norm(n))
+    if len(normals)==len(active):
+        kwargs.update(contact_normals=np.asarray(normals),
+                      contact_groups=[str(p.get('region') or 'contacts') for p in active])
     if limits:
         kwargs.update(boundary_xyz=np.array([[p[k] for k in ('x','y','z')] for p in limits])*scale,
                       boundary_normals=np.array([p['normal'] for p in limits]))
@@ -162,6 +175,12 @@ def identify_sensor(points, models, config=None, *, boundary_points=(), progress
         if config.quick_preview and result['fits'][name]['compatible']:
             break
     fits = result['fits']
+    oriented = [fit for fit in fits.values() if fit.get('pose_evidence') == 'oriented_surface_preview']
+    if oriented:
+        result.update(reason='contact_hand_geometry_conflict', placement_reason='inconsistent_input_geometry',
+                      geometry_conflict=oriented[0]['geometry_conflict'], pose_evidence='oriented_surface_preview',
+                      best_candidate=min(fits, key=lambda name: fits[name]['score']))
+        return result
     acceptable = [name for name in ordered if name in fits and fits[name]['compatible']]
     if acceptable:
         result['placement_candidate'] = acceptable[0]

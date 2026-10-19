@@ -120,8 +120,15 @@ def _palm_starts(model, contacts, points, normals):
 
 
 def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, boundary_normals=None,
-              palm_xyz=None, palm_normals=None, contact_pressures=None, progress=None, axis_hint=None):
+              palm_xyz=None, palm_normals=None, contact_pressures=None, progress=None, axis_hint=None,
+              contact_normals=None, contact_groups=None):
     """Try a short quick pass, retaining the full search as fallback."""
+    from .visible_surface import fit_conflicted_surface
+    oriented=fit_conflicted_surface(model,contacts,exclusions,radii,config,
+        contact_normals=contact_normals,contact_groups=contact_groups,
+        boundary_xyz=boundary_xyz,boundary_normals=boundary_normals,progress=progress)
+    if oriented is not None:
+        return oriented
     conflict = contact_hand_conflicts(contacts, boundary_xyz, boundary_normals,
                                      config.tolerance_mm, config.hand_tolerance_mm)
     if conflict['boundary_count']:

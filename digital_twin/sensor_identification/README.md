@@ -474,3 +474,36 @@ it repeats the normal search for that candidate; no candidate is rejected on
 the short pass alone. It stops refining at the first pose passing the existing
 contact, clearance and full-CAD hand checks. The 85% heuristic reflects the
 observed grasp behavior, not a calibrated probability or a physical guarantee.
+### First visible surface for inconsistent run previews
+
+Accumulated CSV contacts now retain the outward taxel normal from the same
+pose as each selected contact. The estimator validates these optional normals;
+older clouds without them retain the existing path. Normals must not be
+recovered from the nearest patch in a different pose of the hand sweep.
+
+When the supplied hand patches already contradict the contact tolerance balls,
+the inspection fit uses the first CAD surface seen along each recorded normal.
+Unsigned distance alone can match a far wall or internal assembly face even
+when the model passes through the contact. Visibility rays start beyond the
+entire CAD envelope and do not depend on triangle winding or watertightness.
+
+Finger contact group centers initialize the shaft direction; a transverse
+circle provides a starting center. Both axial directions, eight rolls and five
+axial placements are screened. Five distinct starts are refined in detailed
+mode (two in quick mode), using robust point-to-plane steps with visibility
+correspondences refreshed between steps. Each region has equal total weight,
+recomputed after point selection. Detailed mode finishes with all contacts.
+These starts use measured geometry, without sensor-name or run-label priors.
+
+The search score caps errors at 30 mm and assigns ray misses nearest-distance
+plus 6 mm. This robust ranking score is distinct from the reported uncapped
+RMS over hit rays. Miss count, hit fraction, per-region statistics and the
+fraction of all contacts whose first intersection is within tolerance are
+reported separately. The final audit queries the complete CAD for every
+contact; no missed ray counts as an inlier. Certified clearances and hand
+conflict witnesses are still checked exactly.
+
+These poses remain rejected inspection previews: changing the contact fit
+does not repair the contradictory hand constraint model or validate the full
+hand volume. Consistent inputs retain the existing complete hand audit. No
+candidate identity is confirmed by this preview path.
