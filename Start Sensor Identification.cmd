@@ -10,12 +10,13 @@ if errorlevel 1 (
   exit /b 1
 )
 echo Preparing the simulation and geometry tools. First launch needs internet.
-uv sync --extra sensor-identification
+rem Keep running controller entrypoints installed; the viewer runs from source.
+uv sync --extra sensor-identification --no-install-project --inexact
 if errorlevel 1 (
   echo Setup failed. See the error above.
   pause
   exit /b 1
 )
 echo Keep this window open while using the simulation. Press Ctrl+C to stop.
-uv run --extra sensor-identification python digital_twin/start_sensor_simulation.py
+uv run --no-sync python digital_twin/start_sensor_simulation.py
 if errorlevel 1 pause
