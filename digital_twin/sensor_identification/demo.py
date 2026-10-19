@@ -85,10 +85,13 @@ def write_viewer(path, points, models, result, *, threshold=200., coordinate_uni
                        default_height='max(220px, calc(100vh - 90px))',
                        config={'responsive': True, 'displaylogo': False})
     details = html.escape(json.dumps(result, indent=2, allow_nan=False))
+    conflict_note = ('<p><strong>Contact / hand-model conflict.</strong> No CAD pose can satisfy the supplied contact and hand-patch constraints simultaneously. '
+                     'Displayed poses are rejected contact-fit previews for inspection. Hand violations check conflict witnesses only and are lower bounds; '
+                     'they are not a complete collision audit or a confirmed sensor identity.</p>' if result.get('geometry_conflict') else '')
     Path(path).write_text('<!doctype html><meta charset="utf-8"><title>CAD tactile identification</title>'
                          '<style>body{font:14px system-ui;margin:16px}pre{overflow:auto;max-width:100%;'
                          'padding:12px;background:#f4f6f8}p{max-width:100%}</style>'
-                         +body+'<p>Drag to rotate; click legend entries to hide each candidate. '
+                         +conflict_note+body+'<p>Drag to rotate; click legend entries to hide each candidate. '
                          'Purple hand points and known inactive taxels with normals limit inward penetration. '
                          'Active pressure points guide surface alignment. Limits are approximate local surfaces. '
                          'Transforms map STL mm into the observation frame in mm.</p><details><summary>Fit details</summary><pre>'+details+'</pre></details>',

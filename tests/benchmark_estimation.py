@@ -50,7 +50,7 @@ def main():
     if not cases:
         cases = [(name, dict(units='mm', points=synthetic_points(model))) for name, model in models.items()]
     report = dict(baseline_revision=revision, results=[],
-                  limitations='Single-run timings; fit residuals are not ground-truth pose accuracy.')
+                  limitations='Single-run timings; fit residuals are not ground-truth pose accuracy. Rejected conflict previews check only witness hand patches: their hand maximum is a lower bound, not a complete hand audit.')
     original_fit = classifier.fit_model
     try:
         for name, frame in cases:
@@ -73,6 +73,10 @@ def main():
                                           all_input_contact_max_mm=float(distances.max()),
                                           all_input_contact_rms_mm=float(np.sqrt(np.mean(distances**2))),
                                           hand_limit_max_mm=fitted['hand_limit_max_mm'],
+                                          hand_validation_complete=fitted.get('hand_validation_complete', True),
+                                          hand_limit_max_is_lower_bound=fitted.get('hand_limit_max_is_lower_bound', False),
+                                          contact_fit_compatible=fitted.get('contact_fit_compatible', fitted['compatible']),
+                                          pose_evidence=fitted.get('pose_evidence', 'full_constraints'),
                                           starts_evaluated=fitted['starts_evaluated'],
                                           promoted_starts=fitted.get('promoted_starts'))
                 row = dict(case=name, algorithm=label, seconds=elapsed, fits=fits,

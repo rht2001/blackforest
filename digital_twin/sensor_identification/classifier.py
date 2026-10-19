@@ -172,6 +172,20 @@ def identify_sensor(points, models, config=None, *, boundary_points=(), progress
     else:
         result['placement_reason'] = 'neither_candidate_fits'
     result['larger_rejection_reasons'] = fits.get(larger, {}).get('rejection_reasons', [])
+    conflicting = next((fit['geometry_conflict'] for fit in fits.values() if fit.get('geometry_conflict')), None)
+    if conflicting:
+        witnesses = []
+        for witness in conflicting['witnesses']:
+            contact = active[witness['contact_index']]
+            boundary = limits[witness['boundary_index']]
+            witnesses.append({**witness, 'contact_id': contact['id'], 'boundary_id': boundary['id'],
+                              'contact_source_index': contact.get('source_index'),
+                              'boundary_source_index': boundary.get('source_index')})
+        result.update(reason='contact_hand_geometry_conflict', placement_reason='inconsistent_input_geometry',
+                      geometry_conflict={**conflicting, 'witnesses': witnesses},
+                      best_candidate=min(fits, key=lambda name: fits[name]['score']),
+                      pose_evidence='contact_only_conflict_preview')
+        return result
     if config.quick_preview:
         result['reason'] = 'quick_placement'
         result['best_candidate'] = result.get('placement_candidate') or min(fits, key=lambda name: (not fits[name]['compatible'], fits[name]['score']))

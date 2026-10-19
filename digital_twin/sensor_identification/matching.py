@@ -6,6 +6,7 @@ from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
 from .contact_directions import pressure_directions, direction_residual
 from .limits import penetration_residual, sampled_patch_penetrations, triangle_penetrations
+from .evidence import contact_hand_conflicts
 
 
 def _spaced_indices(points, spacing_mm, normals=None):
@@ -119,11 +120,66 @@ def _palm_starts(model, contacts, points, normals):
 
 
 def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, boundary_normals=None,
-              palm_xyz=None, palm_normals=None, contact_pressures=None, progress=None):
+              palm_xyz=None, palm_normals=None, contact_pressures=None, progress=None, axis_hint=None):
     """Try a short quick pass, retaining the full search as fallback."""
+    conflict = contact_hand_conflicts(contacts, boundary_xyz, boundary_normals,
+                                     config.tolerance_mm, config.hand_tolerance_mm)
+    if conflict['boundary_count']:
+        if progress:
+            progress(dict(stage='input_geometry_conflict', conflict=conflict))
+        # The original full constraint system is provably infeasible. A
+        # contact fit is useful for inspection, but may never become accepted.
+        # Do not spend minutes driving the object away from measured contacts
+        # to reduce contradictory approximate hand residuals.
+        _, spread, axes = np.linalg.svd(contacts-contacts.mean(axis=0), full_matrices=False)
+        extents = np.sort(model.mesh.extents)
+        # Only the explicitly rejected inspection preview uses this soft
+        # geometric prior. Partial contacts cannot establish a sensor axis or
+        # identity, but a long cloud otherwise admits implausibly tilted fits.
+        hint = (axes[0] if len(spread) >= 2 and spread[1] > 0
+                and spread[0]/spread[1] >= 1.7 and extents[-1]/extents[-2] >= 2. else None)
+        preview = fit_model(model, contacts, exclusions, radii, config,
+                            contact_pressures=contact_pressures, progress=progress)
+        model_axis = np.eye(3)[:, np.argmax(model.mesh.extents)]
+        direction = np.asarray(preview['transform'])[:3, :3]@model_axis
+        if hint is not None and abs(direction@hint) < np.cos(np.deg2rad(25.)):
+            regularized = fit_model(model, contacts, exclusions, radii, config,
+                                    contact_pressures=contact_pressures, progress=progress, axis_hint=hint)
+            if (regularized['compatible'] or (not preview['compatible']
+                    and regularized['max_error_mm'] < preview['max_error_mm'])):
+                preview = regularized
+            else:
+                hint = None
+                preview['preview_prior_fallback'] = 'contact_feasibility_preferred_over_axis_hint'
+        else:
+            hint = None
+        transform = np.asarray(preview['transform'])
+        witness_indices = np.asarray(conflict['boundary_indices'], dtype=int)
+        violations = triangle_penetrations(model, transform[:3, :3], transform[:3, 3],
+                                          np.asarray(boundary_xyz)[witness_indices],
+                                          np.asarray(boundary_normals)[witness_indices])
+        preview.update(contact_fit_compatible=preview['compatible'], compatible=False,
+                       geometry_conflict=conflict, pose_evidence='contact_only_conflict_preview',
+                       search_pass='inconsistent_hand_constraints',
+                       score_basis='contact_and_clearance_only',
+                       search_method='conflict_aware_contact_preview',
+                       hand_limit_rmse_mm=float(np.sqrt(np.mean(violations**2))),
+                       hand_limit_max_mm=float(violations.max()),
+                       hand_limit_max_is_lower_bound=True,
+                       hand_collision_count=int(np.count_nonzero(violations > config.hand_tolerance_mm)),
+                       hand_constraints_checked=len(witness_indices), input_hand_points=len(boundary_xyz),
+                       hand_validation_complete=False,
+                       validation_method='exact_contacts_and_conflict_witnesses')
+        if hint is not None:
+            preview['preview_axis_prior'] = dict(axis=hint.tolist(), lever_arm_mm=4.,
+                                                method='elongated_contact_cloud_soft_prior_not_identity_evidence')
+        preview['rejection_reasons'] = list(dict.fromkeys(preview['rejection_reasons']+['input_geometry_conflict']))
+        return preview
     kwargs = dict(boundary_xyz=boundary_xyz, boundary_normals=boundary_normals,
                   palm_xyz=palm_xyz, palm_normals=palm_normals,
                   contact_pressures=contact_pressures, progress=progress)
+    if axis_hint is not None:
+        kwargs['axis_hint'] = axis_hint
     if config.quick_preview:
         attempt = _fit_model(model, contacts, exclusions, radii, config, fast_attempt=True, **kwargs)
         if attempt['compatible']:
@@ -135,7 +191,7 @@ def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, 
 
 
 def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, boundary_normals=None,
-               palm_xyz=None, palm_normals=None, contact_pressures=None, progress=None, fast_attempt=False):
+               palm_xyz=None, palm_normals=None, contact_pressures=None, progress=None, fast_attempt=False, axis_hint=None):
     """Both candidates receive the same budget within each search pass.
 
     Transform convention: p_observation_mm = R @ p_stl_mm + t_mm.
@@ -234,6 +290,9 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
         if has_directions:
             angular = direction_residual(model, r, t, directions)
             d = np.r_[d, angular*np.sqrt(len(contacts)/len(directions[0]))]
+        if axis_hint is not None:
+            model_axis = np.eye(3)[:, np.argmax(model.mesh.extents)]
+            d = np.r_[d, np.cross(r@model_axis, axis_hint)*4.*np.sqrt(len(contacts))]
         return d/config.tolerance_mm
 
     coarse = []
@@ -411,7 +470,9 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
         boundary_max = float(boundary_error.max()) if len(boundary_error) else 0.
         angular = direction_residual(model, r, t, directions)
         direction_rmse = float(np.sqrt(np.sum(angular**2)/len(directions[0]))) if has_directions else 0.
-        score = float(np.sqrt(rmse**2+penalty**2+boundary_rmse**2+direction_rmse**2)/config.tolerance_mm)
+        axis_error = (4.*np.linalg.norm(np.cross(r@np.eye(3)[:, np.argmax(model.mesh.extents)], axis_hint))
+                      if axis_hint is not None else 0.)
+        score = float(np.sqrt(rmse**2+penalty**2+boundary_rmse**2+direction_rmse**2+axis_error**2)/config.tolerance_mm)
         transform = np.eye(4)
         transform[:3, :3], transform[:3, 3] = r, t
         fits.append(dict(score=score, rmse_mm=rmse, max_error_mm=float(d.max()),

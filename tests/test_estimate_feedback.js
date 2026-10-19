@@ -28,3 +28,11 @@ const estimatorRevision=backendSource.match(/ESTIMATOR_REVISION = '([^']+)'/)[1]
 const frontendRevisions=[...source.matchAll(/(?:state|backend)\.estimator_revision!=='([^']+)'/g)].map(match=>match[1]);
 assert.deepEqual(frontendRevisions,[estimatorRevision,estimatorRevision]);
 console.log('PASS frontend estimator checks match backend revision');
+
+const conflicting=render({status:'complete',result:{classification:'AMBIGUOUS',geometry_conflict:{contact_count:5},
+ contacts:12,fits:{SENSOR_A:{...fit,hand_limit_max_is_lower_bound:true,hand_validation_complete:false,
+ hand_constraints_checked:2,hand_collision_count:2,rejection_reasons:['input_geometry_conflict']}}}});
+for(const text of ['Contact / hand-model conflict','at least','Checked witness violations','contact-fit preview','sensor identity is undetermined'])assert.ok(conflicting.includes(text),text);
+assert.ok(!conflicting.includes('Max hand penetration'));
+assert.ok(!conflicting.includes('fit-good'));
+console.log('PASS conflicting-evidence previews are rejected and partial hand checks are labelled as lower bounds');

@@ -5,14 +5,14 @@
  const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const mm=value=>typeof value==='number'&&Number.isFinite(value)?value.toFixed(2)+' mm':'—';
  const elapsed=(start,end)=>{if(!Number.isFinite(start))return '';const seconds=Math.max(0,Math.floor((end-start)));return seconds<60?seconds+'s':Math.floor(seconds/60)+'m '+String(seconds%60).padStart(2,'0')+'s'};
- const stages={thumb_first_guess:'Thumb nearly closed: trying the smaller sensor first',queued:'Starting estimate',loading_models:'Loading sensor models',preparing:'Checking measurements',palm_initialization:'Fitting a palm-aligned starting pose',alignment:'Matching surfaces',refining:'Refining pose',checking_limits:'Checking hand penetration',writing_report:'Preparing result'};
- const rejection={contact_outside_tolerance:'Some red contacts are too far from the surface.',hand_penetration:'The model crosses the hand limits.',certified_clearance_violated:'The model violates a certified clearance region.'};
+ const stages={input_geometry_conflict:'Hand model conflicts with contacts; fitting an inspection preview',thumb_first_guess:'Thumb nearly closed: trying the smaller sensor first',queued:'Starting estimate',loading_models:'Loading sensor models',preparing:'Checking measurements',palm_initialization:'Fitting a palm-aligned starting pose',alignment:'Matching surfaces',refining:'Refining pose',checking_limits:'Checking hand penetration',writing_report:'Preparing result'};
+ const rejection={input_geometry_conflict:'Measured contacts contradict the supplied hand limits. This is a contact-fit preview, not a validated placement.',contact_outside_tolerance:'Some red contacts are too far from the surface.',hand_penetration:'The model crosses the hand limits.',certified_clearance_violated:'The model violates a certified clearance region.'};
  const sensorName=(name,context={})=>context.models?.[['SENSOR_A','SENSOR_B'].indexOf(name)]?.name||({SENSOR_A:'VEGABAR 29',SENSOR_B:'VEGABAR 38'}[name])||name;
  function identityBox(result,compatible,context){
   const confirmed=result.classification&&result.classification!=='AMBIGUOUS'&&result.fits?.[result.classification]?.compatible===true;
   const selected=result.placement_candidate&&result.fits?.[result.placement_candidate]?.compatible===true?result.placement_candidate:compatible.length===1?compatible[0][0]:null;
   const label=confirmed?sensorName(result.classification,context):selected?sensorName(selected,context)+' (provisional)': 'Undetermined';
-  const detail=confirmed?'Identified by the estimate.':selected?'Provisional placement; sensor identity is not confirmed.':compatible.length?'Possible sensors: '+compatible.map(([name])=>sensorName(name,context)).join(' or ')+'.':'No sensor model passed the fit checks.';
+  const detail=result.geometry_conflict?'The hand-model constraints conflict with measured contacts. The displayed contact fit is for inspection; sensor identity is undetermined.':confirmed?'Identified by the estimate.':selected?'Provisional placement; sensor identity is not confirmed.':compatible.length?'Possible sensors: '+compatible.map(([name])=>sensorName(name,context)).join(' or ')+'.':'No sensor model passed the fit checks.';
   return '<section class="sensor-identity" aria-label="Sensor identification"><strong>Sensor: '+escape(label)+'</strong><p class="fit-small">'+escape(detail)+'</p></section>';
  }
  // STL bounding-box center transformed into the observation frame (millimetres).
@@ -44,7 +44,7 @@
   const metric=(label,value)=>'<div><dt>'+escape(label)+'</dt><dd>'+escape(value)+'</dd></div>';
   return '<details class="fit-card" open><summary>'+escape(sensorName(name,context))+' <span class="fit-badge '+(compatible?'fit-good':'fit-bad')+'">'+(compatible?(fit.quick_preview?'Quick placement':'Geometry fits'):'Rejected')+'</span></summary><dl>'+
    metric('Contact error (RMS)',mm(fit.rmse_mm))+metric('Worst contact error',mm(fit.max_error_mm))+
-   metric('Contacts in tolerance',within)+metric('Max hand penetration',mm(fit.hand_limit_max_mm))+metric('Hand limits exceeded',Number.isInteger(fit.hand_collision_count)?fit.hand_collision_count+' / '+fit.hand_constraints_checked:'—')+'</dl><p class="fit-small">Allowed: contact '+escape(mm(fit.contact_tolerance_mm))+' · hand '+escape(mm(fit.hand_tolerance_mm))+'</p>'+
+   metric('Contacts in tolerance',within)+metric(fit.hand_limit_max_is_lower_bound?'Hand-model witness violation (at least)':'Max hand penetration',mm(fit.hand_limit_max_mm))+metric(fit.hand_validation_complete===false?'Checked witness violations':'Hand limits exceeded',Number.isInteger(fit.hand_collision_count)?fit.hand_collision_count+' / '+fit.hand_constraints_checked:'—')+'</dl><p class="fit-small">Allowed: contact '+escape(mm(fit.contact_tolerance_mm))+' · hand '+escape(mm(fit.hand_tolerance_mm))+'</p>'+
    (Number.isInteger(fit.input_contact_points)?'<p class="fit-small">Checked '+escape(fit.scored_contact_points)+' / '+escape(fit.input_contact_points)+' contact points · '+escape(fit.hand_constraints_checked)+' / '+escape(fit.input_hand_points)+' hand limits · spacing '+escape(mm(fit.point_spacing_mm))+'</p>':'')+
    (Number.isInteger(fit.pressure_direction_patches)?'<p class="fit-small">Pressure direction: '+escape(fit.pressure_direction_patches)+(fit.pressure_direction_patches?' local patches guide orientation.':' reliable local patches; orientation uses contact positions.')+'</p>':'')+
    reasons.map(reason=>'<p class="fit-reason">'+escape(reason)+'</p>').join('')+poseBox(name,fit,context)+'</details>';
@@ -61,7 +61,7 @@
   if(state.status==='error'||state.status==='connection_error')return '<h3>'+(state.status==='connection_error'?'Connection lost':'Estimate failed')+'</h3>'+source+'<p class="fit-reason">'+escape(state.error||'No error details were returned.')+'</p>'+(state.status==='connection_error'?'<p class="fit-small">The job may still be running.</p><button id="retryEstimateStatus">Check status</button>':'');
   if(state.status!=='complete')return '';
   const result=state.result||{},fits=Object.entries(result.fits||{}),compatible=fits.filter(([,f])=>f.compatible===true);
-  const title=result.quick_preview&&compatible.length?'Quick placement':result.classification&&result.classification!=='AMBIGUOUS'?'Estimated '+sensorName(result.classification,context):!fits.length?'No anchored pose':compatible.length===2?'Both models fit':compatible.length===1?'Provisional fit':'Neither model fits';
+  const title=result.geometry_conflict?'Contact / hand-model conflict':result.quick_preview&&compatible.length?'Quick placement':result.classification&&result.classification!=='AMBIGUOUS'?'Estimated '+sensorName(result.classification,context):!fits.length?'No anchored pose':compatible.length===2?'Both models fit':compatible.length===1?'Provisional fit':'Neither model fits';
   const duration=elapsed(state.started_at,state.finished_at??now);
   const counts=[];if(Number.isInteger(result.contacts))counts.push(result.contacts+' red contacts');
   const limits=(result.hand_boundary_points||0)+(result.surface_taxel_limits||0);if(limits)counts.push(limits+' hand limits');
@@ -585,11 +585,11 @@
 
     $('showFitReport').onclick=()=>{const report=estimateView.querySelector('iframe');if(report.dataset.reportUrl&&report.getAttribute('src')!==report.dataset.reportUrl)report.src=report.dataset.reportUrl;estimateView.hidden=false;runView.hidden=true};
 
-    const reasons={quick_placement:'Quick approximate placement from sampled sensor surfaces.',space_constraints_only:'Hand sweep constrains space; object pose is unanchored without contacts.',both_candidates_compatible:'Both shapes fit.',neither_candidate_compatible_within_search:'Neither shape fits sufficiently within this search.',insufficient_contacts:'Not enough valid contact pressure.',insufficient_spatial_coverage:'Contacts cover too little of the object.',calibration_unverified:'Geometry needs calibration before a confident label.',score_margin_too_small:'The score difference is too small.',alignment_search_unstable:'Alignment did not settle reliably.',invalid_or_stale_frame:'No valid synchronized snapshot.',one_candidate_clearly_more_consistent:'One shape fits clearly better.'};
+    const reasons={contact_hand_geometry_conflict:'Contact measurements and hand-model limits conflict. Displayed poses are contact-fit previews, not valid placements.',quick_placement:'Quick approximate placement from sampled sensor surfaces.',space_constraints_only:'Hand sweep constrains space; object pose is unanchored without contacts.',both_candidates_compatible:'Both shapes fit.',neither_candidate_compatible_within_search:'Neither shape fits sufficiently within this search.',insufficient_contacts:'Not enough valid contact pressure.',insufficient_spatial_coverage:'Contacts cover too little of the object.',calibration_unverified:'Geometry needs calibration before a confident label.',score_margin_too_small:'The score difference is too small.',alignment_search_unstable:'Alignment did not settle reliably.',invalid_or_stale_frame:'No valid synchronized snapshot.',one_candidate_clearly_more_consistent:'One shape fits clearly better.'};
 
     function display(state){
 
-      if(state.estimator_revision!=='thumb_first_v6')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
+      if(state.estimator_revision!=='evidence_conflicts_v8')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
       if(!fittedFrame&&state.estimate_frame){
         fittedFrame=state.estimate_frame;
         fittedThreshold=state.estimate_threshold??200;
@@ -702,7 +702,7 @@
 
         if(!check.ok)throw Error(backend.error||'Could not reach estimator');
 
-        if(backend.estimator_revision!=='thumb_first_v6')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
+        if(backend.estimator_revision!=='evidence_conflicts_v8')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
 
         const response=await fetch(base+'/api/identification',{method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(15000),body:JSON.stringify({mode:'current',frame:frozen,threshold,tolerance_mm:tolerance,hand_tolerance_mm:handTolerance,point_spacing_mm:pointSpacing,quick_preview:$('estimateQuality').value==='quick',input_label:label})});
 

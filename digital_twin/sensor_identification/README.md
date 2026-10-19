@@ -384,6 +384,45 @@ warms the CAD indexes outside timing, and reports both candidates plus maximum
 and RMS errors on the same original contacts. A single timing is a smoke
 comparison; contact fit error is not ground-truth pose accuracy.
 
+### Contradictory contact and hand geometry
+
+Before alignment, the estimator checks whether a contact's entire tolerance
+ball lies inside a forbidden 8 by 8 mm inward hand patch, deeper than the
+allowed hand penetration. Such a witness proves that no pose of either CAD
+can pass both existing checks. The proof concerns the supplied approximate
+hand-patch model; it does not establish that the physical pressure reading is
+wrong. Curved hand parts, accumulated poses and uncalibrated geometry can
+produce contradictory constraints.
+
+Instead of spending the nonlinear search budget on this impossible constraint
+system, fit a contact-only inspection preview for both candidates. In an
+elongated cloud (first/second spatial spread at least 1.7) and an elongated CAD
+(longest/second bounding extent at least 2), an optional soft 4 mm axis prior
+can regularize a preview tilted over 25 degrees from the contact cloud. It is
+only used for rejected previews, never as identity evidence. If it loses a
+passing contact fit, retain the original contact fit. Ordinary consistent
+inputs keep the full contact/hand fitting and acceptance path.
+
+Every contradictory-input preview remains `compatible: false` with
+`classification: AMBIGUOUS` and reason `contact_hand_geometry_conflict`, even
+if its contacts fit or its caller asserts calibration. The UI and report label
+the pose as a contact-fit preview. `geometry_conflict` records contact/patch
+indices, source IDs and minimum necessary violations. Only witness hand
+patches need exact checking to explain rejection; report
+`hand_validation_complete: false` and `hand_limit_max_is_lower_bound: true`.
+Their hand metric is not a complete collision maximum and their score ranks
+contact/clearance fits, including any disclosed preview axis prior.
+
+Frontend and backend both require estimator revision `evidence_conflicts_v8`.
+Viewer merge-conflict markers inherited by this branch are resolved using
+the branch's own feature content; both sets of ignore patterns are retained.
+Additional checks:
+
+```powershell
+python -m unittest discover -s tests -p test_evidence_conflicts.py -v
+node tests/test_estimate_feedback.js
+```
+
 
 ### Finger limits in run history
 
