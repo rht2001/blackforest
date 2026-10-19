@@ -299,25 +299,29 @@ retain detailed validation unless `quick_preview: true` is explicitly supplied.
 
 Each cached CAD model has 24,000 deterministic surface samples and a KD tree.
 Refinement uses the eight nearest samples to find nearby STL triangles and
-projects onto those local surfaces. Global nearest-triangle searches no longer
-run inside optimization, even in Detailed validation. Detailed validation uses
-the full mesh once per final pose for contact/clearance scoring and triangle
-penetration auditing. Quick placement skips exact contact queries but retains full-CAD hand checks.
+projects onto those local surfaces. Ordinary refinement uses local queries;
+optional detailed contact-repair rounds query exact triangles for the worst
+violations. Final validation uses the full mesh for contact/clearance scoring and triangle
+penetration auditing. Quick placement also uses exact final contact queries.
+Exact queries reuse the cached sample KD-tree and triangle R-tree: the distance
+to an on-surface sample bounds the complete set of possibly nearer triangles.
+Triangle projections are batched with bounded working arrays; no watertight
+mesh, signed distance or additional dependency is required.
 
 Quick search uses at most 256 spatially spread representative contacts and
 256 representative oriented hand limits, eight coarse iterations and fifteen
 refinement evaluations. Hand residuals guide initialization, correction and
-refinement. Final contact scores use sampled local sensor surfaces; hand checks
-use the full CAD against the retained representative hand patches. Recordings
+refinement. Final contact scores use exact triangle distances for every input
+contact; hand checks use the full CAD against every input hand patch. Recordings
 and exported point clouds are unchanged. The reported pose remains provisional
 even if calibrated.
 
 
 ### Collision and orientation search update
 
-Quick placement audits every retained representative hand patch against the full sensor
-CAD before accepting a placement. Its contact distances remain
-approximate; the separate hand penetration allowance defaults to 3 mm and can
+Quick placement audits every supplied hand patch against the full sensor
+CAD before accepting a placement. Final contact distances are exact;
+the separate hand penetration allowance defaults to 3 mm and can
 be adjusted in Estimation settings. Rejected poses stay in the fit report.
 When neither candidate passes, the better rejected fit is displayed in the
 hand viewer with an explicit warning.
@@ -336,12 +340,49 @@ Estimation settings now offers a separate point spacing, default 2 mm (0 disable
 thinning). A deterministic radius search keeps the first original observation
 and removes neighbors within that distance. Contact points and hand limits are
 reduced separately; hand patches whose normals differ by over 20 degrees remain
-separate. Thinning applies to fitting and final checks in both quality modes.
+separate. Thinning applies to search, not final checks, in both quality modes.
 The report shows checked/input counts. The original recording, displayed cloud,
 and exports remain intact. Certified clearance constraints are retained.
-This trades local detail for speed: increase spacing for fewer checks or set 0
-to validate every observation. Nearby points can contain distinct errors, so
-reduced checks may miss a violation present in the original dense cloud.
+Increase spacing to reduce search work. Final contact and hand-patch checks
+always retain every supplied observation, including nearby distinct errors.
+
+### Adaptive search allocation
+
+Detailed fitting and the full quick-mode fallback screen all initial pose
+families cheaply before expensive constrained correction. Screening uses up to
+128 contacts, 96 oriented hand patches and 384 CAD collision samples (the quick
+fallback retains its existing 256-point screening budgets). General starts get
+at most six ICP steps; palm starts get at most three optimization evaluations.
+At most max(12, four times the refinement budget) distinct poses are promoted.
+Pose diversity compares the CAD bounding-box center and rotation; one palm
+hypothesis is reserved when available. Promoted poses use the ordinary search
+representatives and 1536 collision samples before final surface refinement.
+Contact-only ICP retains its established search because its inexpensive rigid
+updates do not benefit from pruning expensive hand/direction corrections.
+
+In detailed mode, the first two refined poses can receive up to two contact
+repair rounds when at least 90% of original contacts already meet tolerance
+and sampled hand limits pass. Each round adds up to 32 worst contact violations
+and exact distance constraints. A repair must reduce full-cloud contact
+violation and preserve sampled hand feasibility; final exact checks still
+decide acceptance. This is a bounded heuristic search, not a global optimum
+or infeasibility certificate. Quick-mode identity remains provisional.
+
+Fit metadata includes `search_method`, `starts_evaluated`, `promoted_starts`,
+`contact_repair_evaluations`, and full `scored_contact_points`. Cached reports
+from older estimator revisions are invalidated. Regression coverage:
+
+```powershell
+python -m unittest discover -s tests -p test_adaptive_matching.py -v
+python -m unittest discover -s tests -p test_exact_surface_queries.py -v
+python -m unittest discover -s tests -p test_point_spacing.py -v
+python tests/benchmark_estimation.py --baseline-ref f9de0f7 --frame path/to/cloud.json --output comparison.json
+```
+
+The offline benchmark loads each revision's matching and exact-distance code,
+warms the CAD indexes outside timing, and reports both candidates plus maximum
+and RMS errors on the same original contacts. A single timing is a smoke
+comparison; contact fit error is not ground-truth pose accuracy.
 
 
 ### Finger limits in run history
