@@ -3,6 +3,7 @@ import sys
 import unittest
 from unittest.mock import patch
 import numpy as np
+from types import SimpleNamespace
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from digital_twin.sensor_identification.limits import penetration_residual, valid_boundaries
@@ -34,7 +35,8 @@ class LimitsTests(unittest.TestCase):
         frame=dict(valid=True,units='m',frame='left_base_link',points=contacts,boundary_points=[boundary])
         fit=dict(compatible=True,optimizer_success=True,consistent_refinements=2,score=0)
         with patch('digital_twin.sensor_identification.classifier.fit_model',return_value=fit) as fn:
-            r=identify_frame(frame,dict(SENSOR_A=object(),SENSOR_B=object()))
+            model=SimpleNamespace(mesh=SimpleNamespace(extents=np.array([1.,2.,3.])), source_sha256=None)
+            r=identify_frame(frame,dict(SENSOR_A=model,SENSOR_B=model))
         self.assertEqual(r['contacts'],12)
         self.assertEqual(r['hand_boundary_points'],1)
         self.assertEqual(r['inactive_taxel_limits'],1)

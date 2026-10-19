@@ -7,10 +7,10 @@ const {chromium}=require('playwright');
   const page=await browser.newPage({viewport:{width:1500,height:1000}}),errors=[];
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('http://127.0.0.1:18765/**',route=>route.fulfill({json:{received_at:0,field_received_at:{},angles_act:null,tactile_regions:{}}}));
-  let reject=false,request,oldBackend=false,posts=0;
+  let reject=false,request,oldBackend=false,posts=0,completedState=null;
   const matrix=[[0,-1,0,22],[1,0,0,-13],[0,0,1,55],[0,0,0,1]];
   await page.route('http://127.0.0.1:18765/api/identification',route=>{
-   if(route.request().method()==='GET')return route.fulfill({json:{status:'idle',estimator_revision:oldBackend?null:estimatorRevision}});
+   if(route.request().method()==='GET')return route.fulfill({json:completedState||{status:'idle',estimator_revision:oldBackend?null:estimatorRevision}});
    posts++;request=route.request().postDataJSON();
    return route.fulfill({json:{status:'complete',estimator_revision:estimatorRevision,job_id:'test',input_label:'test capture',report_url:'/identification/report',result:{classification:'AMBIGUOUS',reason:'calibration_unverified',fits:{SENSOR_A:{compatible:!reject,score:.1,rmse_mm:.1,transform:matrix},SENSOR_B:{compatible:!reject,score:.2,rmse_mm:.2,transform:matrix}}}}});
   });
@@ -55,6 +55,11 @@ const {chromium}=require('playwright');
   await page.selectOption('#estimateCandidate','SENSOR_B');
   assert.equal(await page.evaluate(()=>document.querySelector('#profileScene0').data.find(t=>t.name==='Estimated SENSOR_B').visible),true);
   assert.equal(await page.isVisible('#estimatePoseWarning'),true);
+  completedState={status:'complete',estimator_revision:fs.readFileSync(require('node:path').join(__dirname,'../digital_twin/sensor_identification/web_service.py'),'utf8').match(/ESTIMATOR_REVISION = '([^']+)'/)[1],job_id:'test',report_url:'/identification/report',estimate_frame:request.frame,estimate_threshold:200,result:{reason:'neither_candidate_compatible_within_search',fits:{SENSOR_A:{compatible:false,score:.1,rmse_mm:.1,transform:matrix},SENSOR_B:{compatible:false,score:.2,rmse_mm:.2,transform:matrix}}}};
+  await page.reload();
+  await page.waitForFunction(()=>document.querySelector('#profileScene0')?.data?.some(t=>t.name==='Estimated SENSOR_A'&&t.visible),null,{timeout:60000});
+  assert.equal(await page.isVisible('#estimatePoseWarning'),true);
+  completedState=null;
   await page.click('#dataManual');
   reject=false;
   const accumulated=await page.evaluate(()=>{

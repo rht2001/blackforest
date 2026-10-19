@@ -62,6 +62,23 @@ def _spread_indices(points, budget, normals=None):
     return np.sort(chosen)
 
 
+def _distinct_starts(ranked, budget):
+    """Retain separate pose basins before spending the expensive search budget.
+
+    Compare object centers, not STL origins: equivalent rotations must not
+    appear far apart merely because a CAD export has an offset origin.
+    The caller supplies translations of the model bounding-box center.
+    """
+    selected = []
+    for item in ranked:
+        if all(Rotation.from_matrix(item[1]@other[1].T).magnitude() > np.pi/8
+               or np.linalg.norm(item[2]-other[2]) > 5. for other in selected):
+            selected.append(item)
+        if len(selected) >= budget:
+            break
+    return selected
+
+
 def _palm_starts(model, contacts, points, normals):
     """A geometric grasp prior, not a learned pose or a hard palm-contact claim."""
     if points is None or len(points) < 8:
@@ -127,8 +144,12 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
     input_contact_points = len(contacts)
     input_hand_points = len(boundary_xyz) if boundary_xyz is not None else 0
     input_contacts = contacts
+    input_boundary_xyz, input_boundary_normals = boundary_xyz, boundary_normals
     directions = pressure_directions(contacts, contact_pressures, config.pressure_threshold)
     has_directions = bool(len(directions[0]))
+    # Contact-only ICP is already cheap. Screening pays off when it avoids
+    # repeated finite-difference evaluations of hand/direction constraints.
+    hierarchical_search = not fast_attempt and (input_hand_points > 0 or has_directions)
     contacts = contacts[_spaced_indices(contacts, config.point_spacing_mm)]
     if boundary_xyz is not None and len(boundary_xyz):
         selected = _spaced_indices(boundary_xyz, config.point_spacing_mm, boundary_normals)
@@ -136,8 +157,12 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
     if palm_xyz is not None and len(palm_xyz):
         selected = _spaced_indices(palm_xyz, config.point_spacing_mm, palm_normals)
         palm_xyz, palm_normals = palm_xyz[selected], palm_normals[selected]
-    full_contacts = contacts
-    full_boundary_xyz, full_boundary_normals = boundary_xyz, boundary_normals
+    # Reduction changes search cost only. No measured contact or supplied hand
+    # patch may disappear from the final feasibility decision.
+    full_contacts = input_contacts
+    full_boundary_xyz, full_boundary_normals = input_boundary_xyz, input_boundary_normals
+    fit_contacts = contacts
+    fit_boundary_xyz, fit_boundary_normals = boundary_xyz, boundary_normals
     iterations = min(config.icp_iterations, 8) if config.quick_preview else config.icp_iterations
     if fast_attempt:
         iterations = min(iterations, 3)
@@ -146,8 +171,13 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
         if boundary_xyz is not None and len(boundary_xyz):
             selected = _spread_indices(boundary_xyz, 256, boundary_normals)
             boundary_xyz, boundary_normals = boundary_xyz[selected], boundary_normals[selected]
+    elif hierarchical_search:
+        contacts = contacts[_spread_indices(contacts, 128)]
+        if boundary_xyz is not None and len(boundary_xyz):
+            selected = _spread_indices(boundary_xyz, 96, boundary_normals)
+            boundary_xyz, boundary_normals = boundary_xyz[selected], boundary_normals[selected]
     has_limits = boundary_xyz is not None and len(boundary_xyz) > 0
-    collision_samples = model.samples[_spread_indices(model.samples, 1536)] if has_limits else np.empty((0, 3))
+    collision_samples = model.samples[_spread_indices(model.samples, 384 if hierarchical_search else 1536)] if has_limits else np.empty((0, 3))
     def limits(r, t, surface=False):
         if not has_limits:
             return np.array([])
@@ -316,7 +346,8 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
         def decode(p):
             return Rotation.from_rotvec(p[0]*palm_normal).as_matrix()@r0, t0+p[1:]
         opt = least_squares(lambda p: evaluated('palm_initialization', *decode(p)), np.zeros(4),
-                            x_scale=[1., 20., 20., 20.], max_nfev=iterations)
+                            x_scale=[1., 20., 20., 20.],
+                            max_nfev=min(iterations, 3) if hierarchical_search else iterations)
         r, t = decode(opt.x)
         error = search_residual(r, t)
         coarse.append((float(np.mean(error**2)), r, t, 'palm_aligned'))
@@ -324,7 +355,7 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
         if progress and start_index % 8 == 0:
             progress(dict(stage='alignment', completed=start_index, total=len(starts)))
         publish_pose('alignment', r, t, force=True)
-        for _ in range(iterations):
+        for _ in range(min(iterations, 6) if hierarchical_search else iterations):
             local = (contacts-t)@r
             _, index = model.tree.query(local)
             nr, nt = _rigid(model.samples[index], contacts)
@@ -333,9 +364,9 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
             publish_pose('alignment', r, t)
             if delta < 1e-5:
                 break
-        if has_limits or has_directions:
-            # Correct positional ICP with hand limits and reliable patch
-            # directions before deciding which starts survive.
+        if not hierarchical_search and (has_limits or has_directions):
+            # ICP alone ignores the hand. Correct each fallback pose with
+            # contact AND hand residuals before deciding which starts survive.
             r0, t0 = r.copy(), t.copy()
             def decode_free(p):
                 return Rotation.from_rotvec(p[:3]).as_matrix()@r0, t0+p[3:]
@@ -354,6 +385,49 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
                 cost += float(np.mean(np.maximum(0., radii-ed)**2))
         coarse.append((cost, r, t, 'multistart'))
     coarse.sort(key=lambda item: item[0])
+
+    screened_starts = len(coarse)
+    if hierarchical_search:
+        # Successive allocation: broad cheap screening, then constrained
+        # alignment only for distinct promising basins. A palm hypothesis is
+        # reserved so the reduced screening cloud cannot discard that family.
+        model_center = model.mesh.bounds.mean(axis=0)
+        centered = [(cost, r, r@model_center+t, label) for cost, r, t, label in coarse]
+        promoted = _distinct_starts(centered, max(12, config.refine_starts*4))
+        palm_best = next((item for item in centered if item[3] == 'palm_aligned'), None)
+        if palm_best is not None and not any(item is palm_best for item in promoted):
+            promoted = promoted[:-1]+[palm_best]
+        empirical_best = next((item for item in centered if item[3] == 'empirical_grasp_prior'), None)
+        if empirical_best is not None and not any(item is empirical_best for item in promoted):
+            promoted = [empirical_best] + promoted
+        contacts = fit_contacts
+        boundary_xyz, boundary_normals = fit_boundary_xyz, fit_boundary_normals
+        collision_samples = model.samples[_spread_indices(model.samples, 1536)] if has_limits else np.empty((0, 3))
+        coarse = []
+        for index, (_, r, center_t, label) in enumerate(promoted):
+            if progress:
+                progress(dict(stage='alignment', completed=index, total=len(promoted)))
+            t = center_t-r@model_center
+            if label == 'empirical_grasp_prior':
+                coarse.append((float(np.mean(search_residual(r, t)**2)), r, t, label))
+                continue
+            publish_pose('alignment', r, t, force=True)
+            for _ in range(iterations):
+                nearest = model.tree.query((contacts-t)@r)[1]
+                nr, nt = _rigid(model.samples[nearest], contacts)
+                delta = np.linalg.norm(nt-t)+np.linalg.norm(nr-r)
+                r, t = nr, nt
+                if delta < 1e-5:
+                    break
+            if has_limits or has_directions:
+                r0, t0 = r.copy(), t.copy()
+                def decode_promoted(p):
+                    return Rotation.from_rotvec(p[:3]).as_matrix()@r0, t0+p[3:]
+                opt = least_squares(lambda p: search_residual(*decode_promoted(p)), np.zeros(6),
+                                    x_scale=[1., 1., 1., 20., 20., 20.], max_nfev=iterations)
+                r, t = decode_promoted(opt.x)
+            coarse.append((float(np.mean(search_residual(r, t)**2)), r, t, label))
+        coarse.sort(key=lambda item: item[0])
 
     def residual(parameters):
         r = Rotation.from_rotvec(parameters[:3]).as_matrix()
@@ -395,8 +469,54 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
             r = Rotation.from_rotvec(opt.x[:3]).as_matrix()
             t = opt.x[3:]
         publish_pose('checking_limits', r, t, force=True)
-        final_nearest = model.nearest_sampled if config.quick_preview else model.nearest
+        final_nearest = model.nearest
         _, d = final_nearest((full_contacts-t)@r)
+        repair_evaluations = 0
+        optimizer_success = bool(opt.success)
+        if not config.quick_preview and not use_prior:
+            # Constraint exchange: a discarded contact can expose a violation
+            # after the reduced-cloud fit. Add the worst original observations
+            # and optimize again rather than merely rejecting an otherwise
+            # recoverable pose. Keep the usual search representatives as well.
+            refinement_contacts = contacts
+            for _ in range(2):
+                violating = np.flatnonzero(d > config.tolerance_mm)
+                if (not len(violating) or refinement_index >= 2
+                        or np.mean(d <= config.tolerance_mm) < .9):
+                    break
+                # Repair almost-feasible contact fits, not poses that already
+                # fail the hand constraints. Do not trade collision for contact.
+                if has_limits and limits(r, t, surface=True).max() > config.hand_tolerance_mm:
+                    break
+                worst = violating[np.argsort(d[violating])[-32:]]
+                contacts = np.unique(np.vstack((contacts, full_contacts[worst])), axis=0)
+                def repair_residual(parameters):
+                    rotation = Rotation.from_rotvec(parameters[:3]).as_matrix()
+                    translation = parameters[3:]
+                    distance = model.nearest((full_contacts[worst]-translation)@rotation)[1]
+                    # A small interior target avoids asymptotic convergence
+                    # just outside the unchanged acceptance tolerance.
+                    violation = np.maximum(0., distance-.99*config.tolerance_mm)
+                    return np.r_[residual(parameters), violation/config.tolerance_mm*10.*np.sqrt(len(contacts))]
+                repair = least_squares(repair_residual, np.r_[Rotation.from_matrix(r).as_rotvec(), t],
+                                       x_scale=[1., 1., 1., 20., 20., 20.],
+                                       max_nfev=config.max_nfev, diff_step=1e-4,
+                                       ftol=1e-5, xtol=1e-5, gtol=1e-5)
+                repair_evaluations += int(repair.nfev)
+                repaired_r = Rotation.from_rotvec(repair.x[:3]).as_matrix()
+                repaired_t = repair.x[3:]
+                _, repaired_d = final_nearest((full_contacts-repaired_t)@repaired_r)
+                if (has_limits and limits(repaired_r, repaired_t, surface=True).max()
+                        > config.hand_tolerance_mm):
+                    break
+                def violation_cost(distances):
+                    return (float(np.sum(np.maximum(0., distances-config.tolerance_mm)**2)),
+                            float(np.mean(distances**2)))
+                if violation_cost(repaired_d) >= violation_cost(d):
+                    break
+                r, t, d = repaired_r, repaired_t, repaired_d
+                optimizer_success = optimizer_success and bool(repair.success)
+            contacts = refinement_contacts
         ed = final_nearest((exclusions-t)@r)[1] if len(exclusions) else np.array([])
         contradiction = np.maximum(0., radii-ed)
         rmse = float(np.sqrt(np.mean(d*d)))
@@ -405,8 +525,8 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
         # Audit every triangle in each hand patch before accepting a pose.
         if progress:
             progress(dict(stage='checking_limits', completed=refinement_index, total=refinement_total))
-        # Quick fitting may approximate contacts, but acceptance always audits
-        # the complete CAD against every retained representative hand patch.
+        # Search may approximate distances, but acceptance always audits the
+        # complete CAD against every supplied contact and hand patch.
         boundary_error = (triangle_penetrations(model, r, t, full_boundary_xyz, full_boundary_normals)
                           if has_limits else np.array([]))
         boundary_rmse = float(np.sqrt(np.mean(boundary_error**2))) if len(boundary_error) else 0.
@@ -423,14 +543,15 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
                          hand_limit_rmse_mm=boundary_rmse, hand_limit_max_mm=boundary_max,
                          hand_collision_count=int(np.count_nonzero(boundary_error > config.hand_tolerance_mm)),
                          hand_constraints_checked=len(boundary_error),
-                         transform=transform.tolist(), optimizer_success=bool(opt.success),
+                         transform=transform.tolist(), optimizer_success=optimizer_success,
                          initialization=initialization,
                          pressure_direction_patches=len(directions[0]),
                          pressure_direction_rmse_mm=direction_rmse,
                          pressure_direction_method='pressure_weighted_local_planes_unsigned_soft',
                          refinement_method='sample_guided_local_triangles',
-                         validation_method='sampled_contacts_exact_hand' if config.quick_preview else 'exact_full_mesh',
+                         validation_method='exact_full_mesh',
                          quick_preview=config.quick_preview,
+                         contact_repair_evaluations=repair_evaluations,
                          evaluations=int(opt.nfev)))
         # Quick placement needs one feasible pose, after all existing final checks.
         if (config.quick_preview and fits[-1]['max_error_mm'] <= config.tolerance_mm
@@ -450,7 +571,10 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
             fit['rejection_reasons'].append('hand_penetration')
     # Feasibility takes precedence over average fit error.
     best = min(fits, key=lambda f: (not f['compatible'], f['score']))
-    best['starts_evaluated'] = 1 if staged else len(starts)+len(preferred)
+    best['starts_evaluated'] = screened_starts
+    best['promoted_starts'] = len(coarse)
+    best['search_method'] = ('coarse_to_fine_multistart' if hierarchical_search else
+                             'bounded_preview' if config.quick_preview else 'multistart')
     if staged:
         best['initial_transform'] = initial_transform.tolist()
         best['placement_sequence'] = ['hand_center', 'angle', 'thumb_translation', 'refinement', 'full_hand_audit']
@@ -459,7 +583,6 @@ def _fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None,
     if initial_pose is not None:
         best['pose_prior'] = initial_pose
         best['pose_prior_used'] = best['initialization'] == 'empirical_grasp_prior'
-        best['starts_evaluated'] += int(not staged)
         if staged:
             best['placement_sequence'][0] = 'empirical_grasp_pose'
     best['palm_starts_evaluated'] = len(preferred)

@@ -37,6 +37,6 @@ class CollisionOrientationTests(unittest.TestCase):
                           boundary_xyz=np.array([[0.,0.,0.]]),boundary_normals=np.array([[0.,0.,1.]]))
         self.assertEqual(audit.call_count,2)
         self.assertFalse(fit['compatible'])
-        self.assertEqual(fit['validation_method'],'sampled_contacts_exact_hand')
+        self.assertEqual(fit['validation_method'],'exact_full_mesh')
         self.assertIn('hand_penetration',fit['rejection_reasons'])
 if __name__=='__main__':unittest.main()

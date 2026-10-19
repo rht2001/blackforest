@@ -19,7 +19,7 @@ assert.deepEqual(H.runs.validateFrame(frame).thumb_closure_sample,frame.thumb_cl
 assert.equal(H.runs.build([row(1,0,false)],context).thumb_closure_sample,null);
 const sandbox={};require('node:vm').runInNewContext(fs.readFileSync(path.join(root,'digital_twin/sensor_identification/simulation.js'),'utf8').split('/* One page:')[0],sandbox);const F=sandbox.EstimateFeedback;
 const html=F.render({status:'running',first_guess:{candidate:'SENSOR_A',closure_fraction:.9},progress:{stage:'alignment',candidate:'SENSOR_A'}});
-assert(html.includes('First guess: VEGABAR 29'));
-assert(html.includes('90% closed with contact'));
+assert(html.includes('VEGABAR 29'));
+assert(html.includes('Matching surfaces'));
 console.log('PASS thumb contact/pose pairing, slip/state exclusions, no-contact suppression, saved-cloud roundtrip, running first-guess feedback');
 

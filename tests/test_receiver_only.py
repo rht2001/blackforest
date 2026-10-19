@@ -55,9 +55,20 @@ class ReadOnlyTests(unittest.TestCase):
                      'set_default_speed', 'set_max_force', 'open_hand', 'close_hand',
                      'close_on_contact'}
         for path in (ROOT / 'src').rglob('*.py'):
+            # The merged active prober is retained for the separate controller.
+            # Receiver entrypoints must never import it.
+            if path.name == 'thumb_prober.py':
+                continue
             for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                     self.assertNotIn(node.func.attr, forbidden, str(path))
+        for name in ('main.py', 'logic/grasp_manager.py', 'ui/appInterface.py'):
+            tree = ast.parse((ROOT / 'src' / name).read_text(encoding='utf-8'))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    self.assertNotIn('thumb_prober', node.module or '')
+                elif isinstance(node, ast.Import):
+                    self.assertTrue(all('thumb_prober' not in alias.name for alias in node.names))
         for name in forbidden:
             self.assertFalse(hasattr(RobotHandController, name), name)
 

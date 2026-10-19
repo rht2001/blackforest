@@ -4,24 +4,18 @@ const source=fs.readFileSync(path.join(__dirname,'../digital_twin/sensor_identif
 const context={module:{exports:{}},Date};vm.runInNewContext(source.split('/* One page:')[0],context);
 const {render,elapsed}=context.module.exports;
 assert.equal(elapsed(10,71),'1m 01s');
-const running=render({status:'running',started_at:10,input_label:'<bad>',progress:{stage:'alignment',candidate:'SENSOR_A',completed:24,total:168}},'',71);
-assert.ok(running.includes('1m 01s'));assert.ok(running.includes('24 / 168'));assert.ok(running.includes('&lt;bad&gt;'));assert.ok(!running.includes('<bad>'));
-const fit={compatible:false,rmse_mm:1.2,max_error_mm:3.4,inlier_fraction:.75,hand_limit_max_mm:.8,contact_tolerance_mm:1.5,hand_tolerance_mm:.25,rejection_reasons:['contact_outside_tolerance','hand_penetration']};
-const rejected=render({status:'complete',result:{classification:'AMBIGUOUS',contacts:12,fits:{SENSOR_A:fit}}});
-for(const text of ['Neither model fits','Rejected','3.40 mm','9 / 12','crosses the hand limits','too far from the surface'])assert.ok(rejected.includes(text),text);
-const provisional=render({status:'complete',result:{classification:'AMBIGUOUS',contacts:12,fits:{SENSOR_A:{...fit,compatible:true,rejection_reasons:[]}}}});
-assert.ok(provisional.includes('Provisional fit'));assert.ok(provisional.includes('identity is not confirmed'));
-const noContact=render({status:'complete',result:{classification:'AMBIGUOUS',contacts:0,hand_boundary_points:55,fits:{}}},'Hand sweep constrains space.');
-assert.ok(noContact.includes('No anchored pose'));assert.ok(noContact.includes('55 hand limits'));
-assert.ok(render({status:'connection_error',error:'<script>alert(1)</script>'}).includes('&lt;script&gt;'));
+const running=render({status:'running',progress:{stage:'alignment',candidate:'SENSOR_A'}});
+assert.ok(running.includes('VEGABAR 29'));assert.ok(running.includes('Matching surfaces'));
+const transform=[[1,0,0,10],[0,1,0,20],[0,0,1,30],[0,0,0,1]];
+for(const [compatible,status] of [[false,'Rejected fit'],[true,'Provisional fit']]){
+ const html=render({status:'complete',result:{fits:{SENSOR_A:{compatible,transform}}}},'',0,{models:[{name:'<bad>',source_center_mm:[0,0,0]}]});
+ assert.ok(html.includes(status));assert.ok(html.includes('10.00 mm'));assert.ok(html.includes('30.00 mm'));
+ assert.ok(html.includes('&lt;bad&gt;'));assert.ok(!html.includes('<bad>'));
+}
+assert.ok(render({status:'connection_error'}).includes('Retry'));
+assert.ok(render({status:'complete',result:{fits:{}}}).includes('No position found'));
 assert.doesNotThrow(()=>render({status:'complete',result:{fits:{SENSOR_A:{}}}}));
-console.log('PASS running progress, elapsed time, fit diagnostics, ambiguity, no-contact feedback, missing metrics and HTML escaping');
-
-const quickRejected=render({status:'complete',result:{quick_preview:true,fits:{SENSOR_A:{...fit,quick_preview:true}}}});
-assert.ok(quickRejected.includes('Neither model fits'));
-assert.ok(quickRejected.includes('Rejected'));
-assert.ok(!quickRejected.includes('fit-good'));
-
+console.log('PASS compact status, pose values, provisional/rejected distinction, escaping and retry');
 // Both frontend guards must track the estimator protocol on disk.
 const backendSource=fs.readFileSync(path.join(__dirname,'../digital_twin/sensor_identification/web_service.py'),'utf8');
 const estimatorRevision=backendSource.match(/ESTIMATOR_REVISION = '([^']+)'/)[1];

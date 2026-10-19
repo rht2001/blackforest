@@ -69,15 +69,46 @@ class CandidateModel:
 
     def nearest(self, points):
         """Exact unsigned triangle distance: valid for open/assembly meshes too."""
-        # Far-away hand limits can each visit many CAD triangles. Bound
-        # temporary point/triangle arrays without dropping any observations.
         points = np.asarray(points, dtype=float).reshape(-1, 3)
         closest = np.empty_like(points)
         distance = np.empty(len(points))
+        # An on-surface sample supplies a conservative upper distance bound.
+        # Every potentially nearer triangle intersects that query-centered box.
+        # Reuse the cached sample KD-tree and triangle R-tree instead of
+        # rebuilding a vertex KD-tree inside trimesh.closest_point per batch.
+        upper = self.tree.query(points)[0]+1e-7
+        tree = self.mesh.triangles_tree
+        triangles = self.mesh.triangles
         for start in range(0, len(points), 32):
-            stop = start+32
-            closest[start:stop], distance[start:stop], _ = trimesh.proximity.closest_point(
-                self.mesh, points[start:stop])
+            query = points[start:start+32]
+            radius = upper[start:start+32, None]
+            lower, higher = query-radius, query+radius
+            candidates = [np.asarray(list(tree.intersection(np.r_[lo, hi])), dtype=int)
+                          for lo, hi in zip(lower, higher)]
+            for offset, (point, faces) in enumerate(zip(query, candidates)):
+                if not len(faces):
+                    # Numerical fallback, retaining exact full-mesh semantics.
+                    p, d, _ = trimesh.proximity.closest_point(self.mesh, point[None, :])
+                    closest[start+offset], distance[start+offset] = p[0], d[0]
+            # Batch across nearby queries too, while bounding the large
+            # projection arrays for distant queries. Never discard faces.
+            faces = np.concatenate(candidates)
+            query_ids = np.repeat(np.arange(len(query)), [len(c) for c in candidates])
+            best_squared = np.full(len(query), np.inf)
+            for first in range(0, len(faces), 16384):
+                ids = query_ids[first:first+16384]
+                batch = triangles[faces[first:first+16384]]
+                projected = trimesh.triangles.closest_point(batch, query[ids])
+                squared = np.sum((projected-query[ids])**2, axis=1)
+                groups, offsets = np.unique(ids, return_index=True)
+                stops = np.r_[offsets[1:], len(ids)]
+                for group, low, high in zip(groups, offsets, stops):
+                    best = low+int(squared[low:high].argmin())
+                    if squared[best] < best_squared[group]:
+                        best_squared[group] = squared[best]
+                        closest[start+group] = projected[best]
+            present = np.isfinite(best_squared)
+            distance[start:start+len(query)][present] = np.sqrt(best_squared[present])
         return closest, distance
 
     def report(self):

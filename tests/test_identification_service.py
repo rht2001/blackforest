@@ -99,6 +99,7 @@ class ServiceTests(unittest.TestCase):
         frame = dict(valid=True, units='m', frame='left_base_link',
                      measurement_source='csv_run', saved_name='run_002',
                      geometry_status='APPROXIMATE_UNCALIBRATED',
+                     hand_snapshot={'angles_act': [1000, 1000, 1000, 1000, 400, 500]},
                      accumulation={'frames_total': 1883, 'unique_points': 95},
                      points=[dict(id='run:voxel:1', x=.01, y=.02, z=.03, pressure=500)])
         result = dict(classification='AMBIGUOUS', reason='insufficient_contacts', fits={})
@@ -113,6 +114,11 @@ class ServiceTests(unittest.TestCase):
             self.assertFalse(identify.call_args.kwargs['calibrated'])
             self.assertEqual(state['result']['accumulation'], frame['accumulation'])
             self.assertEqual(state['result']['captured_points'], 1)
+            self.assertEqual(state['estimate_frame'], frame)
+            self.assertEqual(state['estimate_threshold'], 200.)
+            restored = IdentificationService(self.temp.name).snapshot()
+            self.assertEqual(restored['estimate_frame'], frame)
+            self.assertEqual(restored['estimate_threshold'], 200.)
 
     def test_constraint_only_run_keeps_limits_and_produces_report(self):
         self.service._models = {'SENSOR_A': object(), 'SENSOR_B': object()}

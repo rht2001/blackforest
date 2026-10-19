@@ -7,7 +7,7 @@ import json
 import numpy as np
 import trimesh
 
-ROOT = Path('C:/Users/karl/Desktop/personal_branch_hand/blackforest')
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from digital_twin.sensor_identification.thumb_prior import thumb_closure_hint
 from digital_twin.sensor_identification.classifier import identify_sensor, IdentificationConfig

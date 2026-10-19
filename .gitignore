@@ -16,3 +16,5 @@ uv.lock
 # Local CAD matching results and dependency cache
 sensor_identification_demo/
 .uv-cache/
+*.png
+.mypy_cache/

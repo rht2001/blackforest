@@ -95,6 +95,25 @@
     });
     return out;
   }
+  const closingFingerNames=['little','ring','middle','index'];
+  function fingerBend(angles,context,finger){
+    const m=context.profile.control_mapping[finger],a=context.calibration.actuators[finger];
+    let t=(angles[m.index]-a.raw_at_closed)/(a.raw_at_open-a.raw_at_closed);
+    if(a.reversed)t=1-t;
+    return Math.abs((1-t)*(a.closed_angle_rad-a.open_angle_rad));
+  }
+  function fingerLimitOptions(rows,context,options){
+    K.validateCalibration(context.profile,context.calibration);
+    if(options.finger_limit_selection==='all')return options;
+    const states=new Set(options.states||['thumb_probing','probing_complete']),bends={};
+    for(const row of rows){
+      if(row.state&&!states.has(row.state))continue;
+      if(row.slip_detected===true||String(row.slip_detected).toLowerCase()==='true')continue;
+      let angles;try{angles=H.actualAngles(row)}catch(e){throw Error('CSV row '+(row._row||row.index)+': '+e.message)}
+      for(const finger of closingFingerNames)bends[finger]=Math.max(bends[finger]??-Infinity,fingerBend(angles,context,finger));
+    }
+    return {...options,finger_limit_bends:bends};
+  }
   function accumulator(context,options={}){
     const threshold=options.threshold??200,voxelMm=options.voxel_mm??1;
     if(!Number.isFinite(threshold)||threshold<0||threshold>4095)throw Error('Contact threshold must be 0–4095.');
@@ -156,10 +175,12 @@
       const {solution,cells:surface,bodies}=pose(packet.angles_act),cells=[];
       stats.frames_reconstructed++;
       const newlyContacting=new Set();
+      const keepFingerLimit=finger=>!closingFingers.has(finger)||!options.finger_limit_bends||
+        fingerBend(packet.angles_act,context,finger)>=options.finger_limit_bends[finger]-1e-9;
       for(const c of surface){
         const value=samples[c.region]?.values[c.wire_index]??null;
         const [x,y,z]=c.xyz;
-        addLimit({x,y,z,normal:c.normal,pressure:value,
+        if(keepFingerLimit(c.region.split('_')[0]))addLimit({x,y,z,normal:c.normal,pressure:value,
           kind:value===null?'unknown_taxel':value>threshold?'contact_surface':'inactive_taxel',
           region:c.region,taxel_id:c.id,link:c.link,source_index:packet.index});
         if(value!==null&&value>threshold&&(options.thumb_only!==true||c.region.startsWith('thumb_'))){
@@ -172,7 +193,7 @@
         }
       }
       const thumbPressures=cells.filter(c=>c.region.startsWith('thumb_')).map(c=>c.value);
-      const a=calibration.actuators.thumb_bend;const raw=(packet.angles_act[profile.control_mapping.thumb_bend.index]-a.raw_at_closed)/(a.raw_at_open-a.raw_at_closed);const thumbBend=a.reversed?raw:1-raw;
+      const thumbBend=fingerBend(packet.angles_act,context,'thumb_bend');
       if(thumbPressures.length>=3&&thumbBend>=thumbClosureBend){
         thumbClosureBend=thumbBend;
         thumbClosureSample={angles_act:packet.angles_act.slice(),thumb_pressures:thumbPressures,source_index:packet.index};
@@ -196,7 +217,7 @@
         }
         contactPoseLimits.set(finger,visible);
       }
-      for(const p of bodies){const [x,y,z]=p.xyz;addLimit({x,y,z,normal:p.normal,pressure:null,kind:'hand_boundary',link:p.link,surface_id:p.id,source_index:packet.index})}
+      for(const p of bodies){if(!keepFingerLimit(p.link.replace(/^left_/, '').split('_')[0]))continue;const [x,y,z]=p.xyz;addLimit({x,y,z,normal:p.normal,pressure:null,kind:'hand_boundary',link:p.link,surface_id:p.id,source_index:packet.index})}
       compactLimits();
       if(cells.length){stats.frames_used++;first??=packet.index;last=packet.index}
       else stats.frames_without_contact++;
@@ -238,6 +259,8 @@
         timestamp_basis:'CSV sample order; capture times and pose/tactile skew unavailable',
         accumulation:{run_key:run,threshold,voxel_mm:voxelMm,thumb_only:options.thumb_only===true,
           states:[...states],first_contact_index:first,last_contact_index:last,...stats,
+          finger_limit_selection:options.finger_limit_bends?'maximum_bend_per_finger':'whole_sweep',
+          finger_limit_bends_rad:options.finger_limit_bends||null,
           finger_contact_selection:'first_contact_frame_per_finger',
           finger_first_contact_indices:Object.fromEntries(capturedFingers),
           limit_spacing_mm:limitSpacing*1000,limit_max_points:maxLimits,
@@ -284,13 +307,13 @@
   }
   function finishSelection(frame,selection){Object.assign(frame.accumulation,selection.details);return frame}
   function build(rows,context,options={}){
-    single(rows);const selection=selectedPoses(rows,context,options),a=accumulator(context,options);
+    single(rows);const selection=selectedPoses(rows,context,options),a=accumulator(context,fingerLimitOptions(selection.rows,context,options));
     selection.rows.forEach(a.add);return finishSelection(a.finish(),selection);
   }
   async function buildAsync(rows,context,options={}){
     single(rows);
     if(options.cancelled?.())throw Error('Run build cancelled.');
-    const selection=selectedPoses(rows,context,options),a=accumulator(context,options);
+    const selection=selectedPoses(rows,context,options),a=accumulator(context,fingerLimitOptions(selection.rows,context,options));
     for(let i=0;i<selection.rows.length;i++){
       if(options.cancelled?.())throw Error('Run build cancelled.');
       a.add(selection.rows[i]);

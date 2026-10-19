@@ -103,6 +103,7 @@ class TwinTests(unittest.TestCase):
     def run_app(self, arguments):
         robot, results = self.snapshot()
         robot.poll = Mock(return_value=results)
+        robot.client = None
         with patch.object(sys, "argv", ["blackforest", *arguments]), \
                 patch.object(app_main, "RobotHandController", return_value=robot), \
                 patch.object(app_main, "HandApp") as app, \
