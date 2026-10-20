@@ -589,7 +589,7 @@
 
     function display(state){
 
-      if(state.estimator_revision!=='visible_contact_bvh_v10')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
+      if(state.estimator_revision!=='axial_roll_v11')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
       if(!fittedFrame&&state.estimate_frame){
         fittedFrame=state.estimate_frame;
         fittedThreshold=state.estimate_threshold??200;
@@ -702,7 +702,7 @@
 
         if(!check.ok)throw Error(backend.error||'Could not reach estimator');
 
-        if(backend.estimator_revision!=='visible_contact_bvh_v10')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
+        if(backend.estimator_revision!=='axial_roll_v11')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
 
         const response=await fetch(base+'/api/identification',{method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(15000),body:JSON.stringify({mode:'current',frame:frozen,threshold,tolerance_mm:tolerance,hand_tolerance_mm:handTolerance,point_spacing_mm:pointSpacing,quick_preview:$('estimateQuality').value==='quick',input_label:label})});
 

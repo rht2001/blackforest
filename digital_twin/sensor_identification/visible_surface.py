@@ -2,6 +2,7 @@
 import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
+from .axial_search import roll_angles
 from .ray_bvh import cached_bvh
 
 
@@ -80,9 +81,11 @@ def fit_visible_surface(model, points, normals, groups, config, progress=None):
         ray += 2.*np.maximum(0.,ray-config.tolerance_mm)
         return np.r_[ray*np.sqrt(w), .15*((closest@r.T+t-p)*np.sqrt(w[:,None])).ravel()]
 
-    starts = []
+    starts = [];legacy_indices=set()
+    legacy_rolls=np.linspace(0,2*np.pi,8,endpoint=False)
+    rolls=list(legacy_rolls)+[a for a in roll_angles(config.quick_preview) if not np.any(np.isclose(a,legacy_rolls,atol=1e-12,rtol=0))]
     for sign in (-1., 1.):
-        for roll in np.linspace(0, 2*np.pi, 8, endpoint=False):
+        for roll in rolls:
             r = np.zeros((3,3));r[:,local_axis]=sign*axis
             r[:,other[0]]=np.cos(roll)*u+np.sin(roll)*v
             r[:,other[1]]=np.cross(r[:,local_axis],r[:,other[0]])
@@ -95,6 +98,7 @@ def fit_visible_surface(model, points, normals, groups, config, progress=None):
                 t=center-r@local_center
                 d=model.nearest_sampled((points[idx]-t)@r)[1]
                 cost=float(np.average(d*d,weights=_weights(groups[idx])))
+                if np.any(np.isclose(roll,legacy_rolls,atol=1e-12,rtol=0)):legacy_indices.add(len(starts))
                 starts.append((cost,r,t))
     # Keep axial alternatives within every direction/roll stratum before
     # using expensive visibility. Cheap unsigned screening is not acceptance.
@@ -102,21 +106,34 @@ def fit_visible_surface(model, points, normals, groups, config, progress=None):
     for first in range(0,len(starts),5):
         shortlisted.update(sorted(range(first,first+5),key=lambda i:starts[i][0])[:2])
     shortlisted.update(sorted(range(len(starts)),key=lambda i:starts[i][0])[:8])
+    shortlisted.update(sorted(legacy_indices,key=lambda i:starts[i][0])[:8])
     if not config.quick_preview:
         shortlisted=set(range(len(starts)))
-    cheap_starts=len(starts);screened=[]
+    cheap_starts=len(starts);screened=[];legacy_screened=[]
     for number,index in enumerate(sorted(shortlisted)):
         _,r,t=starts[index];e=residual(r,t,idx)
-        screened.append((float(np.mean(9*(np.sqrt(1+(e/3)**2)-1))),r,t))
+        item=(float(np.mean(9*(np.sqrt(1+(e/3)**2)-1))),r,t)
+        screened.append(item)
+        if index in legacy_indices:legacy_screened.append(item)
         if progress and number%8==0:
             progress(dict(stage='visible_surface_screening',completed=number,total=len(shortlisted)))
     starts=screened
     starts.sort(key=lambda item:item[0])
     finalists=[]
-    for _,r,t in starts:
+    budget=2 if config.quick_preview else 5
+    # Keep the previous coarse-grid finalists: adding finer angles must not
+    # silently evict a useful old basin before full-contact refinement.
+    for item in sorted(legacy_screened,key=lambda item:item[0]):
+        _,r,t=item
         if any(np.linalg.norm(t-tt)<10 and Rotation.from_matrix(r@rr.T).magnitude()<.5 for _,rr,tt in finalists):continue
-        finalists.append((_,r,t))
-        if len(finalists)>= (2 if config.quick_preview else 5):break
+        finalists.append(item)
+        if len(finalists)>=budget:break
+    legacy_refinements=len(finalists)
+    for item in starts:
+        _,r,t=item
+        if any(np.linalg.norm(t-tt)<10 and Rotation.from_matrix(r@rr.T).magnitude()<.2 for _,rr,tt in finalists):continue
+        finalists.append(item)
+        if len(finalists)>=legacy_refinements+budget:break
     fits=[]
     for number,(_,r0,t0) in enumerate(finalists):
         if progress:progress(dict(stage='visible_surface_refining',completed=number,total=len(finalists)))
@@ -200,6 +217,8 @@ def fit_visible_surface(model, points, normals, groups, config, progress=None):
                          validation_method='exact_visible_contacts_and_legacy_hand_patch_witnesses',
                          refinements=len(finalists),consistent_refinements=1,scored_contact_points=len(points),
                          input_contact_points=len(points),starts_evaluated=cheap_starts,
+                         axial_roll_search_degrees=360, axial_roll_step_degrees=30 if config.quick_preview else 15,
+                         axial_roll_angles_screened=len(rolls), legacy_roll_refinements=legacy_refinements,
                          visibility_starts_evaluated=len(starts),quick_preview=config.quick_preview))
     return min(fits,key=lambda f:(-f['visible_surface_balanced_inlier_fraction'],f['score']))
 

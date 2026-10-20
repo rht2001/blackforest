@@ -326,7 +326,7 @@ be adjusted in Estimation settings. Rejected poses stay in the fit report.
 When neither candidate passes, the better rejected fit is displayed in the
 hand viewer with an explicit warning.
 During fitting, deeper sampled surface crossings guide the optimizer alongside
-nearest-surface distances. Palm initialization covers eight rolls over a full
+nearest-surface distances. Palm initialization covers 24 rolls in detailed mode (16 including the old starts in quick mode) over a full
 turn, fallback starts receive hand-aware correction in both modes, and six
 orientation-diverse poses are refined by default. Orientation is still inferred
 from the measured geometry; sparse contacts can leave several rolls plausible.
@@ -502,7 +502,7 @@ Winding and open assemblies do not affect first-hit visibility. The separate
 parity helper is for watertight hand meshes only.
 
 Finger group centers and a transverse circle initialize the shaft. Detailed
-mode checks both axis directions, eight rolls and five axial placements.
+mode checks both axis directions, 24 rolls in detailed mode (16 including the old starts in quick mode) and five axial placements.
 Quick mode uses cheap unsigned screening while retaining two axial choices
 per direction/roll stratum. Visibility still determines refined poses.
 Every region has equal total weight, recomputed after selection. Damped steps
@@ -524,3 +524,13 @@ same posed meshes shown by the viewer. They are a separate diagnostic: open
 hand links and unsampled CAD regions remain unchecked. The production preview
 does not claim complete hand-volume validation. Consistent inputs retain the
 existing full hand-patch audit and acceptance gates.
+
+### Full-turn shaft rotation search
+
+Shaft roll is periodic. The following search covers the complete turn.
+
+The independent free registration also screens the finer full-turn grid.
+Its previous 45-degree-grid finalists are retained, with additional basins
+from the finer grid. All finalists still receive the existing full-contact
+exact triangle audit. More starts increase runtime; angular sampling is a
+search strategy, not a guarantee of a globally optimal or identifiable roll.

@@ -12,7 +12,7 @@ from .classifier import IdentificationConfig, identify_sensor
 from .demo import synthetic_points, write_viewer
 from .geometry import load_candidates
 
-ESTIMATOR_REVISION = 'visible_contact_bvh_v10'
+ESTIMATOR_REVISION = 'axial_roll_v11'
 
 
 class IdentificationService:
