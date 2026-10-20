@@ -13,7 +13,23 @@ function meshPoints(a,solution){const m=K.mul(solution.frames[a.link],K.rigid(a.
 const displayRotation=K.rigid([0,0,0],[0,-Math.PI/2,0]),bounds=[[Infinity,Infinity,Infinity],[-Infinity,-Infinity,-Infinity]],open=K.solve(profile,Array(6).fill(1000),K.defaults(profile));
 for(const a of assets)for(const p of meshPoints(a,open)){const q=K.point(displayRotation,p);q.forEach((x,i)=>{bounds[0][i]=Math.min(bounds[0][i],x);bounds[1][i]=Math.max(bounds[1][i],x)})}
 const center=bounds[0].map((x,i)=>(x+bounds[1][i])/2);
-function pose(values){view.solution=K.solve(profile,values,calibration);view.raw=values.slice();assets.forEach((a,index)=>meshPoints(a,view.solution).forEach((p,j)=>{const q=K.point(displayRotation,p);for(let k=0;k<3;k++)traces[index][['x','y','z'][k]][j]=(q[k]-center[k])*1000+[0,15,130][k]}))}
+const meshOrigins=assets.map(a=>K.rigid(a.origin_xyz_m,a.origin_rpy_rad)),meshFrames=[];
+function updateMeshes(solution){
+ const changed=[];
+ assets.forEach((a,index)=>{
+  const frame=solution.frames[a.link],old=meshFrames[index];
+  if(old&&frame.every((v,k)=>Math.abs(v-old[k])<1e-12))return;
+  meshFrames[index]=frame.slice();changed.push(index);
+  const m=K.mul(displayRotation,K.mul(frame,meshOrigins[index])),v=a.vertices,t=traces[index],scale=a.scale;
+  for(let j=0,i=0;i<v.length;i+=3,j++){
+   const x=v[i]*scale[0],y=v[i+1]*scale[1],z=v[i+2]*scale[2];
+   t.x[j]=(m[0]*x+m[1]*y+m[2]*z+m[3]-center[0])*1000;
+   t.y[j]=(m[4]*x+m[5]*y+m[6]*z+m[7]-center[1])*1000+15;
+   t.z[j]=(m[8]*x+m[9]*y+m[10]*z+m[11]-center[2])*1000+130;
+  }
+ });return changed;
+}
+function pose(values){view.solution=K.solve(profile,values,calibration);view.raw=values.slice();return updateMeshes(view.solution)}
 let pressures=P.sample(null,false),signature=null,overlaySignature=null,renderedCells=[],lastInput=null,taxelPositions=[],poseSignature=null,positionSignature=null,publishedSignature=null,publishing=false,lastPublished=0;
 const rgb=hex=>[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255);
 function present(point){return K.point(displayRotation,point).map((x,i)=>(x-center[i])*1000+[0,15,130][i])}
@@ -25,18 +41,18 @@ function overlay(input){
  else renderedCells.forEach((cell,i)=>{taxelPositions[i].pressure=cell.value});
  positionSignature=overlaySignature;
  const dots=traces[pointIndex],centres=traces[centroidIndex];dots.x=[];dots.y=[];dots.z=[];dots.marker.rgb=[];centres.x=[];centres.y=[];centres.z=[];centres.marker.rgb=[];
- for(const cell of renderedCells){const p=present(cell.position_world_m.map((v,i)=>v+.00035*cell.normal_world[i]));['x','y','z'].forEach((axis,i)=>dots[axis].push(p[i]));dots.marker.rgb.push(rgb(cell.value===null?P.missing:P.color(cell.value)))}
+ for(const cell of renderedCells){const p=present(cell.position_world_m.map((v,i)=>v+.00035*cell.normal_world[i]));['x','y','z'].forEach((axis,i)=>dots[axis].push(p[i]));dots.marker.rgb.push(rgb(cell.active?'#ff766b':'#8dd3ee'))}
  const cloud=currentCloud();if($('showContactCentres').checked)for(const c of cloud.centroids){const p=present(K.point(view.solution.frames.left_base_link,c.position_m.map((v,i)=>v+.0008*c.normal[i])));['x','y','z'].forEach((axis,i)=>centres[axis].push(p[i]));centres.marker.rgb.push(rgb('#247dff'))}
  $('contactSummary').textContent=cloud.valid?cloud.points.length+' activated points · '+cloud.centroids.length+' contact centres':'Contact export awaits fresh, synchronized angles and pressure';
 }
 function update(){if(!view)return;
  const desired=live?(!disconnected&&K.freshActual(packet)?packet.angles_act:view.raw):raw;
- const next=JSON.stringify(desired),moved=next!==signature;if(moved){signature=next;pose(desired)}
+ const next=JSON.stringify(desired),moved=next!==signature;let meshChanged=[];if(moved){signature=next;meshChanged=pose(desired)}
  lastInput=demo?{...P.demo(performance.now()/1000),angles_act:view.raw.slice(),received_at:Date.now()/1000,field_received_at:{angles_act:Date.now()/1000,tactile_regions:Date.now()/1000}}:packet;
  pressures=P.sample(lastInput,demo||(live&&!disconnected));
  const nextOverlay=JSON.stringify([desired,Object.values(pressures).map(p=>p.values),$('activationThreshold').value,$('showContactCentres').checked,T.synchronized(lastInput,Date.now()/1000),live,disconnected,demo]);
  const overlayChanged=nextOverlay!==overlaySignature;if(overlayChanged){overlaySignature=nextOverlay;overlay(lastInput)}
- if(view.ready&&(moved||overlayChanged)){const indices=moved?Array.from({length:centroidIndex+1},(_,i)=>i):[pointIndex,centroidIndex];HandRenderer.restyle(view.plot,{x:indices.map(i=>traces[i].x),y:indices.map(i=>traces[i].y),z:indices.map(i=>traces[i].z)},indices)}
+ if(view.ready&&(moved||overlayChanged)){const indices=[...meshChanged,pointIndex,centroidIndex];HandRenderer.restyle(view.plot,{x:indices.map(i=>traces[i].x),y:indices.map(i=>traces[i].y),z:indices.map(i=>traces[i].z)},indices)}
  const valid=Object.values(pressures).filter(p=>p.peak!==null).length;
  $('pressureStatus').textContent=(demo?'Demo pressure · ':live?'Live pressure · ':'Preview · ')+valid+'/17 fields · '+renderedCells.filter(c=>c.value!==null).length+'/1,062 readings';
  for(const r of P.regions){const p=pressures[r.key],el=$('pressure_'+r.key);el.textContent=r.key.replaceAll('_',' ')+': '+(p.peak===null?'—':p.peak);el.style.borderLeftColor=p.color}

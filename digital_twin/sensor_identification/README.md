@@ -479,3 +479,164 @@ directional residual. Old estimates are invalidated by the estimator revision.
 Quick placement uses one standard centered pose when thumb contacts or a rigid palm are available. It adjusts angle about the CAD center, translates toward the thumb contact boundaries, and refines once before the full hand triangle audit. Detailed validation retains the multistart search. Rejected poses are available for explicit inspection but are never shown automatically as the estimate.
 
 During estimation the viewer follows unvalidated STL trial poses. Switch off Follow live STL position or drag Inspect search poses to pause and inspect the last 256 sampled poses, including candidate switches. Pose updates preserve the camera. History remains available after completion; rejected results are hidden until explicitly inspected.
+
+
+### First visible surface for inconsistent run previews
+
+Accumulated CSV contacts now retain the outward taxel normal from the same
+pose as each selected contact. The estimator validates these optional normals;
+older clouds without them retain the existing path. Normals must not be
+recovered from the nearest patch in a different pose of the hand sweep.
+
+When the supplied hand patches already contradict the contact tolerance balls,
+the inspection fit uses the first CAD surface seen along each recorded normal.
+Unsigned distance alone can match a far wall or internal assembly face even
+when the model passes through the contact. Visibility rays start beyond the
+entire CAD envelope and do not depend on triangle winding or watertightness.
+
+Finger contact group centers initialize the shaft direction; a transverse
+circle provides a starting center. Both axial directions, eight rolls and five
+axial placements are screened. Five distinct starts are refined in detailed
+mode (two in quick mode), using robust point-to-plane steps with visibility
+correspondences refreshed between steps. Each region has equal total weight,
+recomputed after point selection. Detailed mode finishes with all contacts.
+These starts use measured geometry, without sensor-name or run-label priors.
+
+The search score caps errors at 30 mm and assigns ray misses nearest-distance
+plus 6 mm. This robust ranking score is distinct from the reported uncapped
+RMS over hit rays. Miss count, hit fraction, per-region statistics and the
+fraction of all contacts whose first intersection is within tolerance are
+reported separately. The final audit queries the complete CAD for every
+contact; no missed ray counts as an inlier. Certified clearances and hand
+conflict witnesses are still checked exactly.
+
+These poses remain rejected inspection previews: changing the contact fit
+does not repair the contradictory hand constraint model or validate the full
+hand volume. Consistent inputs retain the existing complete hand audit. No
+candidate identity is confirmed by this preview path.
+
+
+### Local registration near the usual insertion (v17)
+
+Known CAD hashes in left_base_link with oriented contact observations use a
+bounded local contact-to-CAD fit before the legacy prism/conflict path. The
+recorded grasp prior initializes both candidates independently. Rotation-vector
+components are limited to +/-20 degrees and the existing center windows are
+retained; this prevents the housing from flipping to the opposite insertion
+direction. Quick uses five seeds, detailed seven. The unchanged seed and
+intermediate poses compete with the final iterate using region-balanced robust
+first-visible-surface evidence. All contacts retain exact final ray and unsigned
+triangle-distance metrics, including misses and outliers.
+
+Collision queries use actual finite closed hand CAD links articulated with the
+frozen recorded joint pose and calibration. The old unbounded inward prisms do
+not reject or steer this path. A bounded correction uses nearest finite-volume
+escape directions while retaining contact residuals. Final checks cover 2400
+deterministic object-surface samples. Five open hand links currently cannot
+provide reliable inside/outside tests and are listed explicitly. This is a
+sampled frozen-pose audit, not continuous mesh/mesh collision certification,
+not an audit of every recorded swept pose, and not physical calibration.
+
+A placement with at least half the contact rays within tolerance and no sampled
+closed-link penetration beyond the hand allowance can be displayed as a
+**provisional placement**. This separate placement_usable flag never changes
+compatible, classification, strict contact tolerances or calibration gates.
+The viewer reports actual contact support and unverified collision coverage.
+Sensor identity remains AMBIGUOUS. Source clouds and recordings are unchanged.
+
+Exact first-hit ray queries use a cached triangle BVH, with tests against the
+complete triangle reference. No Open3D, SDF training or extra dependency is
+required. The pose prior is derived from existing recordings: residual
+comparisons on those recordings are engineering regressions, not independent
+measurements of 6D pose accuracy.
+
+Candidate scoring balances whole fingers, thumb and palm rather than treating every named tip/nail patch equally. Robust tails retain the influence of poorly matched entire areas; patches with only one or two points do not receive the weight of a whole finger. The viewer explicitly lists poorly matched physical regions and labels their placement Partial. Overall inlier fraction is not a substitute for regional support. Native saved snapshots retain taxel region, normal, link and source metadata during normalization.
+
+
+### Visible contact registration and cached triangle queries
+
+CSV contacts retain the outward taxel normal from the same observed pose.
+Older clouds without complete valid normals retain the existing solver.
+When local hand-patch constraints contradict the measured contact balls, the
+inspection fit matches CAD surfaces visible from the hand side. It remains
+a rejected preview; the legacy hand-patch conflict is not a solid collision
+certificate or a confirmed sensor identity.
+
+A strictly parallel normal ray is not a sufficient contact-distance test:
+it can miss an edge even when the surface lies inside the positional
+tolerance ball. The registration projects to a nearest triangle point and
+casts from the hand side toward that point. An earlier occluding CAD surface
+replaces a hidden correspondence. Thus far walls and internal assembly faces
+cannot masquerade as a nearby externally reachable contact. The final audit
+uses exact nearest triangles and the complete CAD for every measured contact.
+This is an upper bound on nearest visible distance, not a global visibility
+or physical-contact certificate. Normals are geometric directions, not
+calibrated force vectors.
+
+The triangle hierarchy is cached on each immutable candidate model. Batched
+ray/box tests reduce triangle candidates; batched exact triangle tests retain
+the first hit. Segment bounds stop visibility queries beyond their known CAD
+target. No new package, STL simplification or geometry rescaling is used.
+Winding and open assemblies do not affect first-hit visibility. The separate
+parity helper is for watertight hand meshes only.
+
+Finger group centers and a transverse circle initialize the shaft. Detailed
+mode checks both axis directions, eight rolls and five axial placements.
+Quick mode uses cheap unsigned screening while retaining two axial choices
+per direction/roll stratum. Visibility still determines refined poses.
+Every region has equal total weight, recomputed after selection. Damped steps
+must improve the actual visibility objective, and detailed refinement reaches
+all contacts even when a coarse step stalls. The best observed fine pose is
+retained instead of blindly taking the last optimizer step.
+
+Preview placement prioritizes the region-balanced fraction of visible contacts
+within the requested tolerance, then the robust distance score. Both measures
+are reported, including per-region support and uncapped worst/RMS errors.
+The robust score caps errors at 30 mm and assigns query misses nearest-distance
+plus 6 mm; neither rule turns a failing contact into an inlier. Search nearest
+queries use sampled local triangles; final visibility and distance audits use
+exact triangles and every contact. No run label or empirical reference pose
+is an input to this registration path.
+
+Finite hand-volume checks were additionally performed offline against the
+same posed meshes shown by the viewer. They are a separate diagnostic: open
+hand links and unsampled CAD regions remain unchecked. The production preview
+does not claim complete hand-volume validation. Consistent inputs retain the
+existing full hand-patch audit and acceptance gates.
+
+The anchored path uses the shared nearest-visible-triangle correspondence: the tolerance is a positional ball, not an infinitely thin normal ray. Exact final contact distances and occlusion queries retain all contacts. The old normal-ray inlier fraction is retained separately for comparison. The visible contact metric is labelled explicitly in the viewer.
+
+
+Measured hand motion and sensor-size ambiguity (v18): CSV reconstruction stores
+up to 64 measured thumb poses plus the selected contact pose for each closing
+finger in `hand_snapshot.motion_samples`. Finite closed hand CAD volumes from
+these poses enter the same collision audit and bounded repair as the frozen
+pose, including thumb poses without pressure. This remains a sampled audit;
+open CAD parts, motion between samples and object stationarity are unverified.
+Old JSON exports without these samples retain frozen-pose coverage explicitly.
+
+If both models have usable poses, their balanced visible-contact RMSE differs
+by at most one quarter of the positional tolerance, and balanced contact
+support differs by at most five percentage points, the result has
+`reason=sensor_size_unresolved` and `candidate_comparison`. It has no automatic
+`placement_candidate` or `best_candidate`. This is a conservative preview band,
+not a calibrated statistical confidence interval. The viewer asks for an
+explicit model choice and labels it comparison only. Missing thumb contacts
+are stated; a tiny optimizer/prior score advantage cannot decide head size.
+
+### Full-turn shaft rotation search
+
+Shaft roll is periodic and must not inherit the insertion tilt's small prior
+window. The local placement path screens a full turn at 15-degree intervals
+(30 degrees in quick mode), each at three axial offsets. It refines distinct
+angular basins with an independent continuous roll parameter. Roll preserves
+the CAD center and shaft direction and receives no orientation-prior penalty.
+The unchanged insertion and previous local seeds remain available for the
+finite hand audit. The score profile, angular coverage and chosen roll are
+reported; screening poses can be previewed during the search.
+
+The independent free registration also screens the finer full-turn grid.
+Its previous 45-degree-grid finalists are retained, with additional basins
+from the finer grid. All finalists still receive the existing full-contact
+exact triangle audit. More starts increase runtime; angular sampling is a
+search strategy, not a guarantee of a globally optimal or identifiable roll.

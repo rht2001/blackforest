@@ -19,19 +19,23 @@
  function render(state,explanation='',now=Date.now()/1000,context={}){
   if(state.status==='idle')return '';
   const result=state.result||{},fits=result.fits||{},running=state.status==='running';
+  const unresolved=!!result.candidate_comparison;
   const candidate=running?(state.progress?.candidate||state.first_guess?.candidate):
-   (context.candidate||result.placement_candidate||result.best_candidate||Object.keys(fits).find(name=>fits[name]?.compatible===true)||Object.keys(fits)[0]);
+   (context.candidate||(!unresolved&&(result.placement_candidate||result.best_candidate||Object.keys(fits).find(name=>fits[name]?.compatible===true)||Object.keys(fits)[0])));
   const model=context.models?.[['SENSOR_A','SENSOR_B'].indexOf(candidate)];
   const pose=sensorPose(fits[candidate],model);
-  const currentStages={queued:'Starting',loading_models:'Loading sensors',preparing:'Checking data',thumb_first_guess:'Choosing sensor',standard_placement:'Positioning',adjusting_angle:'Adjusting angle',moving_to_thumb:'Moving to thumb',palm_initialization:'Positioning',alignment:'Matching surfaces',refining:'Refining position',checking_limits:'Checking fit',candidate_checked:'Fit checked',writing_report:'Finishing'};
+  const currentStages={screening_axial_roll:'Checking shaft rotation (360°)',refining_known_placement:'Refining usual placement',visible_surface_refining:'Fitting contact surfaces',queued:'Starting',loading_models:'Loading sensors',preparing:'Checking data',thumb_first_guess:'Choosing sensor',standard_placement:'Positioning',adjusting_angle:'Adjusting angle',moving_to_thumb:'Moving to thumb',palm_initialization:'Positioning',alignment:'Matching surfaces',refining:'Refining position',checking_limits:'Checking fit',candidate_checked:'Fit checked',writing_report:'Finishing'};
   const status=running?(currentStages[state.progress?.stage]||'Estimating'):
    state.status==='connection_error'?'Connection lost':state.status==='error'?'Estimate failed':
-   !candidate?'No position found':fits[candidate]?.compatible!==true?'Rejected fit':
+   unresolved?(candidate?'Comparison only · size unresolved':'Sensor size unresolved'):!candidate?'No position found':fits[candidate]?.placement_usable===true?(fits[candidate]?.placement_quality==='partial_contact_support'?'Partial placement':'Provisional placement'):fits[candidate]?.compatible!==true?'Rejected fit':
    result.classification===candidate?'Identified':'Provisional fit';
-  const metric=(label,value,unit)=>'<div><dt>'+label+'</dt><dd>'+(Number.isFinite(value)?escape((Math.abs(value)<.005?0:value).toFixed(2)+' '+unit):'â€”')+'</dd></div>';
+  const metric=(label,value,unit)=>'<div><dt>'+label+'</dt><dd>'+(Number.isFinite(value)?escape((Math.abs(value)<.005?0:value).toFixed(2)+' '+unit):'—')+'</dd></div>';
   return '<h3>'+escape(candidate?sensorName(candidate,context):'Sensor')+'</h3><p class="current-state" role="status">'+escape(status)+'</p><dl class="current-pose">'+
    ['X','Y','Z'].map((axis,k)=>metric(axis,pose?.center[k],'mm')).join('')+
-   ['pitch','yaw','roll'].map(axis=>metric(axis[0].toUpperCase()+axis.slice(1),pose?.[axis],'Â°')).join('')+'</dl>'+
+   ['pitch','yaw','roll'].map(axis=>metric(axis[0].toUpperCase()+axis.slice(1),pose?.[axis],'°')).join('')+'</dl>'+
+   (Number.isFinite(fits[candidate]?.visible_surface_inlier_fraction)?'<p class="fit-small">Contacts within tolerance: '+Math.round(fits[candidate].visible_surface_inlier_fraction*100)+'% of contacts. '+(fits[candidate]?.pose_evidence==='known_placement_finite_cad'?'Near usual insertion; open hand links and sampled collision coverage remain unverified.':'Inspection preview.')+'</p>':'')+
+   (fits[candidate]?.weak_contact_regions?.length?'<p class="fit-small">Poorly matched areas: '+escape(fits[candidate].weak_contact_regions.join(', '))+'.</p>':'')+
+   (unresolved?'<p class="fit-small">Both sensor sizes fit the contacts similarly. '+(result.candidate_comparison.missing_thumb_contacts?'No measured thumb contacts distinguish the head size. ':'')+'Choose a fitted candidate to compare; no sensor selected automatically.</p>':'')+
    (state.status==='connection_error'?'<button id="retryEstimateStatus">Retry</button>':'');
  }
  root.EstimateFeedback={render,elapsed,sensorPose};
@@ -79,7 +83,7 @@
       #onePageApp button:disabled{opacity:.4;cursor:not-allowed}
       #onePageApp :is(button,input,select,summary):focus-visible{outline:2px solid #a8c6e6;outline-offset:3px}
       #onePageApp input[type=checkbox],#onePageApp input[type=range]{accent-color:#98b9dc}
-      #onePageApp .data-modes{display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin-bottom:10px;border-bottom:1px solid #444e5a}
+      #onePageApp .data-modes{display:grid;grid-template-columns:repeat(2,1fr);gap:0;margin-bottom:10px;border-bottom:1px solid #444e5a}
       #onePageApp .data-modes button{background:transparent;border:0;border-bottom:2px solid transparent;border-radius:0;color:#a6afb9;padding:8px 4px}
       #onePageApp .data-modes button.active{background:transparent;color:#edf3fa;border-bottom-color:#98b9dc;font-weight:600}
       .data-actions{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}.data-actions button{flex:1}
@@ -123,17 +127,17 @@
 
       <div class="data-modes" role="tablist" aria-label="Data mode">
 
-        <button role="tab" id="dataManual">Manual</button><button role="tab" id="dataLive">Live</button><button role="tab" id="dataHistory">History</button>
+        <button role="tab" id="dataLive">Live</button><button role="tab" id="dataHistory">History</button>
 
       </div><p id="sourceInfo" class="hint"></p>
 
-      <section id="manualData"><div class="data-actions" id="manualActions"></div><details id="manualAngles"><summary>Set finger angles</summary></details></section>
+      <section id="manualData"><div class="data-actions" id="manualActions"></div><section id="manualAngles" aria-label="Finger positions"><h2>Finger positions</h2></section></section>
 
-      <section id="liveData" hidden></section>
+      <section id="liveData" hidden><label><input id="followTelemetry" type="checkbox" checked> Follow live telemetry</label></section>
 
-      <section id="historyData" hidden><button id="chooseHistory" type="button">Choose JSON or CSVâ€¦</button><input id="historyFiles" type="file" accept=".json,.csv,application/json,text/csv" hidden><p id="selectedHistory" class="hint">No history file selected.</p>
+      <section id="historyData" hidden><button id="chooseHistory" type="button">Choose JSON or CSV…</button><input id="historyFiles" type="file" accept=".json,.csv,application/json,text/csv" hidden><p id="selectedHistory" class="hint">No history file selected.</p>
 
-        <div id="csvControls" hidden><label>Use CSV as <select id="csvScope"><option value="run">Whole probing run</option><option value="row">Single row</option></select></label>
+        <div id="csvControls" hidden>
 
         <div id="runControls"><label>Run <select id="historyRun"></select></label><label>Contacts <select id="runRegions"><option value="all">All hand regions</option><option value="thumb">Thumb only</option></select></label><label>Point spacing (mm) <input id="runVoxel" type="number" min="0.1" max="10" step="0.1" value="1"></label><button id="buildRun">Build run point cloud</button><p class="hint">Shows each contacting finger at its first contact pose, removing its other angles from the cloud. Thumb and palm retain their recorded poses. Estimation retains the full hand sweep. Coordinates assume the object stays fixed relative to the hand base.</p></div>
 
@@ -141,7 +145,7 @@
 
         <button id="downloadRun" hidden>Save run point cloud JSON</button>
 
-        <div id="runLayers" hidden><label><input id="runShowAxes" type="checkbox" checked> Show coordinate frame</label><p class="hint"><span style="color:#ff595e">X</span> Â· <span style="color:#49d17d">Y</span> Â· <span style="color:#58a6ff">Z</span> Â· left_base_link Â· origin (0, 0, 0) Â· arrows 40 mm</p><label><input id="runShowLimits" type="checkbox" checked> Show hand-space limits</label><p class="hint"><span style="color:#b88aff">Purple: hand surfaces</span> Â· <span style="color:#58bfff">Blue: inactive taxels</span> Â· <span style="color:#94a3b8">Gray: pressure unknown</span>. Bright pressure colors mark active contacts. Each limit follows its recorded hand pose.</p></div>
+        <div id="runLayers" hidden><label><input id="runShowAxes" type="checkbox" checked> Show coordinate frame</label><p class="hint"><span style="color:#ff595e">X</span> · <span style="color:#49d17d">Y</span> · <span style="color:#58a6ff">Z</span> · left_base_link · origin (0, 0, 0) · arrows 40 mm</p><label><input id="runShowLimits" type="checkbox" checked> Show hand-space limits</label><p class="hint"><span style="color:#b88aff">Purple: hand surfaces</span> · <span style="color:#58bfff">Blue: inactive taxels</span> · <span style="color:#94a3b8">Gray: pressure unknown</span>. Bright pressure colors mark active contacts. Each limit follows its recorded hand pose.</p></div>
 
         <p id="historyStatus" class="hint">Choose a file to preview it before estimating.</p>
 
@@ -154,16 +158,16 @@
         <p id="closureCaptureStatus" class="hint">Waiting to observe an open hand before arming.</p>
         <button id="startReceivedCapture">Start capture</button><button id="finishReceivedCapture" disabled>Finish capture</button>
         <label><input id="autoReceiveRun" type="checkbox" checked> Open completed probing runs automatically</label>
-        <p id="receivedRunStatus" role="status">Waiting for probing telemetryâ€¦</p>
+        <p id="receivedRunStatus" role="status">Waiting for probing telemetry…</p>
         <label>Saved capture <select id="receivedRunSelect"><option value="">No captures yet</option></select></label>
         <button id="openReceivedRun" disabled>Build captured point cloud</button>
         <a id="downloadReceivedCSV" hidden>Download captured CSV</a>
       </section>
       <h2>Sensor estimation</h2><button id="estimateButton">Estimate sensor</button><p id="estimateStatus" role="status" aria-live="polite">Ready. The selected data source supplies the point cloud.</p><section id="estimateFeedback" hidden aria-label="Estimate feedback"></section>
 
-      <div class="data-actions"><button id="showHand">Hand view</button><button id="showCloud" disabled>Point cloud</button><button id="showEstimate" disabled>Estimate in hand</button><button id="showFitReport" disabled>Fit report</button></div><label id="estimateCandidateLabel" hidden>Fitted candidate <select id="estimateCandidate"></select></label><section id="estimatePreview" hidden aria-label="Estimation pose history"><label><input id="estimateFollow" type="checkbox" checked> Follow live STL position</label><p id="estimatePreviewStatus" role="status"></p><label>Inspect search poses <input id="estimatePoseStep" type="range" min="0" max="0" value="0" step="1"></label><p class="hint">Trial pose Â· not yet validated. Drag the slider to pause live following and inspect earlier positions.</p></section><p id="estimatePoseWarning" role="status" hidden style="color:#edb6be">Rejected fit shown for comparison. Contact or collision limits are exceeded.</p><div id="viewActions" class="data-actions"></div>
+      <div class="data-actions"><button id="showHand">Hand view</button><button id="showCloud" disabled>Run overview</button><button id="showEstimate" disabled>Estimate in hand</button><button id="showFitReport" disabled>Fit report</button></div><label id="estimateCandidateLabel" hidden>Fitted candidate <select id="estimateCandidate"></select></label><section id="estimatePreview" hidden aria-label="Estimation pose history"><label><input id="estimateFollow" type="checkbox" checked> Follow live STL position</label><p id="estimatePreviewStatus" role="status"></p><label>Inspect search poses <input id="estimatePoseStep" type="range" min="0" max="0" value="0" step="1"></label><p class="hint">Trial pose · not yet validated. Drag the slider to pause live following and inspect earlier positions.</p></section><p id="estimatePoseWarning" role="status" hidden style="color:#edb6be">Rejected fit shown for comparison. Contact or collision limits are exceeded.</p><div id="viewActions" class="data-actions"></div>
 
-      <p class="hint">Purple and gray: hand surface limits Â· red: measured contacts</p><div id="boundaryDisplay"></div><details id="estimateSettings"><summary>Estimation settings</summary><label>Fit quality <select id="estimateQuality"><option value="quick" selected>Quick placement</option><option value="detailed">Detailed validation</option></select></label><label>Contact threshold <input id="estimateThreshold" type="number" min="0" max="4095" value="200"></label><label>Position tolerance (mm) <input id="estimateTolerance" type="number" min="0.1" max="20" step="0.1" value="3"></label><label>Hand penetration allowance (mm) <input id="estimateHandTolerance" type="number" min="0.1" max="20" step="0.1" value="3"></label><label>Estimation point spacing (mm) <input id="estimatePointSpacing" type="number" min="0" max="20" step="0.1" value="2"></label><p class="hint">Nearby contacts and hand limits share one representative within this spacing; 0 keeps all points. Opposing hand surfaces remain separate. A thumb at least 85% closed with measured thumb contact gives a provisional smaller-sensor first guess. Quick placement starts in the middle of the hand, adjusts the STL angle, then moves it to the thumb contacts. It uses one starting pose per candidate and stops at the first pose passing its fit checks. If neither candidate passes, Detailed validation searches more starting poses. Quick placement approximates contact distances; both modes check hand penetration against the full CAD with the adjustable hand penetration allowance (default 3 mm). Detailed validation also checks exact contact distances. Detailed fitting tries several palm-aligned orientations, then refines rotation and translation. Hand limits guide the search and use conservative local surface patches requiring calibrated geometry.</p></details>
+      <p class="hint">Purple and gray: hand surface limits · red: measured contacts</p><div id="boundaryDisplay"></div><details id="estimateSettings"><summary>Estimation settings</summary><label>Fit quality <select id="estimateQuality"><option value="quick" selected>Quick placement</option><option value="detailed">Detailed validation</option></select></label><label>Contact threshold <input id="estimateThreshold" type="number" min="0" max="4095" value="200"></label><label>Position tolerance (mm) <input id="estimateTolerance" type="number" min="0.1" max="20" step="0.1" value="3"></label><label>Hand penetration allowance (mm) <input id="estimateHandTolerance" type="number" min="0.1" max="20" step="0.1" value="3"></label><label>Estimation point spacing (mm) <input id="estimatePointSpacing" type="number" min="0" max="20" step="0.1" value="2"></label><p class="hint">Nearby contacts and hand limits share one representative within this spacing; 0 keeps all points. Opposing hand surfaces remain separate. A thumb at least 85% closed with measured thumb contact gives a provisional smaller-sensor first guess. Known sensors are fitted near their usual in-hand placement, with limited position and angle adjustments. Quick uses a short local search; Detailed tries additional local starts. A provisional placement does not confirm sensor identity. Known-sensor fits check exact contact rays and sampled penetration into closed hand CAD parts at the frozen pose and selected recorded finger/thumb poses. Similar fits require an explicit model choice for comparison. Open hand parts and continuous collision clearance remain unverified. The hand allowance defaults to 3 mm. Detailed fitting tries several palm-aligned orientations, then refines rotation and translation. Hand limits guide the search and use conservative local surface patches requiring calibrated geometry.</p></details>
 
       <details id="advancedData"><summary>Advanced display & connection</summary></details>`;
 
@@ -199,9 +203,75 @@
 
     $('profileWorkspace').append(runView);let runPlot=null,runFrame=null,buildVersion=0;
 
+    const viewportTools=document.createElement('div');viewportTools.id='viewportTools';
+    viewportTools.innerHTML='<label><input id="handModelVisible" type="checkbox" checked> Hand model</label>';
+    const legend=document.createElement('details');legend.id='pointLegend';legend.open=true;
+    legend.innerHTML='<summary>Legend</summary><span style="color:#ff766b">● Contacts</span><span style="color:#8dd3ee">● Taxel positions</span><span style="color:#b88aff">● Hand limits</span>';
+    const timeline=document.createElement('section');timeline.id='historyTimeline';timeline.hidden=true;
+    timeline.innerHTML='<button id="timelinePrev" aria-label="Previous row">‹</button><label for="historyTime">History <output id="historyTimeLabel"></output></label><input id="historyTime" aria-label="History row" type="range" min="1" max="1" value="1" step="1"><button id="timelineNext" aria-label="Next row">›</button>';
+    document.body.append(viewportTools,legend,timeline);
+    const compact=document.createElement('style');compact.textContent=`
+      body #panel{width:310px;padding:18px}html body.profile-mode #profileWorkspace{left:310px}
+      #onePageApp #sourceInfo,#onePageApp .app-heading p,.profile-caption p,.profile-angles,#rowControls,#historyRowInfo{display:none!important}
+      #onePageApp #runControls>.hint,#onePageApp #runLayers>.hint,#onePageApp #receivedRuns>.hint{display:none}
+      #viewportTools{position:fixed;top:16px;left:330px;z-index:70;background:#191e24e8;border:1px solid #343c46;border-radius:6px;padding:8px 12px;font-size:12px}
+      #pointLegend{position:fixed;right:16px;bottom:80px;z-index:70;background:#191e24e8;border:1px solid #343c46;border-radius:6px;padding:9px 12px;font-size:12px}
+      #pointLegend summary{cursor:pointer;color:#c4cbd3}#pointLegend span{display:block;margin-top:5px}
+      #historyTimeline{position:fixed;left:330px;right:16px;bottom:14px;z-index:70;display:flex;align-items:center;gap:12px;padding:10px 14px;background:#191e24ed;border:1px solid #343c46;border-radius:6px;font-size:12px}
+      #historyTimeline[hidden]{display:none}
+      #historyTimeline>label{flex:0 0 38%;max-width:360px;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:12px;line-height:18px;font-variant-numeric:tabular-nums}
+      #historyTime{flex:1;min-width:40px;accent-color:#98b9dc}
+      #historyTimeLabel{font:inherit;white-space:nowrap;font-variant-numeric:tabular-nums}
+      #historyTimeline button{background:#252c34;color:#e3e7ec;border:1px solid #444e5a;border-radius:4px;font-size:20px;cursor:pointer}
+      .profile-caption{display:none}
+      /* Keep all six channels visible, including at 150% desktop scaling. */
+      body #onePageApp .app-heading{margin:0 0 8px;padding:0 0 6px}
+      body #onePageApp .app-heading h1{font-size:18px;margin:0}
+      body #onePageApp h2{margin:8px 0 4px}
+      body #onePageApp .data-modes{margin-bottom:6px}
+      body #onePageApp .data-modes button{min-height:28px;padding:4px}
+      body #onePageApp label{margin:5px 0}
+      body #onePageApp #dataSource{display:none}
+      #manualActions{margin:8px 0}
+      body #onePageApp #manualActions button{min-height:28px;padding:4px 8px}
+      body #onePageApp #controls{gap:0;margin-top:4px}
+      body #onePageApp .channel{display:grid;grid-template-columns:minmax(0,1fr) 60px;gap:1px 8px;padding:5px 0}
+      body #onePageApp .channel-head,body #onePageApp .channel-main{display:contents}
+      body #onePageApp .channel-name{grid-column:1;grid-row:1;font-size:12px;line-height:16px}
+      body #onePageApp .channel-head .channel-info{display:none}
+      body #onePageApp .channel input[type=range]{grid-column:1;grid-row:2;width:100%;height:18px;margin:0}
+      body #onePageApp .channel input[type=number]{grid-column:2;grid-row:1 / span 2;width:60px;height:32px;align-self:center;padding:3px;font-size:12px}
+      body #onePageApp .channel .tactile{grid-column:1 / -1;grid-row:3;height:2px;margin:0}
+      body #onePageApp .channel>.channel-info{grid-column:1 / -1;grid-row:4;margin:0!important;font-size:10px;line-height:12px}
+      body #estimateFeedback{top:8px;right:8px;width:clamp(230px,22vw,320px);max-height:calc(100vh - 180px);padding:14px;box-shadow:none}
+      #pointLegend{right:8px;bottom:8px}
+      body:has(#historyTimeline:not([hidden])) #pointLegend{bottom:80px}
+      /* The canvas gets its own clear area beside the result card. */
+      @media(min-width:1100px){body.profile-mode #profileCard0{margin-right:calc(clamp(230px,22vw,320px) + 16px)}}
+      @media(min-width:621px) and (max-height:650px){body #panel{padding:10px 18px}}
+      @media(max-width:620px){body #estimateFeedback{top:calc(50vh + 8px);right:8px;width:min(230px,calc(100vw - 24px));max-height:calc(50vh - 90px)}body #onePageApp #controls{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:12px}}
+      @media(max-width:620px){body #panel{width:100%}html body.profile-mode #profileWorkspace{left:0}#viewportTools{left:12px;top:calc(50vh + 10px)}#historyTimeline{left:12px;gap:6px}#pointLegend{bottom:78px}}
+    `;document.head.append(compact);
+    requestAnimationFrame(()=>$('resetView').click());
+    $('handModelVisible').onchange=()=>window.HandHistory.setHandVisible($('handModelVisible').checked);
+    // Manual pose controls and telemetry share one Live workspace.
+    $('liveData').append($('manualData'));
+    const captureDetails=document.createElement('details');captureDetails.innerHTML='<summary>Recordings</summary>';
+    $('receivedRuns').before(captureDetails);captureDetails.append($('receivedRuns'));
+    const layerDetails=document.createElement('details');layerDetails.innerHTML='<summary>Display settings</summary>';
+    $('boundaryDisplay').before(layerDetails);layerDetails.append($('boundaryDisplay'),$('runLayers'));
+    for(const p of app.querySelectorAll(':scope > p.hint'))p.hidden=true;
+    const runSettings=document.createElement('details');runSettings.id='runSettings';runSettings.innerHTML='<summary>Run settings</summary>';
+    $('runControls').append(runSettings);
+    runSettings.append($('runRegions').closest('label'),$('runVoxel').closest('label'),$('buildRun'),$('historyStatus'));
+    const activity=document.createElement('details');activity.innerHTML='<summary>Status details</summary>';
+    $('estimateStatus').before(activity);activity.append($('estimateStatus'));
+
+
     const base=location.protocol==='file:'?'http://127.0.0.1:18765':location.origin;
 
     let mode='manual',switching=false,historyValid=false,csvRows=null,csvName='',job=null,pollTimer=null,running=false,loading=false,historyFrame=null,loadVersion=0;
+    let restoringEstimate=true;
 
     const status=$('estimateStatus');
     const poseModels=JSON.parse($('jointProfileData').textContent).sensor_objects;
@@ -230,7 +300,7 @@
         estimateView.hidden=true;runView.hidden=true;
         window.HandEstimate.show(pose.candidate,{transform:pose.transform},fittedFrame,fittedThreshold,{preserveCamera:true});
         const index=['SENSOR_A','SENSOR_B'].indexOf(pose.candidate),name=poseModels[index]?.name||pose.candidate;
-        $('estimatePreviewStatus').textContent=name+' Â· '+pose.stage.replaceAll('_',' ')+' Â· '+Number(pose.elapsed_seconds||0).toFixed(1)+' s Â· trial pose';
+        $('estimatePreviewStatus').textContent=name+' · '+pose.stage.replaceAll('_',' ')+' · '+Number(pose.elapsed_seconds||0).toFixed(1)+' s · trial pose';
         $('estimatePoseWarning').hidden=true;
         previewSequence=pose.sequence;
       }catch(error){$('estimatePreviewStatus').textContent='Preview unavailable: '+error.message;}
@@ -270,7 +340,9 @@
       estimateView.hidden=true;runView.hidden=true;
 
       const candidate=$('estimateCandidate').value;
+      if(!candidate){window.HandEstimate?.clear();return;}
       $('estimatePoseWarning').hidden=fittedResult.fits[candidate]?.compatible===true;
+      $('estimatePoseWarning').textContent=fittedResult.candidate_comparison?'Model comparison only; sensor size is unresolved.':fittedResult.fits[candidate]?.placement_usable?'Provisional placement: identity, open hand links and continuous collision clearance are unverified.':'Rejected fit: contact or finite hand penetration limits exceeded.';
 
       try{
 
@@ -326,7 +398,7 @@
 
       $('selectedHistory').textContent=frame.saved_name||'Saved capture';
 
-      status.textContent='Preview ready Â· '+frame.points.length+' points. Inspect the hand or point cloud, then press Estimate.';
+      status.textContent='Preview ready · '+frame.points.length+' points. Inspect the hand or point cloud, then press Estimate.';
 
       updateReady();
 
@@ -336,8 +408,11 @@
 
     function layoutMode(next){
 
-      $('receivedRuns').hidden=next==='history';
-      mode=next;for(const key of ['manual','live','history']){
+      next=next==='manual'?'live':next;
+      $('receivedRuns').hidden=next==='history';$('receivedRuns').parentElement.hidden=next==='history';
+      $('manualData').hidden=next==='history';
+      $('historyTimeline').hidden=next!=='history'||!csvRows;
+      mode=next;for(const key of ['live','history']){
 
         $(key+'Data').hidden=key!==mode;const tab=$('data'+key[0].toUpperCase()+key.slice(1));tab.classList.toggle('active',key===mode);tab.setAttribute('aria-selected',String(key===mode));
 
@@ -360,26 +435,27 @@
 
         if(next==='manual')$('modeManual').click();
 
-        if(next==='live')$('modeLive').click();
+        if(next==='live')$($('followTelemetry').checked?'modeLive':'modeManual').click();
 
         if(next==='history'){
 
-          if(!window.ProfileTwin.snapshot().replay)$('modeManual').click();
+          if(!window.HandHistory.isReplaying())$('modeManual').click();
 
-          if(historyValid&&runFrame)historyFrame=runFrame;
+          if(historyValid&&runFrame){historyFrame=runFrame;window.HandHistory.show(runFrame.hand_snapshot,runFrame.saved_name);}
 
           else if(historyValid&&!$('savedSelect').disabled){$('savedSelect').onchange();previewReady()}
 
         }
 
-        layoutMode(next);estimateView.hidden=true;runView.hidden=true;
+        layoutMode(next);estimateView.hidden=true;runView.hidden=true;if(next==='history'&&runFrame)drawRun();
 
       }finally{switching=false}
 
     }
 
-    for(const key of ['manual','live','history'])$('data'+key[0].toUpperCase()+key.slice(1)).onclick=()=>selectMode(key);
+    for(const key of ['live','history'])$('data'+key[0].toUpperCase()+key.slice(1)).onclick=()=>selectMode(key);
 
+    $('followTelemetry').onchange=()=>selectMode('live');
     $('modeManual').addEventListener('click',()=>{if(!switching)layoutMode('manual')});
 
     $('modeLive').addEventListener('click',()=>{if(!switching)layoutMode('live')});
@@ -387,6 +463,50 @@
     $('savedSelect').addEventListener('change',()=>{try{layoutMode('history');estimateView.hidden=true;previewReady()}catch(e){invalidateHistory(e.message)}});
 
     function showHistory(payload,name){switching=true;try{window.HandHistory.show(payload,name);layoutMode('history');estimateView.hidden=true;previewReady()}finally{switching=false}}
+
+    let historySteps=[];
+    function timelineLabel(step){
+      const item=historySteps[step-1];if(!item)return;
+      const state=csvRows[item.row-1].state;
+      $('historyTimeLabel').textContent='Pose '+step+' / '+historySteps.length+' · row '+item.row+' / '+csvRows.length+(state?' · '+state:'');
+      $('historyTimeLabel').parentElement.title='History '+$('historyTimeLabel').textContent;
+      $('historyTime').setAttribute('aria-valuetext','Pose '+step+' of '+historySteps.length+', CSV row '+item.row);
+    }
+    function configureTimeline(){
+      const visible=mode==='history'&&!!csvRows;
+      $('historyTimeline').hidden=!visible;
+      historySteps=[];if(!visible)return;
+      const selected=IdentificationRuns.select(csvRows,$('historyRun').value).run;
+      // Collapse held poses by the six actual angles. Pressure/state changes
+      // do not add a pose; returning to a pose after moving remains navigable.
+      let previous=null;
+      for(let i=selected.start;i<=selected.end;i++){
+        const angles=IdentificationHistory.actualAngles(csvRows[i]);
+        if(!previous||angles.some((value,k)=>value!==previous[k]))historySteps.push({row:i+1,angles});
+        previous=angles;
+      }
+      $('historyTime').min=1;$('historyTime').max=historySteps.length;
+      const poseRow=runFrame?.hand_snapshot?.pose_source_row??selected.end+1;
+      let step=1;historySteps.forEach((item,i)=>{if(item.row<=poseRow)step=i+1});
+      $('historyTime').value=step;timelineLabel(step);
+    }
+    let scrubQueued=false,pendingHistoryStep=null;
+    function scrubHistory(){
+      if(!csvRows||!runFrame||mode!=='history')return;
+      const step=Number($('historyTime').value);
+      if(!historySteps[step-1])return;
+      pendingHistoryStep=historySteps[step-1];timelineLabel(step);
+      if(scrubQueued)return;scrubQueued=true;
+      const currentRun=runFrame;
+      requestAnimationFrame(()=>{
+        scrubQueued=false;if(!csvRows||runFrame!==currentRun||mode!=='history')return;
+        window.HandHistory.setPose(pendingHistoryStep.angles);
+      });
+    }
+    $('historyTime').oninput=scrubHistory;
+    for(const [id,delta] of [['timelinePrev',-1],['timelineNext',1]])$(id).onclick=()=>{
+      const slider=$('historyTime');slider.value=Math.max(Number(slider.min),Math.min(Number(slider.max),Number(slider.value)+delta));scrubHistory();
+    };
 
     function showCSV(){
 
@@ -398,9 +518,9 @@
 
       const packet=IdentificationHistory.telemetry(csvRows[row-1],JointPressure.regions);
 
-      switching=true;try{window.HandHistory.telemetry(packet,csvName+' Â· row '+row);layoutMode('history');previewReady()}finally{switching=false}
+      switching=true;try{window.HandHistory.telemetry(packet,csvName+' · row '+row);layoutMode('history');previewReady()}finally{switching=false}
 
-      $('historyRowInfo').textContent='Row '+row+' / '+csvRows.length+' Â· index '+packet.index+(packet.state?' Â· '+packet.state:'');
+      $('historyRowInfo').textContent='Row '+row+' / '+csvRows.length+' · index '+packet.index+(packet.state?' · '+packet.state:'');
 
       $('historyStatus').textContent='CSV uses the saved angles and recorded counts. Offsets and failed-read validity are not supplied.';
 
@@ -409,44 +529,11 @@
     }
 
     async function drawRun(){
-
       if(!runFrame)return;
-
-      estimateView.hidden=true;runView.hidden=false;
-
-      const points=runFrame.points,limits=runFrame.display_boundary_points||runFrame.boundary_points||[],visible=$('runShowLimits').checked;
-
-      const layer=(pp,color,size,shown)=>({type:'scatter3d',mode:'markers',visible:shown,x:pp.map(p=>p.x*1000),y:pp.map(p=>p.y*1000),z:pp.map(p=>p.z*1000),marker:{size,color:pp.map(p=>p.pressure||0),...(color?{rgb:pp.map(()=>color)}:{})}});
-
-      const traces=[layer(limits.filter(p=>p.kind==='inactive_taxel'),[.35,.75,1],3,visible),layer(limits.filter(p=>p.kind==='unknown_taxel'),[.58,.64,.72],2,visible),layer(limits.filter(p=>!['inactive_taxel','unknown_taxel'].includes(p.kind)),[.72,.54,1],3,visible),layer(points,null,5,true)];
-
-      // Run points are already in left_base_link metres; draw the base axes in mm.
-      const axes=['X','Y','Z'].map((name,axis)=>{
-        const vertices=[],origin=[0,0,0],end=[0,0,0];end[axis]=40;
-        vertices.push(origin,end);
-        for(const perpendicular of [0,1,2].filter(k=>k!==axis))for(const sign of [-1,1]){
-          const wing=end.slice();wing[axis]-=4;wing[perpendicular]=sign*2.5;vertices.push(end,wing);
-        }
-        const color=[[1,89/255,94/255],[73/255,209/255,125/255],[88/255,166/255,1]][axis];
-        return {name:'Global '+name,type:'scatter3d',mode:'lines',xray:true,visible:$('runShowAxes').checked,
-          x:vertices.map(p=>p[0]),y:vertices.map(p=>p[1]),z:vertices.map(p=>p[2]),marker:{rgb:vertices.map(()=>color)}};
-      });
-      traces.push(...axes);
-
-      if(!runPlot)runPlot=await HandRenderer.create('runCloudScene',traces);
-
-      else await HandRenderer.restyle(runPlot,{'x':traces.map(t=>t.x),'y':traces.map(t=>t.y),'z':traces.map(t=>t.z),'visible':traces.map(t=>t.visible),'marker.rgb':traces.map(t=>t.marker.rgb||null),'marker.color':traces.map(t=>t.marker.color)},traces.map((_,i)=>i));
-
-      const shown=[...(visible?[...points,...limits]:points.length?points:limits)];
-      if($('runShowAxes').checked)for(const trace of axes)trace.x.forEach((x,i)=>shown.push({x:x/1000,y:trace.y[i]/1000,z:trace.z[i]/1000}));
-      if(!shown.length)return;
-
-      const center=['x','y','z'].map(k=>shown.reduce((s,p)=>s+p[k]*1000,0)/shown.length);
-
-      const radius=Math.max(...shown.map(p=>Math.hypot(p.x*1000-center[0],p.y*1000-center[1],p.z*1000-center[2])));
-
-      runPlot._renderer.focus(center,[.5,1,.4],Math.max(30,radius*3));
-
+      estimateView.hidden=true;runView.hidden=true;
+      if(runFrame.hand_snapshot&&!window.HandHistory.isReplaying())
+        window.HandHistory.show(runFrame.hand_snapshot,runFrame.saved_name);
+      window.HandHistory.runOverlay(runFrame,$('runShowLimits').checked,$('runShowAxes').checked);
     }
 
     $('runShowLimits').onchange=()=>{if(runFrame)drawRun()};
@@ -460,11 +547,13 @@
 
       const a=frame.accumulation;
 
-      status.textContent=frame.points.length+' active contacts Â· '+(frame.boundary_points?.length||0)+' hand-space limits'+(a?' from '+(a.frames_reconstructed??a.frames_used)+' selected angle poses.':'.')+(frame.points.length?' Press Estimate to fit with these limits.':' No contacts: the hand sweep constrains space, but does not uniquely locate the object.');
+      status.textContent=frame.points.length+' active contacts · '+(frame.boundary_points?.length||0)+' hand-space limits'+(a?' from '+(a.frames_reconstructed??a.frames_used)+' selected angle poses.':'.')+(frame.points.length?' Press Estimate to fit with these limits.':' No contacts: the hand sweep constrains space, but does not uniquely locate the object.');
 
       $('historyStatus').textContent='Constraints include poses without activation. Inactive readings do not certify empty space beyond the local hand surface.';
 
-      updateReady();await drawRun();
+      updateReady();
+      if(frame.hand_snapshot){switching=true;try{window.HandHistory.show(frame.hand_snapshot,frame.saved_name)}finally{switching=false}}
+      configureTimeline();await drawRun();
 
     }
 
@@ -473,7 +562,7 @@
 
       if(!csvRows)return;
 
-      const version=++buildVersion;invalidateHistory('Building run contactsâ€¦');loading=true;updateReady();
+      const version=++buildVersion;invalidateHistory('Building run contacts…');loading=true;updateReady();
 
       try{
 
@@ -481,9 +570,9 @@
 
         const frame=await IdentificationRuns.buildAsync(selected.rows,window.HandHistory.context(),{
 
-          run_key:selected.run.key,name:csvName+' Â· '+selected.run.label+' Â· '+selected.run.first_index+'â€“'+selected.run.last_index,
+          run_key:selected.run.key,name:csvName+' · '+selected.run.label+' · '+selected.run.first_index+'–'+selected.run.last_index,
 
-          threshold:Number($('estimateThreshold').value),voxel_mm:Number($('runVoxel').value),thumb_only:$('runRegions').value==='thumb',
+          threshold:Number($('estimateThreshold').value),voxel_mm:Number($('runVoxel').value),thumb_limit_selection:'peak',thumb_only:$('runRegions').value==='thumb',
 
           cancelled:()=>version!==buildVersion,
 
@@ -505,7 +594,7 @@
 
       buildVersion++;loading=false;
 
-      const whole=$('csvScope').value==='run';$('runControls').hidden=!whole;$('rowControls').hidden=whole;
+      const whole=true;$('runControls').hidden=!whole;$('rowControls').hidden=whole;
 
       if(whole){invalidateHistory('Choose a run, then build its point cloud.');$('historyRowInfo').textContent='Runs remain separate; no registration across grasps is assumed.';}
 
@@ -513,9 +602,9 @@
 
     }
 
-    $('csvScope').onchange=chooseScope;$('buildRun').onclick=buildRun;
+    $('buildRun').onclick=buildRun;
 
-    for(const id of ['historyRun','runRegions','runVoxel'])$(id).onchange=()=>{buildVersion++;loading=false;invalidateHistory('Settings changed. Build the run point cloud again.');};
+    for(const id of ['historyRun','runRegions','runVoxel'])$(id).onchange=()=>buildRun();
 
     $('estimateThreshold').onchange=()=>{if(runFrame){buildVersion++;invalidateHistory('Threshold changed. Build the run point cloud again.');}};
 
@@ -535,7 +624,7 @@
 
       buildVersion++;
 
-      invalidateHistory('Loading '+file.name+'â€¦');
+      invalidateHistory('Loading '+file.name+'…');
 
       $('selectedHistory').textContent=file.name;
 
@@ -568,11 +657,11 @@
 
           if(!runs.length)throw Error('CSV contains no non-idle run samples.');
 
-          $('historyRun').replaceChildren(...runs.map(run=>{const o=document.createElement('option');o.value=run.key;o.textContent=run.label+' Â· '+run.first_index+'â€“'+run.last_index+' Â· '+run.count+' samples';return o}));
+          $('historyRun').replaceChildren(...runs.map(run=>{const o=document.createElement('option');o.value=run.key;o.textContent=run.label+' · '+run.first_index+'–'+run.last_index+' · '+run.count+' samples';return o}));
 
-          $('csvControls').hidden=false;$('historyRow').max=csvRows.length;$('historyRow').value=1;$('csvScope').value='run';chooseScope();
+          $('csvControls').hidden=false;$('historyRow').max=csvRows.length;$('historyRow').value=1;chooseScope();
 
-          if(runs.length===1)await buildRun();
+          await buildRun();
 
         }else{
 
@@ -594,7 +683,7 @@
 
     $('historyNext').onclick=()=>{if(csvRows&&Number($('historyRow').value)<csvRows.length){$('historyRow').value=Number($('historyRow').value)+1;$('historyRow').onchange()}};
 
-    $('showHand').onclick=()=>{estimateView.hidden=true;runView.hidden=true;if(mode==='history'&&historyValid){if(runFrame?.hand_snapshot)window.HandHistory.show(runFrame.hand_snapshot,'Run: last recorded probing pose');$('savedHand').click()}};
+    $('showHand').hidden=true;
 
     $('showCloud').onclick=()=>{if(mode==='history'&&historyValid){if(runFrame)drawRun();else{estimateView.hidden=true;$('savedCloud').click()}}};
 
@@ -602,11 +691,11 @@
 
     $('showFitReport').onclick=()=>{const report=estimateView.querySelector('iframe');if(report.dataset.reportUrl&&report.getAttribute('src')!==report.dataset.reportUrl)report.src=report.dataset.reportUrl;estimateView.hidden=false;runView.hidden=true};
 
-    const reasons={quick_placement:'Quick approximate placement from sampled sensor surfaces.',space_constraints_only:'Hand sweep constrains space; object pose is unanchored without contacts.',both_candidates_compatible:'Both shapes fit.',neither_candidate_compatible_within_search:'Neither shape fits sufficiently within this search.',insufficient_contacts:'Not enough valid contact pressure.',insufficient_spatial_coverage:'Contacts cover too little of the object.',calibration_unverified:'Geometry needs calibration before a confident label.',score_margin_too_small:'The score difference is too small.',alignment_search_unstable:'Alignment did not settle reliably.',invalid_or_stale_frame:'No valid synchronized snapshot.',one_candidate_clearly_more_consistent:'One shape fits clearly better.'};
+    const reasons={sensor_size_unresolved:'Both sensor sizes fit similarly; compare both models',known_placement_provisional:'Provisional fit near usual insertion; identity unconfirmed',quick_placement:'Quick approximate placement from sampled sensor surfaces.',space_constraints_only:'Hand sweep constrains space; object pose is unanchored without contacts.',both_candidates_compatible:'Both shapes fit.',neither_candidate_compatible_within_search:'Neither shape fits sufficiently within this search.',insufficient_contacts:'Not enough valid contact pressure.',insufficient_spatial_coverage:'Contacts cover too little of the object.',calibration_unverified:'Geometry needs calibration before a confident label.',score_margin_too_small:'The score difference is too small.',alignment_search_unstable:'Alignment did not settle reliably.',invalid_or_stale_frame:'No valid synchronized snapshot.',one_candidate_clearly_more_consistent:'One shape fits clearly better.'};
 
     function display(state){
 
-      if(state.estimator_revision!=='merged_adaptive_empirical_v12')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
+      if(state.estimator_revision!=='small_sensor_axial_start_v20')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
       paintFeedback(state);
       updatePreview(state);
 
@@ -619,10 +708,11 @@
         job=state.job_id;pollTimer=setTimeout(refresh,400);
 
       }else if(state.status==='complete'){
+        $('estimatePreview').hidden=true;$('estimateFollow').checked=false;
 
-        const result=state.result,errors=Object.entries(result.fits||{}).map(([name,fit])=>name.replace('SENSOR_','')+': '+(fit.compatible?(fit.quick_preview?'approximate':'valid'):'rejected')+' (max contact '+(fit.max_error_mm??fit.rmse_mm).toFixed(2)+' mm, hand '+(fit.hand_limit_max_mm??0).toFixed(2)+' mm)').join(' Â· ');
+        const result=state.result,errors=Object.entries(result.fits||{}).map(([name,fit])=>name.replace('SENSOR_','')+': '+(fit.placement_usable?'provisional':fit.compatible?(fit.quick_preview?'approximate':'valid'):'rejected')+' (max contact '+(fit.max_error_mm??fit.rmse_mm).toFixed(2)+' mm, hand '+(fit.hand_limit_max_mm??0).toFixed(2)+' mm)').join(' · ');
 
-        status.textContent='Estimate complete Â· '+(reasons[result.reason]||result.reason);
+        status.textContent='Estimate complete · '+(reasons[result.reason]||result.reason);
 
         estimateView.querySelector('iframe').dataset.reportUrl=base+state.report_url+'?job='+state.job_id;
 
@@ -656,14 +746,19 @@
 
         $('estimateCandidate').replaceChildren(...candidates.map(([name])=>{const option=document.createElement('option');option.textContent = (poseModels[['SENSOR_A','SENSOR_B'].indexOf(name)]?.name||name) +
 
-  (result.fits[name].compatible ? (result.fits[name].quick_preview ? ' Â· approximate placement' : ' Â· compatible') : ' Â· REJECTED fit');
+  (result.fits[name].placement_usable ? (result.fits[name].placement_quality==='partial_contact_support'?' · partial placement':' · provisional placement') : result.fits[name].compatible ? (result.fits[name].quick_preview ? ' · approximate placement' : ' · compatible') : ' · REJECTED fit');
         option.value=name;return option;}));
 
+        if(result.candidate_comparison){
+          const choice=document.createElement('option');choice.value='';choice.textContent='Choose model to compare · size unresolved';
+          $('estimateCandidate').prepend(choice);$('estimateCandidate').value='';
+        }
         $('estimateCandidateLabel').hidden=candidates.length<2;
 
         $('showEstimate').disabled=!candidates.length||!fittedFrame?.hand_snapshot;
 
-        if(candidates.length&&result.fits[candidates[0][0]].compatible&&fittedFrame?.hand_snapshot){status.textContent+=' Provisional pose shown in the frozen hand'+(fittedFrame.measurement_source==='csv_run'?' at the last contact sample.':'.');placeEstimate();}
+        if(result.candidate_comparison){window.HandEstimate?.clear();$('estimatePoseWarning').hidden=true;status.textContent+=' Sensor size unresolved. Choose either fitted candidate for comparison.';}
+        else if(candidates.length&&(result.fits[candidates[0][0]].compatible||result.fits[candidates[0][0]].placement_usable)&&fittedFrame?.hand_snapshot){status.textContent+=' Provisional pose shown in the frozen hand'+(fittedFrame.measurement_source==='csv_run'?' at the last contact sample.':'.');placeEstimate();}
         else if(candidates.length&&fittedFrame?.hand_snapshot){window.HandEstimate?.clear();$('estimatePoseWarning').hidden=true;status.textContent+=' No valid placement found. Rejected poses are available for explicit inspection with Estimate in hand.';}
 
         else{window.HandEstimate?.clear();status.textContent+=result.contacts===0&&result.hand_boundary_points>0?' Swept limits are retained for later contact or pose evidence.':candidates.length?' No reproducible hand pose; see Fit report.':' No valid STL pose; see Fit report for rejected candidates.';}
@@ -692,7 +787,7 @@
 
       const threshold=Number($('estimateThreshold').value),tolerance=Number($('estimateTolerance').value),handTolerance=Number($('estimateHandTolerance').value),pointSpacing=Number($('estimatePointSpacing').value);
 
-      if(!Number.isFinite(threshold)||threshold<0||threshold>4095||!Number.isFinite(tolerance)||tolerance<.1||tolerance>20||!Number.isFinite(handTolerance)||handTolerance<.1||handTolerance>20||!Number.isFinite(pointSpacing)||pointSpacing<0||pointSpacing>20){status.textContent='Check threshold (0â€“4095), tolerances (0.1â€“20 mm), and point spacing (0â€“20 mm).';return}
+      if(!Number.isFinite(threshold)||threshold<0||threshold>4095||!Number.isFinite(tolerance)||tolerance<.1||tolerance>20||!Number.isFinite(handTolerance)||handTolerance<.1||handTolerance>20||!Number.isFinite(pointSpacing)||pointSpacing<0||pointSpacing>20){status.textContent='Check threshold (0–4095), tolerances (0.1–20 mm), and point spacing (0–20 mm).';return}
 
       window.ProfileTwin.tick();const frame=mode==='history'?historyFrame:window.getIdentificationFrame();
 
@@ -704,10 +799,10 @@
 
       const count=frozen.points.filter(p=>typeof p.pressure==='number'&&p.pressure>threshold).length;
 
-      const label=mode==='history'?'History Â· '+(frame.saved_name||'capture'):mode==='manual'?'Manual pose':'Live hand';
+      const label=mode==='history'?'History · '+(frame.saved_name||'capture'):mode==='manual'?'Manual pose':'Live hand';
 
       paintFeedback({status:'running',started_at:Date.now()/1000,input_label:label,progress:{stage:'queued'}});
-      status.textContent='Captured '+frozen.points.length+' positions Â· '+count+' contact points Â· '+(frozen.boundary_points?.length||0)+' hand limits. Starting estimateâ€¦';running=true;updateReady();
+      status.textContent='Captured '+frozen.points.length+' positions · '+count+' contact points · '+(frozen.boundary_points?.length||0)+' hand limits. Starting estimate…';running=true;updateReady();
 
       try{
 
@@ -717,7 +812,7 @@
 
         if(!check.ok)throw Error(backend.error||'Could not reach estimator');
 
-        if(backend.estimator_revision!=='merged_adaptive_empirical_v12')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
+        if(backend.estimator_revision!=='small_sensor_axial_start_v20')throw Error('Restart the simulation launcher to load the updated estimator, then reload this page.');
 
         const response=await fetch(base+'/api/identification',{method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(15000),body:JSON.stringify({mode:'current',frame:frozen,threshold,tolerance_mm:tolerance,hand_tolerance_mm:handTolerance,point_spacing_mm:pointSpacing,quick_preview:$('estimateQuality').value==='quick',input_label:label})});
 
@@ -739,7 +834,7 @@
         if(mode==='history'||fileVersion!==loadVersion||version!==buildVersion)return;
         const frame=await IdentificationRuns.buildAsync(rows,window.HandHistory.context(),{
           run_key:id,name:'Received probe '+id,threshold:Number($('estimateThreshold').value),
-          voxel_mm:Number($('runVoxel').value),thumb_only:$('runRegions').value==='thumb',
+          voxel_mm:Number($('runVoxel').value),thumb_limit_selection:'peak',thumb_only:$('runRegions').value==='thumb',
           cancelled:()=>version!==buildVersion||mode==='history'||fileVersion!==loadVersion,
           progress:(n,total)=>{$('receivedRunStatus').textContent='Building received run: '+n+' / '+total+' poses';}
         });
@@ -748,10 +843,10 @@
           const groups=IdentificationRuns.groups(rows);
           $('historyRun').replaceChildren(...groups.map(run=>{const option=document.createElement('option');option.value=run.key;option.textContent=run.label;return option}));
           $('csvControls').hidden=false;$('runControls').hidden=false;$('rowControls').hidden=true;
-          $('historyRow').max=rows.length;$('historyRow').value=1;$('csvScope').value='run';
+          $('historyRow').max=rows.length;$('historyRow').value=1;
           frame.accumulation.received_capture=receivedMetadata.get(id)||{id};
           await acceptRun(frame);
-          $('receivedRunStatus').textContent='Captured run ready Â· '+rows.length+' received samples. Press Estimate when ready.';
+          $('receivedRunStatus').textContent='Captured run ready · '+rows.length+' received samples. Press Estimate when ready.';
         }
       }catch(error){$('receivedRunStatus').textContent='Capture could not be built: '+error.message;}
       finally{receiverLoading=false;if(version===buildVersion){loading=false;updateReady()}}
@@ -792,15 +887,15 @@
         if(select.dataset.signature!==signature){
           select.replaceChildren();
           for(const run of data.runs){const option=document.createElement('option');option.value=run.id;
-            option.textContent=run.id+' Â· '+run.status+' Â· '+run.samples+' samples';select.append(option);}
+            option.textContent=run.id+' · '+run.status+' · '+run.samples+' samples';select.append(option);}
           if(data.runs.some(r=>r.id===previous))select.value=previous;
           select.dataset.signature=signature;selectReceivedRun();
         }
         if(data.error)$('receivedRunStatus').textContent='Recording error: '+data.error;
-        else if(data.active)$('receivedRunStatus').textContent='Recording probe Â· '+data.active.samples+' received samples'+(data.active.missing_source_samples?' Â· '+data.active.missing_source_samples+' source samples missed':'');
+        else if(data.active)$('receivedRunStatus').textContent='Recording probe · '+data.active.samples+' received samples'+(data.active.missing_source_samples?' · '+data.active.missing_source_samples+' source samples missed':'');
         else if(!data.runs.length)$('receivedRunStatus').textContent='Waiting for probing telemetry with state, actual angles and tactile readings.';
         const latest=data.runs.find(r=>r.status==='complete'&&r.samples>0);
-        if(mode!=='history'&&latest&&lastAutoRun!==latest.id&&$('autoReceiveRun').checked&&!loading&&!running){
+        if(!restoringEstimate&&mode!=='history'&&latest&&lastAutoRun!==latest.id&&$('autoReceiveRun').checked&&!loading&&!running){
           lastAutoRun=latest.id;select.value=latest.id;selectReceivedRun();await openReceivedRun(latest.id);
           if(latest.missing_source_samples||latest.skipped_samples)$('receivedRunStatus').textContent+=' Incomplete input: '+latest.missing_source_samples+' source samples missed; '+latest.skipped_samples+' invalid samples skipped.';
         }
@@ -809,12 +904,24 @@
     }
     setInterval(pollReceivedRuns,1000);pollReceivedRuns();
 
-    selectMode('manual');
+    selectMode('live');
     // Recover feedback for a job that was started before a page reload.
     fetch(base+'/api/identification',{signal:AbortSignal.timeout(10000)})
       .then(async response=>{const state=await response.json();if(!response.ok)throw Error(state.error||'Estimator unavailable');
-        if(['running','complete','error'].includes(state.status)){job=state.job_id;display(state)}})
-      .catch(error=>paintFeedback({status:'connection_error',error:error.message}));
+        if(['running','complete','error'].includes(state.status)){
+          if(state.estimate_frame?.valid===true&&state.estimate_frame.hand_snapshot){
+            fittedFrame=JSON.parse(JSON.stringify(state.estimate_frame));
+            fittedThreshold=Number.isFinite(state.estimate_threshold)?state.estimate_threshold:200;
+            historyFrame=fittedFrame;historyValid=true;
+            if(fittedFrame.measurement_source==='csv_run')runFrame=fittedFrame;
+            $('selectedHistory').textContent=fittedFrame.saved_name||state.input_label||'Restored estimate snapshot';
+            window.HandHistory.show(fittedFrame.hand_snapshot,'Restored estimate snapshot');
+            layoutMode('history');
+          }
+          job=state.job_id;display(state);
+        }})
+      .catch(error=>paintFeedback({status:'connection_error',error:error.message}))
+      .finally(()=>{restoringEstimate=false;});
 
 
   }

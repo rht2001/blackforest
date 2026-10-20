@@ -17,7 +17,8 @@ def normalize_frame(frame):
                 points.append({'valid': False})
                 continue
             points.append(dict(id=point.get('id'), x=xyz[0], y=xyz[1], z=xyz[2],
-                               pressure=point.get('value'), **({'normal': point['normal']} if point.get('normal') is not None else {})))
+                               pressure=point.get('value'),
+                               **{k: point[k] for k in ('region', 'link', 'taxel_id', 'source_index', 'normal') if k in point}))
         return {**frame, 'units': 'm', 'points': points}
     return frame
 
@@ -34,6 +35,7 @@ def identify_frame(frame, models, *, tolerance_mm=3., hand_tolerance_mm=3., poin
         pressure_threshold=pressure_threshold, quick_preview=quick_preview,
         calibrated=calibrated and frame.get('geometry_status') == 'CALIBRATED'),
         boundary_points=frame.get('boundary_points', []), progress=progress, coordinate_frame=frame['frame'],
+        hand_snapshot=frame.get('hand_snapshot'),
         thumb_hint=thumb_closure_hint(frame, pressure_threshold))
 
 

@@ -73,9 +73,9 @@ const HandRenderer=(()=>{
  function program(gl){
   const vs=`#version 300 es
   precision highp float;
-  in vec3 position;in vec3 vertexColor;in vec3 normal;uniform mat4 vp;uniform float pointSize;
+  in vec3 position;in vec3 vertexColor;in vec3 normal;uniform mat4 vp;uniform mat3 normalMatrix;uniform float pointSize;
   out vec3 world;out vec3 tint;out vec3 smoothNormal;
-  void main(){world=position;tint=vertexColor;smoothNormal=normal;gl_Position=vp*vec4(position,1.);gl_PointSize=pointSize;}`;
+  void main(){world=position;tint=vertexColor;smoothNormal=normalMatrix*normal;gl_Position=vp*vec4(position,1.);gl_PointSize=pointSize;}`;
   const fs=`#version 300 es
   precision highp float;
   in vec3 world;in vec3 tint;in vec3 smoothNormal;uniform int kind;out vec4 result;
@@ -90,23 +90,25 @@ const HandRenderer=(()=>{
   const plot=document.getElementById(id);plot.data=data;
   const canvas=document.createElement('canvas');canvas.style.cssText='width:100%;height:100%;display:block;touch-action:none';
   canvas.setAttribute('aria-label','3D hand: drag to rotate, mouse wheel to zoom');plot.appendChild(canvas);
-  const gl=canvas.getContext('webgl2',{antialias:true,alpha:false,preserveDrawingBuffer:true});
+  const gl=canvas.getContext('webgl2',{antialias:false,alpha:false,preserveDrawingBuffer:false,powerPreference:'high-performance'});
   if(!gl){plot.textContent='WebGL2 is unavailable. Enable hardware acceleration in your browser.';throw Error('WebGL2 unavailable')}
   const p=program(gl);gl.useProgram(p);
   const locations={position:gl.getAttribLocation(p,'position'),color:gl.getAttribLocation(p,'vertexColor'),normal:gl.getAttribLocation(p,'normal'),
-   vp:gl.getUniformLocation(p,'vp'),kind:gl.getUniformLocation(p,'kind'),size:gl.getUniformLocation(p,'pointSize')};
+   normalMatrix:gl.getUniformLocation(p,'normalMatrix'),vp:gl.getUniformLocation(p,'vp'),kind:gl.getUniformLocation(p,'kind'),size:gl.getUniformLocation(p,'pointSize')};
   gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.clearColor(16/255,20/255,25/255,1);
   let yaw=Math.atan2(.85,2.2),pitch=.32,zoom=1,dirty=true,frame=false,lost=false;
-  const center=[0,15,130],resources=[];
+  const center=[0,15,130],resources=[],identityNormal=new Float32Array([1,0,0,0,1,0,0,0,1]);
   let viewProjection=null,pickHandler=null,cameraRight=null,cameraUp=null;
   function upload(trace,index){
    let r=resources[index];if(!r){r=resources[index]={vao:gl.createVertexArray(),positions:gl.createBuffer(),colors:gl.createBuffer(),normals:gl.createBuffer(),indices:gl.createBuffer()};}
-   const n=trace.x.length;const vertices=new Float32Array(n*3),colors=new Float32Array(n*3);
+   const n=trace.x.length;const vertices=r.vertexArray?.length===n*3?r.vertexArray:(r.vertexArray=new Float32Array(n*3));
+   const colorKey=trace.type==='mesh3d'?trace.color:null,refreshColors=trace.type!=='mesh3d'||r.colorKey!==colorKey||r.colorCount!==n;
+   const colors=refreshColors?new Float32Array(n*3):null;
    const base=color(trace.color||(trace.line?.color)||'#9cacc0');
-   for(let j=0;j<n;j++){vertices.set([trace.x[j],trace.y[j],trace.z[j]],j*3);colors.set(trace.vertex_rgb?.[j]||trace.marker?.rgb?.[j]||(trace.marker?heat(trace.marker.color?.[j]||0):base),j*3)}
+   for(let j=0;j<n;j++){const o=j*3;vertices[o]=trace.x[j];vertices[o+1]=trace.y[j];vertices[o+2]=trace.z[j];if(colors){const c=trace.vertex_rgb?.[j]||trace.marker?.rgb?.[j]||(trace.marker?heat(trace.marker.color?.[j]||0):base);colors[o]=c[0];colors[o+1]=c[1];colors[o+2]=c[2]}}
    gl.bindVertexArray(r.vao);gl.bindBuffer(gl.ARRAY_BUFFER,r.positions);gl.bufferData(gl.ARRAY_BUFFER,vertices,gl.DYNAMIC_DRAW);
    gl.enableVertexAttribArray(locations.position);gl.vertexAttribPointer(locations.position,3,gl.FLOAT,false,0,0);
-   gl.bindBuffer(gl.ARRAY_BUFFER,r.colors);gl.bufferData(gl.ARRAY_BUFFER,colors,gl.DYNAMIC_DRAW);
+   gl.bindBuffer(gl.ARRAY_BUFFER,r.colors);if(refreshColors){gl.bufferData(gl.ARRAY_BUFFER,colors,gl.DYNAMIC_DRAW);r.colorKey=colorKey;r.colorCount=n;}
    gl.enableVertexAttribArray(locations.color);gl.vertexAttribPointer(locations.color,3,gl.FLOAT,false,0,0);
    if(trace.type==='mesh3d'){
     // Weld CAD face seams for continuous lighting; reuse the topology while posing.
@@ -114,13 +116,14 @@ const HandRenderer=(()=>{
     const normals=new Float32Array(n*3);
     if(!r.localNormals){
     const keys=new Map();r.weld=new Uint32Array(n);for(let j=0;j<n;j++){const key=[trace.x[j],trace.y[j],trace.z[j]].map(v=>Math.round(v*10000)).join(',');if(!keys.has(key))keys.set(key,keys.size);r.weld[j]=keys.get(key)}r.weldCount=keys.size;
-    let area=0;for(let t=0;t<trace.i.length;t++){const a=trace.i[t],b=trace.j[t],c=trace.k[t],p=j=>[trace.x[j],trace.y[j],trace.z[j]],pa=p(a),crossed=cross(p(b).map((v,k)=>v-pa[k]),p(c).map((v,k)=>v-pa[k])),size=dot(crossed,crossed);if(size>area){area=size;r.frameVertices=[a,b,c]}}
+    let area=0;for(let t=0;t<trace.i.length;t++){const a=trace.i[t],b=trace.j[t],c=trace.k[t],ux=trace.x[b]-trace.x[a],uy=trace.y[b]-trace.y[a],uz=trace.z[b]-trace.z[a],vx=trace.x[c]-trace.x[a],vy=trace.y[c]-trace.y[a],vz=trace.z[c]-trace.z[a],nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx,size=nx*nx+ny*ny+nz*nz;if(size>area){area=size;r.frameVertices=[a,b,c]}}
     const sums=new Float32Array(r.weldCount*3);
     for(let t=0;t<trace.i.length;t++){const a=trace.i[t],b=trace.j[t],c=trace.k[t];const ux=trace.x[b]-trace.x[a],uy=trace.y[b]-trace.y[a],uz=trace.z[b]-trace.z[a],vx=trace.x[c]-trace.x[a],vy=trace.y[c]-trace.y[a],vz=trace.z[c]-trace.z[a];const nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;for(const j of [a,b,c]){const o=r.weld[j]*3;sums[o]+=nx;sums[o+1]+=ny;sums[o+2]+=nz;}}
     for(let j=0;j<n;j++){const o=r.weld[j]*3,d=Math.hypot(sums[o],sums[o+1],sums[o+2])||1;normals[j*3]=sums[o]/d;normals[j*3+1]=sums[o+1]/d;normals[j*3+2]=sums[o+2]/d;}
     const basis=frame();r.localNormals=new Float32Array(n*3);for(let j=0;j<n;j++){const normal=normals.subarray(j*3,j*3+3);for(let k=0;k<3;k++)r.localNormals[j*3+k]=dot(normal,basis[k])}
-    }else{const basis=frame(),local=r.localNormals;for(let j=0;j<n;j++)for(let k=0;k<3;k++)normals[j*3+k]=basis[0][k]*local[j*3]+basis[1][k]*local[j*3+1]+basis[2][k]*local[j*3+2];}
-    gl.bindBuffer(gl.ARRAY_BUFFER,r.normals);gl.bufferData(gl.ARRAY_BUFFER,normals,gl.DYNAMIC_DRAW);gl.enableVertexAttribArray(locations.normal);gl.vertexAttribPointer(locations.normal,3,gl.FLOAT,false,0,0);
+    }
+    r.normalMatrix=new Float32Array(frame().flat());
+    gl.bindBuffer(gl.ARRAY_BUFFER,r.normals);if(!r.normalsUploaded){gl.bufferData(gl.ARRAY_BUFFER,r.localNormals,gl.STATIC_DRAW);r.normalsUploaded=true;}gl.enableVertexAttribArray(locations.normal);gl.vertexAttribPointer(locations.normal,3,gl.FLOAT,false,0,0);
     if(!r.count){const elements=new Uint32Array(trace.i.length*3);for(let j=0;j<trace.i.length;j++)elements.set([trace.i[j],trace.j[j],trace.k[j]],j*3);
      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,r.indices);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,elements,gl.STATIC_DRAW);r.count=elements.length;}
     r.kind=0;
@@ -139,7 +142,7 @@ const HandRenderer=(()=>{
    const view=new Float32Array([x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,eye),-dot(y,eye),-dot(z,eye),1]);
    const near=1,far=3000,projection=new Float32Array([f/aspect,0,0,0,0,f,0,0,0,0,(far+near)/(near-far),-1,0,0,2*far*near/(near-far),0]);
    viewProjection=multiply(projection,view);gl.uniformMatrix4fv(locations.vp,false,viewProjection);
-   resources.forEach((r,i)=>{if(data[i].visible===false)return;if(data[i].xray)gl.disable(gl.DEPTH_TEST);else gl.enable(gl.DEPTH_TEST);gl.bindVertexArray(r.vao);gl.uniform1i(locations.kind,r.kind);gl.uniform1f(locations.size,r.kind===1?(data[i].marker?.size||3.4)*dpr:1);
+   resources.forEach((r,i)=>{if(data[i].visible===false)return;if(data[i].xray)gl.disable(gl.DEPTH_TEST);else gl.enable(gl.DEPTH_TEST);gl.bindVertexArray(r.vao);gl.uniformMatrix3fv(locations.normalMatrix,false,r.normalMatrix||identityNormal);gl.uniform1i(locations.kind,r.kind);gl.uniform1f(locations.size,r.kind===1?(data[i].marker?.size||3.4)*dpr:1);
     if(r.kind===0)gl.drawElements(gl.TRIANGLES,r.count,gl.UNSIGNED_INT,0);else gl.drawArrays(r.kind===1?gl.POINTS:gl.LINES,0,r.count);});
   }
   function request(){dirty=true;if(!frame){frame=true;requestAnimationFrame(draw)}}
@@ -169,8 +172,8 @@ const HandRenderer=(()=>{
   indices.forEach((id,k)=>{const t=plot.data[id];for(const [key,list] of Object.entries(values)){
    const value=list[k];if(value===undefined)continue;
    if(key.startsWith('marker.')){t.marker??={};t.marker[key.slice(7)]=value;}else t[key]=value;
-  }plot._renderer.upload(t,id);});
-  plot._renderer.request();plot._renderer.draw();
+  }if(Object.keys(values).some(key=>['x','y','z','color','vertex_rgb','type','mode','i','j','k'].includes(key)||key.startsWith('marker.')||key==='marker'))plot._renderer.upload(t,id);});
+  plot._renderer.request();
  }
  async function relayout(plot){plot._renderer.reset()}
  return {create,restyle,relayout};
@@ -494,7 +497,23 @@ function meshPoints(a,solution){const m=K.mul(solution.frames[a.link],K.rigid(a.
 const displayRotation=K.rigid([0,0,0],[0,-Math.PI/2,0]),bounds=[[Infinity,Infinity,Infinity],[-Infinity,-Infinity,-Infinity]],open=K.solve(profile,Array(6).fill(1000),K.defaults(profile));
 for(const a of assets)for(const p of meshPoints(a,open)){const q=K.point(displayRotation,p);q.forEach((x,i)=>{bounds[0][i]=Math.min(bounds[0][i],x);bounds[1][i]=Math.max(bounds[1][i],x)})}
 const center=bounds[0].map((x,i)=>(x+bounds[1][i])/2);
-function pose(values){view.solution=K.solve(profile,values,calibration);view.raw=values.slice();assets.forEach((a,index)=>meshPoints(a,view.solution).forEach((p,j)=>{const q=K.point(displayRotation,p);for(let k=0;k<3;k++)traces[index][['x','y','z'][k]][j]=(q[k]-center[k])*1000+[0,15,130][k]}))}
+const meshOrigins=assets.map(a=>K.rigid(a.origin_xyz_m,a.origin_rpy_rad)),meshFrames=[];
+function updateMeshes(solution){
+ const changed=[];
+ assets.forEach((a,index)=>{
+  const frame=solution.frames[a.link],old=meshFrames[index];
+  if(old&&frame.every((v,k)=>Math.abs(v-old[k])<1e-12))return;
+  meshFrames[index]=frame.slice();changed.push(index);
+  const m=K.mul(displayRotation,K.mul(frame,meshOrigins[index])),v=a.vertices,t=traces[index],scale=a.scale;
+  for(let j=0,i=0;i<v.length;i+=3,j++){
+   const x=v[i]*scale[0],y=v[i+1]*scale[1],z=v[i+2]*scale[2];
+   t.x[j]=(m[0]*x+m[1]*y+m[2]*z+m[3]-center[0])*1000;
+   t.y[j]=(m[4]*x+m[5]*y+m[6]*z+m[7]-center[1])*1000+15;
+   t.z[j]=(m[8]*x+m[9]*y+m[10]*z+m[11]-center[2])*1000+130;
+  }
+ });return changed;
+}
+function pose(values){view.solution=K.solve(profile,values,calibration);view.raw=values.slice();return updateMeshes(view.solution)}
 let pressures=P.sample(null,false),signature=null,overlaySignature=null,renderedCells=[],lastInput=null,taxelPositions=[],poseSignature=null,positionSignature=null,publishedSignature=null,publishing=false,lastPublished=0;
 const rgb=hex=>[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255);
 function present(point){return K.point(displayRotation,point).map((x,i)=>(x-center[i])*1000+[0,15,130][i])}
@@ -506,18 +525,18 @@ function overlay(input){
  else renderedCells.forEach((cell,i)=>{taxelPositions[i].pressure=cell.value});
  positionSignature=overlaySignature;renderBoundaries();
  const dots=traces[pointIndex],centres=traces[centroidIndex];dots.x=[];dots.y=[];dots.z=[];dots.marker.rgb=[];centres.x=[];centres.y=[];centres.z=[];centres.marker.rgb=[];
- for(const cell of renderedCells){const p=present(cell.position_world_m.map((v,i)=>v+.00035*cell.normal_world[i]));['x','y','z'].forEach((axis,i)=>dots[axis].push(p[i]));dots.marker.rgb.push(rgb(cell.value===null?P.missing:P.color(cell.value)))}
+ for(const cell of renderedCells){const p=present(cell.position_world_m.map((v,i)=>v+.00035*cell.normal_world[i]));['x','y','z'].forEach((axis,i)=>dots[axis].push(p[i]));dots.marker.rgb.push(rgb(cell.active?'#ff766b':'#8dd3ee'))}
  const cloud=currentCloud();if($('showContactCentres').checked)for(const c of cloud.centroids){const p=present(K.point(view.solution.frames.left_base_link,c.position_m.map((v,i)=>v+.0008*c.normal[i])));['x','y','z'].forEach((axis,i)=>centres[axis].push(p[i]));centres.marker.rgb.push(rgb('#247dff'))}
  $('contactSummary').textContent=cloud.valid?cloud.points.length+' activated points · '+cloud.centroids.length+' contact centres':'Contact export awaits fresh, synchronized angles and pressure';
 }
 function update(){if(!view||replay)return;
  const desired=live?(!disconnected&&K.freshActual(packet)?packet.angles_act:view.raw):raw;
- const next=JSON.stringify(desired),moved=next!==signature;if(moved){signature=next;pose(desired)}
+ const next=JSON.stringify(desired),moved=next!==signature;let meshChanged=[];if(moved){signature=next;meshChanged=pose(desired)}
  lastInput=demo?{...P.demo(performance.now()/1000),angles_act:view.raw.slice(),received_at:Date.now()/1000,field_received_at:{angles_act:Date.now()/1000,tactile_regions:Date.now()/1000}}:packet;
  pressures=P.sample(lastInput,demo||(live&&!disconnected));
  const nextOverlay=JSON.stringify([desired,Object.values(pressures).map(p=>p.values),$('activationThreshold').value,$('showContactCentres').checked,T.synchronized(lastInput,Date.now()/1000),live,disconnected,demo]);
  const overlayChanged=nextOverlay!==overlaySignature;if(overlayChanged){overlaySignature=nextOverlay;overlay(lastInput)}
- if(view.ready&&(moved||overlayChanged)){const indices=moved?[...Array.from({length:centroidIndex+1},(_,i)=>i),boundaryIndex]:[pointIndex,centroidIndex,boundaryIndex];HandRenderer.restyle(view.plot,{x:indices.map(i=>traces[i].x),y:indices.map(i=>traces[i].y),z:indices.map(i=>traces[i].z)},indices)}
+ if(view.ready&&(moved||overlayChanged)){const indices=[...meshChanged,pointIndex,centroidIndex,boundaryIndex];HandRenderer.restyle(view.plot,{x:indices.map(i=>traces[i].x),y:indices.map(i=>traces[i].y),z:indices.map(i=>traces[i].z)},indices)}
  const valid=Object.values(pressures).filter(p=>p.peak!==null).length;
  $('pressureStatus').textContent=(demo?'Demo pressure · ':live?'Live pressure · ':'Preview · ')+valid+'/17 fields · '+renderedCells.filter(c=>c.value!==null).length+'/1,062 readings';
  for(const r of P.regions){const p=pressures[r.key],el=$('pressure_'+r.key);el.textContent=r.key.replaceAll('_',' ')+': '+(p.peak===null?'—':p.peak);el.style.borderLeftColor=p.color}
@@ -553,6 +572,7 @@ $('activationThreshold').oninput=update;$('showContactCentres').onchange=()=>rep
 $('exportContactCloud').onclick=()=>{const cloud=currentCloud(),url=URL.createObjectURL(new Blob([JSON.stringify(cloud,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='hand_contact_cloud.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
 function fit(){const low=[Infinity,Infinity,Infinity],high=[-Infinity,-Infinity,-Infinity];for(const trace of traces){if(trace.visible===false)continue;for(let i=0;i<trace.x.length;i++)for(let k=0;k<3;k++){const value=trace[['x','y','z'][k]][i];low[k]=Math.min(low[k],value);high[k]=Math.max(high[k],value)}}if(!Number.isFinite(low[0]))return;const target=low.map((v,k)=>(v+high[k])/2),distance=Math.max(replay?.mode==='cloud'?80:440,.55*Math.hypot(...high.map((v,k)=>v-low[k]))/Math.sin(Math.PI/7.5));view?.plot._renderer?.focus(target,[.2,-1,.25],distance)}
 // Saved files are isolated from live sampling, taxel sharing, and browser calibration.
+let handModelVisible=true;
 const savedEntries=[];
 function savedControls(active){
  for(const key of ['activationThreshold','quickOpen','quickClose','animateDemo','openAll','closeAll',...Array.from({length:6},(_,i)=>'s'+i),...Array.from({length:6},(_,i)=>'n'+i)]){if($(key))$(key).disabled=active||((key[0]==='s'||key[0]==='n'||key==='openAll'||key==='closeAll')&&live)}
@@ -560,14 +580,14 @@ function savedControls(active){
  $('savedReturn').hidden=!active;
 }
 function savedVisibility(){
- traces[pointIndex].xray=!!replay;traces[centroidIndex].xray=!!replay;
+ traces[pointIndex].xray=true;traces[centroidIndex].xray=!!replay;
  traces.forEach((trace,i)=>{
   if(estimateIndices.includes(i)||i===estimatePointIndex){if(!estimateActive)trace.visible=false;}
   else if(i===boundaryIndex)trace.visible=$('showHandBoundaries').checked&&(!replay||replay.entry.handAvailable);
-  else if(i===inactiveIndex)trace.visible=!!replay&&replay.mode==='cloud'&&replay.entry.handAvailable&&$('showOtherTaxels').checked;
+  else if(i===inactiveIndex)trace.visible=!!replay&&replay.entry.handAvailable;
   else if(coordinateIndices.includes(i))trace.visible=!!replay&&$('showSavedAxes').checked;
   else if(i>=objectStart&&i<objectEnd)trace.visible=!replay&&objects.snapshot()[i-objectStart].visible;
-  else trace.visible=!replay||i>=pointIndex||replay.mode==='hand';
+  else trace.visible=i<pointIndex?handModelVisible:true;
  });
 }
 function otherTaxels(entry){
@@ -590,17 +610,17 @@ function coordinateFrame(append){
 }
 function renderSaved(){
  if(!replay||!view)return;
- const {entry,mode}=replay,cloud=entry.cloud;
- if(entry.solution){view.solution=entry.solution;view.raw=cloud.angles_act.slice();assets.forEach((a,index)=>meshPoints(a,view.solution).forEach((p,j)=>{const q=present(p);for(let k=0;k<3;k++)traces[index][['x','y','z'][k]][j]=q[k]}))}
+ const {entry,mode}=replay,cloud=entry.cloud;let meshChanged=[];
+ if(entry.solution){view.solution=entry.solution;view.raw=cloud.angles_act.slice();meshChanged=updateMeshes(view.solution)}
  else {view.solution=K.solve(profile,Array(6).fill(1000),K.defaults(profile));view.raw=Array(6).fill(1000)}
  renderBoundaries();savedVisibility();
  const base=view.solution.frames.left_base_link,dots=traces[pointIndex],centres=traces[centroidIndex];
  for(const trace of [dots,centres]){trace.x=[];trace.y=[];trace.z=[];trace.marker.rgb=[]}
  const append=(trace,p,color)=>{const q=present(K.point(base,p));['x','y','z'].forEach((axis,i)=>trace[axis].push(q[i]));trace.marker.rgb.push(rgb(color))};
- for(const point of cloud.points)append(dots,point.position_m,P.color(point.value));
+ for(const point of cloud.points)append(dots,point.position_m,'#ff766b');
  const others=otherTaxels(entry),inactive=traces[inactiveIndex];
  inactive.x=[];inactive.y=[];inactive.z=[];inactive.marker.rgb=[];
- for(const point of others)append(inactive,point.position_m,'#647b8d');
+ for(const point of others)append(inactive,point.position_m,'#8dd3ee');
  coordinateFrame(append);
  $('showOtherTaxels').disabled=mode!=='cloud'||!entry.handAvailable;
  $('showSavedAxes').disabled=false;
@@ -608,7 +628,7 @@ function renderSaved(){
  if($('showContactCentres').checked)for(const c of cloud.centroids||[])append(centres,c.position_m,'#247dff');
  renderedCells=cloud.points.map(p=>({...p,value:p.value,position_world_m:K.point(base,p.position_m)}));
  pressures=P.sample(null,false);
- if(view.ready){const indices=traces.map((_,i)=>i);HandRenderer.restyle(view.plot,{x:traces.map(t=>t.x),y:traces.map(t=>t.y),z:traces.map(t=>t.z),visible:traces.map(t=>t.visible)},indices)}
+ if(view.ready){const indices=[...meshChanged,pointIndex,centroidIndex,inactiveIndex,boundaryIndex,...coordinateIndices];HandRenderer.restyle(view.plot,{x:indices.map(i=>traces[i].x),y:indices.map(i=>traces[i].y),z:indices.map(i=>traces[i].z),visible:indices.map(i=>traces[i].visible)},indices)}
  $('savedHand').classList.toggle('active',mode==='hand');$('savedCloud').classList.toggle('active',mode==='cloud');
  $('savedHand').disabled=!entry.handAvailable;$('savedCloud').disabled=false;
  const date=typeof cloud.received_at==='number'&&Number.isFinite(cloud.received_at)?new Date(cloud.received_at*1000).toLocaleString():'Unknown capture time';
@@ -622,11 +642,11 @@ function renderSaved(){
  $('profileAngles0').textContent=entry.handReason||'Saved angles and calibration · '+cloud.angles_act.join(' / ');
  for(const r of P.regions){const values=cloud.points.filter(p=>p.region===r.key).map(p=>p.value),el=$('pressure_'+r.key);el.textContent=r.key.replaceAll('_',' ')+': '+(values.length?Math.max(...values)+' peak ('+values.length+' saved contacts)':'not stored');el.style.borderLeftColor=values.length?P.color(Math.max(...values)):P.missing}
 }
-function openSaved(entry,mode){
+function openSaved(entry,mode,options={}){
  if(!entry)return;
  if(!replay)$('modeManual').click();
  replay={entry,mode:mode==='hand'&&entry.handAvailable?'hand':'cloud'};
- savedControls(true);$('modeManual').classList.remove('active');$('modeLive').classList.remove('active');renderSaved();fit();
+ savedControls(true);$('modeManual').classList.remove('active');$('modeLive').classList.remove('active');renderSaved();if(!options.preserveCamera)fit();
 }
 function leaveSaved(){
  window.HandEstimate?.clear();
@@ -638,8 +658,36 @@ function leaveSaved(){
  $('savedInfo').textContent='Saved captures remain in the list. Select one to view it again.';
 }
 window.HandHistory={
+ isReplaying(){return !!replay},
+ setPose(values){
+  if(!replay)throw Error('Load history before changing its pose.');
+  if(values.every((v,k)=>v===view.raw[k]))return;
+  const changed=pose(values);replay.entry.solution=view.solution;
+  replay.entry.cloud.angles_act=values.slice();replay.entry.cloud.joint_angles_rad={...view.solution.q};
+  if(view.ready&&changed.length)HandRenderer.restyle(view.plot,{x:changed.map(i=>traces[i].x),y:changed.map(i=>traces[i].y),z:changed.map(i=>traces[i].z)},changed);
+ },
+
+ setHandVisible(visible){handModelVisible=!!visible;for(let i=0;i<pointIndex;i++)traces[i].visible=handModelVisible;
+  if(view.ready)HandRenderer.restyle(view.plot,{visible:traces.map(t=>t.visible)},traces.map((_,i)=>i));},
+ runOverlay(frame,showLimits=true,showAxes=true){
+  const base=view.solution.frames.left_base_link;
+  const set=(index,points,color)=>{const trace=traces[index];trace.x=[];trace.y=[];trace.z=[];trace.marker.rgb=[];
+   for(const p of points){const q=present(K.point(base,[p.x,p.y,p.z]));['x','y','z'].forEach((axis,k)=>trace[axis].push(q[k]));trace.marker.rgb.push(rgb(typeof color==='function'?color(p):color))}
+   trace.visible=true;trace.xray=true;
+  };
+  set(pointIndex,frame.points,'#ff766b');
+  const limits=frame.display_boundary_points||frame.boundary_points||[];
+  set(inactiveIndex,showLimits?limits.filter(p=>p.kind!=='hand_boundary'):[],'#8dd3ee');
+  set(boundaryIndex,showLimits?limits.filter(p=>p.kind==='hand_boundary'):[],'#b88aff');
+  traces[centroidIndex].visible=false;
+  const append=(trace,p,color)=>{const q=present(K.point(base,p));['x','y','z'].forEach((axis,k)=>trace[axis].push(q[k]));trace.marker.rgb.push(rgb(color))};
+  coordinateFrame(append);for(const i of coordinateIndices)traces[i].visible=showAxes;
+  for(let i=0;i<pointIndex;i++)traces[i].visible=handModelVisible;
+  const indices=[pointIndex,inactiveIndex,boundaryIndex,centroidIndex,...coordinateIndices];
+  if(view.ready)HandRenderer.restyle(view.plot,{x:indices.map(i=>traces[i].x),y:indices.map(i=>traces[i].y),z:indices.map(i=>traces[i].z),visible:indices.map(i=>traces[i].visible)},indices);
+ },
  context(){return K.clone({id,profile,geometry,calibration,boundaries:boundaryData})},
- show(payload,name){
+ show(payload,name,options={}){
   const entry=SavedContacts.prepare(payload,{id,profile,referenceHash:data.reference_sha256,geometryHash:geometry.geometry_sha256});
   if(entry.cloud.identification_points!==undefined){
    const points=entry.cloud.identification_points,seen=new Set(),allowed=new Set(geometry.regions.flatMap(r=>r.cells.map(c=>r.key+':'+c.wire_index)));
@@ -652,9 +700,9 @@ window.HandHistory={
   entry.name=name;entry.onePage=true;
   const previous=savedEntries.findIndex(e=>e.onePage);if(previous>=0)savedEntries[previous]=entry;else savedEntries.push(entry);
   $('savedSelect').replaceChildren(...savedEntries.map((e,i)=>{const option=document.createElement('option');option.value=i;option.textContent=e.name;return option}));
-  $('savedSelect').disabled=false;$('savedSelect').value=savedEntries.indexOf(entry);openSaved(entry,'hand');
+  $('savedSelect').disabled=false;$('savedSelect').value=savedEntries.indexOf(entry);openSaved(entry,'hand',options);
  },
- telemetry(row,name){
+ telemetry(row,name,options={}){
   const solution=K.solve(profile,row.angles_act,calibration),now=Date.now()/1000;
   const input={angles_act:row.angles_act,tactile_regions:row.tactile_regions,simulated:false,
    received_at:now,field_received_at:{angles_act:now,tactile_regions:now}};
@@ -667,7 +715,7 @@ window.HandHistory={
   cloud.received_at=null;cloud.field_received_at={};cloud.timestamp_basis='CSV row; hardware capture timestamp unavailable';
   cloud.history_source='csv';cloud.history_index=row.index;cloud.history_state=row.state;
   cloud.pressure_basis='Recorded CSV counts; pressure offsets and failed-read validity are not supplied';
-  this.show(cloud,name);
+  this.show(cloud,name,options);
  },
  points(){
   if(!replay)return taxelPositions.map(p=>({...p}));
@@ -744,11 +792,13 @@ window.HandEstimate={
   const dots=traces[estimatePointIndex];dots.x=[];dots.y=[];dots.z=[];dots.marker.rgb=[];
   for(const p of frame.points){
    const scale=frame.units==='mm'?.001:1,q=present(K.point(base,[p.x,p.y,p.z].map(v=>v*scale)));
-   ['x','y','z'].forEach((axis,k)=>dots[axis].push(q[k]));dots.marker.rgb.push(rgb(typeof p.pressure==='number'&&p.pressure>threshold?'#ff4141':'#8496a6'));
+   ['x','y','z'].forEach((axis,k)=>dots[axis].push(q[k]));dots.marker.rgb.push(rgb(typeof p.pressure==='number'&&p.pressure>threshold?'#ff766b':'#8dd3ee'));
   }
-  estimateActive=true;savedVisibility();trace.visible=true;dots.visible=true;traces[pointIndex].visible=false;
+  estimateActive=true;savedVisibility();trace.visible=true;dots.visible=true;
+  if(frame.measurement_source==='csv_run')window.HandHistory.runOverlay(frame,$('runShowLimits')?.checked!==false,$('runShowAxes')?.checked!==false);
+  traces[pointIndex].visible=false;
   for(let i=objectStart;i<objectEnd;i++)traces[i].visible=false;
-  const slots=traces.map((_,i)=>i);HandRenderer.restyle(view.plot,{x:traces.map(t=>t.x),y:traces.map(t=>t.y),z:traces.map(t=>t.z),visible:traces.map(t=>t.visible)},slots);
+  const slots=[estimateIndices[index],estimatePointIndex];HandRenderer.restyle(view.plot,{x:slots.map(i=>traces[i].x),y:slots.map(i=>traces[i].y),z:slots.map(i=>traces[i].z),visible:slots.map(i=>traces[i].visible)},slots);
   if(!options.preserveCamera)fitView();return {candidate:name,vertices:trace.x.length};
  }
 };

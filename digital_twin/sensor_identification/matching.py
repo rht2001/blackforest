@@ -120,8 +120,19 @@ def _palm_starts(model, contacts, points, normals):
 
 
 def fit_model(model, contacts, exclusions, radii, config, *, boundary_xyz=None, boundary_normals=None,
-              palm_xyz=None, palm_normals=None, contact_pressures=None, thumb_xyz=None, progress=None, initial_pose=None):
+              palm_xyz=None, palm_normals=None, contact_pressures=None, thumb_xyz=None, progress=None, initial_pose=None,
+              contact_normals=None, contact_groups=None, finite_hand=None):
     """Quick placement uses a bounded search; detailed mode uses all starts."""
+    if initial_pose is not None and contact_normals is not None and contact_groups is not None:
+        from .anchored_fit import fit_anchored
+        return fit_anchored(model, contacts, contact_normals, contact_groups, exclusions, radii,
+                            config, initial_pose, hand=finite_hand, progress=progress)
+    from .visible_surface import fit_conflicted_surface
+    oriented=fit_conflicted_surface(model,contacts,exclusions,radii,config,
+        contact_normals=contact_normals,contact_groups=contact_groups,
+        boundary_xyz=boundary_xyz,boundary_normals=boundary_normals,progress=progress)
+    if oriented is not None:
+        return oriented
     kwargs = dict(boundary_xyz=boundary_xyz, boundary_normals=boundary_normals,
                   palm_xyz=palm_xyz, palm_normals=palm_normals,
                   contact_pressures=contact_pressures, thumb_xyz=thumb_xyz, progress=progress, initial_pose=initial_pose)

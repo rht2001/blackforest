@@ -50,3 +50,27 @@ assert.equal(R.validateFrame(cloud).points.length,4);
 assert.equal(cloud.hand_snapshot.angles_act[4],400);
 assert.equal(cloud.hand_snapshot.units,"metres");
 assert.ok(cloud.hand_snapshot.points.length);
+
+// The history UI keeps one deepest thumb bend at each recorded rotation.
+const thumbPeaks=R.build([row(1,900),row(2,400),row(3,700)],context,{thumb_limit_selection:'peak'});
+assert.equal(thumbPeaks.accumulation.thumb_limit_selection,'maximum_bend_per_thumb_rotation');
+assert.ok(thumbPeaks.points.length>0);
+assert.ok(thumbPeaks.points.every(p=>String(p.source_index)==='2'));
+assert.equal(thumbPeaks.accumulation.frames_reconstructed,3,'Other fingers retain their full row history');
+
+// Pre-roll pressure is not the closing endpoint; reopening must not become the default pose.
+const endMatrix=JSON.stringify(Array.from({length:112},()=>Array(17).fill(700)));
+const endRows=[990,400,405,990].map((angle,i)=>({index:String(i+1),_row:i+1,
+ angles:JSON.stringify([angle,angle,angle,angle,650,600]),tactile_matrix:endMatrix,state:'thumb_probing',slip_detected:'False'}));
+const endpoint=R.build(endRows,context,{thumb_limit_selection:'peak'});
+assert.equal(endpoint.accumulation.finger_contact_selection,'last_closed_contact_per_finger');
+assert.deepEqual(endpoint.hand_snapshot.angles_act.slice(0,4),[405,405,405,405]);
+assert.equal(endpoint.hand_snapshot.pose_source_row,3);
+assert.deepEqual(Object.values(endpoint.accumulation.finger_selected_pose_indices),['3','3','3','3']);
+assert.ok(endpoint.points.filter(p=>['little','ring','middle','index'].includes(p.region.split('_')[0])).every(p=>p.source_index==='3'));
+const endCells=T.cells(geometry,K.solve(profile,[405,405,405,405,650,600],context.calibration),{},200);
+for(const point of endpoint.points.filter(p=>p.region.startsWith('index_'))){
+ const cell=endCells.find(c=>c.id===point.taxel_id);
+ const inverse=T.inverseRigid(K.solve(profile,[405,405,405,405,650,600],context.calibration).frames.left_base_link);
+ assert.deepEqual([point.x,point.y,point.z],K.point(inverse,cell.position_world_m));
+}

@@ -62,7 +62,7 @@ class ReadOnlyTests(unittest.TestCase):
             for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                     self.assertNotIn(node.func.attr, forbidden, str(path))
-        for name in ('main.py', 'logic/grasp_manager.py', 'ui/appInterface.py'):
+        for name in ('main.py', 'logic/grasp_manager.py'):
             tree = ast.parse((ROOT / 'src' / name).read_text(encoding='utf-8'))
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom):

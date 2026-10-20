@@ -1,0 +1,27 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
+const source=fs.readFileSync(path.join(__dirname,'../digital_twin/sensor_identification/simulation.js'),'utf8');
+const context={module:{exports:{}},Date};vm.runInNewContext(source.split('/* One page:')[0],context);
+const transform=[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]];
+const fit={transform,compatible:false,placement_usable:true,pose_evidence:'known_placement_finite_cad',visible_surface_inlier_fraction:.74};
+const rendered=context.module.exports.render({status:'complete',result:{classification:'AMBIGUOUS',fits:{SENSOR_B:fit}}});
+assert.ok(rendered.includes('Provisional placement'));
+assert.ok(rendered.includes('74%'));
+assert.ok(rendered.includes('unverified'));
+assert.ok(!rendered.includes('Identified'));
+fit.placement_usable=false;
+assert.ok(context.module.exports.render({status:'complete',result:{fits:{SENSOR_B:fit}}}).includes('Rejected fit'));
+fit.placement_usable=true;fit.placement_quality='partial_contact_support';fit.weak_contact_regions=['thumb','palm'];
+const partial=context.module.exports.render({status:'complete',result:{fits:{SENSOR_B:fit}}});
+assert.ok(partial.includes('Partial placement'));assert.ok(partial.includes('Poorly matched areas: thumb, palm'));
+const backend=fs.readFileSync(path.join(__dirname,'../digital_twin/sensor_identification/web_service.py'),'utf8');
+const revision=backend.match(/ESTIMATOR_REVISION = '([^']+)'/)[1];
+assert.deepEqual([...source.matchAll(/(?:state|backend)\.estimator_revision!=='([^']+)'/g)].map(x=>x[1]),[revision,revision]);
+console.log('PASS provisional placement, explicit coverage, rejected alternative and protocol revision');
+
+const ambiguous={classification:'AMBIGUOUS',candidate_comparison:{missing_thumb_contacts:true},fits:{SENSOR_A:fit,SENSOR_B:fit}};
+const unresolved=context.module.exports.render({status:'complete',result:ambiguous});
+assert.ok(unresolved.includes('Sensor size unresolved'));
+assert.ok(unresolved.includes('No measured thumb contacts'));
+assert.ok(!unresolved.includes('<h3>VEGABAR'));
+const comparison=context.module.exports.render({status:'complete',result:ambiguous},'',0,{candidate:'SENSOR_A'});
+assert.ok(comparison.includes('Comparison only'));assert.ok(comparison.includes('VEGABAR 29'));

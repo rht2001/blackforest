@@ -45,7 +45,7 @@ const revision=fs.readFileSync(path.join(__dirname,'../digital_twin/sensor_ident
   assert.ok((await page.textContent('#estimatePreviewStatus')).includes('trial pose'));
   assert.ok(request.frame.hand_snapshot);
   const out=process.env.HAND_VERIFICATION_DIR;if(out){fs.mkdirSync(out,{recursive:true});await page.screenshot({path:path.join(out,'live-stl-preview.png')})}
-  await page.click('#dataManual');
+  await page.click('#dataLive');
   assert.equal(await page.isVisible('#estimatePreview'),false);
   assert.deepEqual(errors,[]);
   console.log('PASS live STL motion, candidate changes, camera preservation, pause, scrubbing, rejected completion and mode cleanup');

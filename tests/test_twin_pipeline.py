@@ -100,24 +100,40 @@ class TwinTests(unittest.TestCase):
         finally:
             publisher.close()
 
-    def run_app(self, arguments):
+    def run_app(self, arguments, failure=None):
         robot, results = self.snapshot()
         robot.poll = Mock(return_value=results)
-        robot.client = None
+        robot.client = Mock()
         with patch.object(sys, "argv", ["blackforest", *arguments]), \
                 patch.object(app_main, "RobotHandController", return_value=robot), \
-                patch.object(app_main, "HandApp") as app, \
+                patch.object(app_main, "GraspCapture") as capture, \
                 patch.object(app_main, "RobotDatabase") as database, \
                 patch.object(app_main, "GraspManager") as manager, \
                 patch.object(app_main, "TwinPublisher") as publisher, \
                 patch.object(app_main.time, "sleep"):
-            robot.poll.side_effect = [results, app_main.tk.TclError()]
+            robot.poll.side_effect = [results, failure or KeyboardInterrupt()]
             manager.return_value.step.return_value = results
-            app_main.main()
+            if failure is None:
+                app_main.main()
+            else:
+                with self.assertRaises(type(failure)):
+                    app_main.main()
+            database.return_value.on_close.assert_called_once_with()
+            publisher.return_value.close.assert_called_once_with()
+            capture.return_value.close.assert_called_once_with()
+            robot.client.close.assert_called_once_with()
             database.return_value.main.assert_called_once_with(data=results)
             self.assertEqual(robot.poll.call_count, 2)
             robot.safe_read.assert_not_called()
             return publisher
+
+    def test_main_closes_resources_if_poll_fails(self):
+        self.run_app([], RuntimeError("poll failed"))
+
+    def test_receiver_has_no_desktop_gui_dependency(self):
+        self.assertFalse(hasattr(app_main, "HandApp"))
+        self.assertFalse(hasattr(app_main, "tk"))
+        self.assertFalse((ROOT / "src/ui/appInterface.py").exists())
 
     def test_main_publishes_telemetry_by_default(self):
         self.run_app([]).assert_called_once()

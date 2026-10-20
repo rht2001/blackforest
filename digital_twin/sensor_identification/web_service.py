@@ -12,7 +12,7 @@ from .classifier import IdentificationConfig, identify_sensor
 from .demo import synthetic_points, write_viewer
 from .geometry import load_candidates
 
-ESTIMATOR_REVISION = 'merged_adaptive_empirical_v12'
+ESTIMATOR_REVISION = 'small_sensor_axial_start_v20'
 
 
 class IdentificationService:

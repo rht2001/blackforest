@@ -80,7 +80,26 @@ def valid_measurements(points):
     return clean, invalid
 
 
-def identify_sensor(points, models, config=None, *, boundary_points=(), progress=None, thumb_hint=None, coordinate_frame=None):
+def compare_anchored_candidates(fits, tolerance_mm):
+    usable=[name for name, fit in fits.items() if fit.get('placement_usable')]
+    if len(usable)!=2:
+        return None
+    a,b=(fits[name] for name in usable)
+    error_gap=abs(a['visible_surface_score_mm']-b['visible_surface_score_mm'])
+    regions=set(a['physical_contact_region_support'])|set(b['physical_contact_region_support'])
+    support_gap=np.mean([abs(a['physical_contact_region_support'].get(region, 0.)-
+                             b['physical_contact_region_support'].get(region, 0.)) for region in regions])
+    # A quarter of the configured positional tolerance and five percentage
+    # points are a preview ambiguity band, not statistical identity confidence.
+    if error_gap>tolerance_mm*.25 or support_gap>.05:
+        return None
+    return dict(candidates=usable, balanced_error_gap_mm=float(error_gap),
+                balanced_support_gap=float(support_gap), error_band_mm=tolerance_mm*.25,
+                support_band=.05, missing_thumb_contacts=all('thumb' not in fits[n]['physical_contact_region_support'] for n in usable),
+                interpretation='Both CAD models explain the measured contacts similarly; select a model to compare, identity unresolved.')
+
+
+def identify_sensor(points, models, config=None, *, boundary_points=(), progress=None, thumb_hint=None, coordinate_frame=None, hand_snapshot=None):
     config = config or IdentificationConfig()
     if set(models) != {'SENSOR_A', 'SENSOR_B'}:
         raise ValueError('Exactly SENSOR_A and SENSOR_B models are required')
@@ -126,6 +145,19 @@ def identify_sensor(points, models, config=None, *, boundary_points=(), progress
     radii = np.array([p['surface_clearance_mm'] for p in negative])
     result['certified_exclusions'] = len(negative)
     kwargs = dict(contact_pressures=np.array([p['pressure'] for p in active]))
+    # Normals must come from the same observed pose as each taxel. Never
+    # reconstruct them from a nearby point in an accumulated hand sweep.
+    normals=[]
+    for point in active:
+        n=point.get('normal')
+        if (not isinstance(n,(list,tuple)) or len(n)!=3
+                or any(isinstance(v,bool) or not isinstance(v,(int,float)) or not np.isfinite(v) for v in n)
+                or not .9 <= np.linalg.norm(n) <= 1.1):
+            break
+        normals.append(np.asarray(n)/np.linalg.norm(n))
+    if len(normals)==len(active):
+        kwargs.update(contact_normals=np.asarray(normals),
+                      contact_groups=[str(p.get('region') or 'contacts') for p in active])
     thumb = [p for p in active if str(p.get('region', '')).startswith('thumb_')
              or str(p.get('taxel_id', p['id'])).startswith('thumb_')]
     if len(thumb) >= 3:
@@ -140,6 +172,9 @@ def identify_sensor(points, models, config=None, *, boundary_points=(), progress
         if len(palm) >= 8:
             kwargs.update(palm_xyz=np.array([[p[k] for k in ('x','y','z')] for p in palm])*scale,
                           palm_normals=np.array([p['normal'] for p in palm]))
+    if hand_snapshot is not None:
+        from .finite_hand import FiniteHand
+        kwargs['finite_hand'] = FiniteHand.from_snapshot(hand_snapshot)
     result['fits'] = {}
     # Assembly STLs may be open, so signed mesh volume is not a size measure.
     # Use the CAD bounding envelope in mm, independent of sensor names.
@@ -181,6 +216,27 @@ def identify_sensor(points, models, config=None, *, boundary_points=(), progress
         if config.quick_preview and result['fits'][name]['compatible']:
             break
     fits = result['fits']
+    anchored = [name for name, fit in fits.items() if fit.get('pose_evidence') == 'known_placement_finite_cad']
+    if anchored:
+        ranked = sorted(anchored, key=lambda name: (not fits[name].get('placement_usable', False), fits[name]['score']))
+        best = ranked[0]
+        result.update(reason='known_placement_provisional', best_candidate=best,
+                      pose_evidence='known_placement_finite_cad', placement_reason='contact_fit_near_usual_insertion',
+                      classification='AMBIGUOUS')
+        comparison=compare_anchored_candidates({name: fits[name] for name in anchored}, config.tolerance_mm)
+        if comparison:
+            result.update(reason='sensor_size_unresolved', placement_reason='similar_contact_support', candidate_comparison=comparison)
+            result.pop('best_candidate', None)
+            return result
+        if fits[best].get('placement_usable'):
+            result['placement_candidate'] = best
+        return result
+    oriented = [fit for fit in fits.values() if fit.get('pose_evidence') == 'oriented_surface_preview']
+    if oriented:
+        result.update(reason='contact_hand_geometry_conflict', placement_reason='inconsistent_input_geometry',
+                      geometry_conflict=oriented[0]['geometry_conflict'], pose_evidence='oriented_surface_preview',
+                      best_candidate=min(fits, key=lambda name: (-fits[name].get('visible_surface_balanced_inlier_fraction', 0.), fits[name]['score'])))
+        return result
     acceptable = [name for name in ordered if name in fits and fits[name]['compatible']]
     if acceptable:
         result['placement_candidate'] = acceptable[0]

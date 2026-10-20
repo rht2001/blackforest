@@ -39,7 +39,7 @@ def robot_snapshot(robot, results):
             values = values.tolist()
         if not isinstance(values, (list, tuple)) or len(values) != height * width:
             continue
-        # Match HandApp.draw: calibrated pressure = max(0, raw - offset).
+        # Calibrated pressure = max(0, raw - offset), as displayed by the browser.
         # Validate before subtraction so corrupt raw readings cannot look valid.
         if not all(number(value, 0, 4095) for value in values):
             continue

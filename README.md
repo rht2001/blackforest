@@ -60,8 +60,7 @@ preserved as source modules; the receiver does not start active probing.
     - Batched register reads (`<= 120` registers per request) for 17 tactile patches plus 6-DOF actual angles (`ANGLE_ACT`), signed forces (`FORCE_ACT`), actuator strokes (`POS_ACT`), motor currents, temperatures, and error codes.
     - Soft mechanical angle clamping (`5..995`), configurable velocity and force limits, startup zero-load calibration, and automatic mock-simulation fallback when running offline.
 
-- **Interactive Control UI, Telemetry Logging & Digital Twin**
-    - **Tkinter Dashboard (`HandApp`)**: Live 17-patch tactile heatmaps with CoP markers, FSM state banner, real-time slip alert indicator, post-probe sensor classification banner (`SENSOR: VEGABAR 38` / `SENSOR: VEGABAR 29`), manual 6-DOF sliders, and preset pose management.
+- **Browser Viewer, Telemetry Logging & Digital Twin**
     - **CSV Dataset Logger (`RobotDatabase`)**: Buffered recording of full actuator state and downsampled tactile summaries to `main_dataset.csv` and event-driven state transitions to `state_changes.csv`.
     - **3D/2D WebGL Digital Twin (`TwinPublisher`)**: Non-blocking background HTTP publisher streaming live joint kinematics and full 1,062-taxel arrays to a browser-based 3D hand twin and 2D tactile matrix inspector.
 
@@ -112,9 +111,6 @@ haptiq/
 â”‚   â”‚   â”œâ”€â”€ thumb_prober.py          # Active thumb sweep & VEGABAR 38 vs. VEGABAR 29 classifier
 â”‚   â”‚   â”œâ”€â”€ slip_detector.py         # CoP velocity & dF/dt tactile slip detection
 â”‚   â”‚   â””â”€â”€ twin_publisher.py        # Non-blocking HTTP state publisher for the Digital Twin
-â”‚   â””â”€â”€ ui/
-â”‚       â”œâ”€â”€ appInterface.py          # Tkinter GUI, 17-patch tactile visualizer & status banners
-â”‚       â””â”€â”€ Hand_Points.png          # Hand diagram backdrop for tactile heatmap overlays
 â”œâ”€â”€ digital_twin/
 â”‚   â”œâ”€â”€ bridge_server.py             # HTTP bridge server (port 18765) for live browser visualization
 â”‚   â”œâ”€â”€ hand_twin_6dof.html          # WebGL2 3D articulated hand & tactile heatmap viewer
@@ -129,7 +125,7 @@ haptiq/
 
 ## Prerequisites
 
-- **Python**: `>= 3.14` (with `tkinter` support enabled)
+- **Python**: `>= 3.14` (the receiver does not require Tkinter)
 - **Package Manager**: [`uv`](https://docs.astral.sh/uv/)
 - **Hardware (Optional for Simulation)**:
   - Inspire-Robots **RH56DFTP** Dexterous Hand connected via Ethernet (`192.168.123.210`, port `6000`, Modbus unit ID `1`).
@@ -157,7 +153,7 @@ haptiq/
 
 ### 1. Launch the HaptIQ Control Application
 
-Run the main control loop and Tkinter user interface:
+Run the telemetry receiver without a separate desktop window (stop with Ctrl+C):
 
 ```bash
 uv run python src/main.py
