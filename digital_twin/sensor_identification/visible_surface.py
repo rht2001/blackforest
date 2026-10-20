@@ -1,12 +1,8 @@
-"""Fit the first CAD surface seen along the outward taxel direction.
-
-Unsigned nearest distance can match an interior wall or the far side of a
-housing. Ray entry is independent of assembly winding and audits visibility.
-No sensor name, run label or recorded reference pose is used here.
-"""
+"""Fit CAD contact correspondences visible from the observed hand side."""
 import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
+from .ray_bvh import cached_bvh
 
 
 def first_surface(model, points, normals, rotation, translation, *, return_surface=False):
@@ -15,22 +11,22 @@ def first_surface(model, points, normals, rotation, translation, *, return_surfa
     # Start beyond the complete CAD envelope, even for an off-center pose.
     travel = np.linalg.norm(local-model.mesh.bounds.mean(axis=0), axis=1)+np.linalg.norm(model.mesh.extents)+1.
     origins = local-directions*travel[:, None]
-    faces, rays, locations = model.mesh.ray.intersects_id(origins, directions, multiple_hits=True, return_locations=True)
-    locations = np.asarray(locations).reshape(-1,3)
-    depths = np.full(len(points), np.inf)
-    np.minimum.at(depths, rays, np.einsum('ij,ij->i', locations-origins[rays], directions[rays])-travel[rays])
+    distances, faces = cached_bvh(model).first(origins,directions)
+    depths = distances-travel
     if not return_surface:
         return depths
-    selected = np.full(len(points), -1, dtype=int)
-    values = np.einsum('ij,ij->i', locations-origins[rays], directions[rays])-travel[rays]
-    # Every ray retains its first triangle, with deterministic ties.
-    for i in np.argsort(values)[::-1]:
-        selected[rays[i]]=i
-    hit=selected>=0
+    hit=faces>=0
     surface=np.empty_like(points);face_normals=np.empty_like(points)
-    surface[hit]=locations[selected[hit]]
-    face_normals[hit]=model.mesh.face_normals[faces[selected[hit]]]
+    surface[hit]=origins[hit]+directions[hit]*distances[hit,None]
+    face_normals[hit]=model.mesh.face_normals[faces[hit]]
     return depths, surface, face_normals
+
+
+def contact_surface(model,points,normals,rotation,translation,*,return_surface=False,exact=False):
+    from .visible_correspondence import visible_correspondences
+    surface,errors,face_normals,hit,_=visible_correspondences(model,points,normals,rotation,translation,exact=exact)
+    errors=np.where(hit,errors,np.inf)
+    return (errors,surface,face_normals) if return_surface else errors
 
 
 def _balanced_indices(groups, budget):
@@ -76,11 +72,12 @@ def fit_visible_surface(model, points, normals, groups, config, progress=None):
     def residual(r, t, selected):
         p, n = points[selected], normals[selected]
         w = _weights(groups[selected])
-        depth = first_surface(model, p, n, r, t)
+        depth = contact_surface(model, p, n, r, t)
         closest, distance = model.nearest_sampled((p-t)@r)
         # Misses retain a positional gradient; they are never treated as a
         # successful ray observation in the final audit.
         ray = np.where(np.isfinite(depth), depth, distance+6.)
+        ray += 2.*np.maximum(0.,ray-config.tolerance_mm)
         return np.r_[ray*np.sqrt(w), .15*((closest@r.T+t-p)*np.sqrt(w[:,None])).ravel()]
 
     starts = []
@@ -96,8 +93,24 @@ def fit_visible_surface(model, points, normals, groups, config, progress=None):
             for anchor in np.linspace(lo+.15*(hi-lo),hi-.15*(hi-lo),5):
                 local_center=np.zeros(3);local_center[local_axis]=anchor
                 t=center-r@local_center
-                e=residual(r,t,idx);cost=np.mean(9*(np.sqrt(1+(e/3)**2)-1))
+                d=model.nearest_sampled((points[idx]-t)@r)[1]
+                cost=float(np.average(d*d,weights=_weights(groups[idx])))
                 starts.append((cost,r,t))
+    # Keep axial alternatives within every direction/roll stratum before
+    # using expensive visibility. Cheap unsigned screening is not acceptance.
+    shortlisted=set()
+    for first in range(0,len(starts),5):
+        shortlisted.update(sorted(range(first,first+5),key=lambda i:starts[i][0])[:2])
+    shortlisted.update(sorted(range(len(starts)),key=lambda i:starts[i][0])[:8])
+    if not config.quick_preview:
+        shortlisted=set(range(len(starts)))
+    cheap_starts=len(starts);screened=[]
+    for number,index in enumerate(sorted(shortlisted)):
+        _,r,t=starts[index];e=residual(r,t,idx)
+        screened.append((float(np.mean(9*(np.sqrt(1+(e/3)**2)-1))),r,t))
+        if progress and number%8==0:
+            progress(dict(stage='visible_surface_screening',completed=number,total=len(shortlisted)))
+    starts=screened
     starts.sort(key=lambda item:item[0])
     finalists=[]
     for _,r,t in starts:
@@ -108,14 +121,19 @@ def fit_visible_surface(model, points, normals, groups, config, progress=None):
     for number,(_,r0,t0) in enumerate(finalists):
         if progress:progress(dict(stage='visible_surface_refining',completed=number,total=len(finalists)))
         selected=_balanced_indices(groups,72)
-        r,t=r0.copy(),t0.copy();evaluations=0
+        r,t=r0.copy(),t0.copy();evaluations=0;best_observed=None
         for iteration in range(5 if config.quick_preview else 14):
             if not config.quick_preview and iteration == 10:
                 selected=np.arange(len(points))
             p,n=points[selected],normals[selected]
             w=_weights(groups[selected])
-            depth,surface,face_normal=first_surface(model,p,n,r,t,return_surface=True)
+            depth,surface,face_normal=contact_surface(model,p,n,r,t,return_surface=True)
             hit=np.isfinite(depth)
+            if len(selected)==len(points):
+                key=(-float(np.average(hit&(abs(depth)<=config.tolerance_mm),weights=w)),
+                     float(np.average(np.minimum(abs(depth),30.)**2,weights=w)))
+                if best_observed is None or key<best_observed[0]:
+                    best_observed=(key,r.copy(),t.copy())
             near=model.nearest_sampled((p-t)@r)[0]
             surface[~hit]=near[~hit]
             face_normal[~hit]=0
@@ -131,13 +149,30 @@ def fit_visible_surface(model, points, normals, groups, config, progress=None):
             opt=least_squares(fixed_residual,np.zeros(6),loss='soft_l1',f_scale=3.,max_nfev=20,
                               x_scale=np.array([.1,.1,.1,5.,5.,5.]),
                               bounds=(np.r_[[-.12]*3,[-5.]*3],np.r_[[.12]*3,[5.]*3]))
-            r,t=decode(opt.x);evaluations+=opt.nfev
+            previous=np.mean(9*(np.sqrt(1+(residual(r,t,selected)/3.)**2)-1))
+            accepted=False
+            for fraction in (1.,.5,.25):
+                nr,nt=decode(opt.x*fraction)
+                cost=np.mean(9*(np.sqrt(1+(residual(nr,nt,selected)/3.)**2)-1))
+                if cost<=previous+1e-10:
+                    accepted=True
+                    break
+            if accepted:r,t=nr,nt
+            evaluations+=opt.nfev
             if progress:
                 live=np.eye(4);live[:3,:3]=r;live[:3,3]=t
                 progress(dict(stage='visible_surface_refining',completed=number,total=len(finalists),
                               transform=live.tolist(),pose_step=number*20+iteration+1,preview=True))
-            if np.linalg.norm(opt.x)<1e-4:break
-        depth=first_surface(model,points,normals,r,t)
+            if not accepted or np.linalg.norm(opt.x)<1e-4:
+                if not config.quick_preview and len(selected)<len(points):
+                    selected=np.arange(len(points))
+                else:break
+        observed=contact_surface(model,points,normals,r,t)
+        key=(-float(np.average(np.isfinite(observed)&(abs(observed)<=config.tolerance_mm),weights=weights)),
+             float(np.average(np.minimum(abs(observed),30.)**2,weights=weights)))
+        if best_observed is not None and best_observed[0]<key:
+            _,r,t=best_observed
+        depth=contact_surface(model,points,normals,r,t,exact=True)
         distance=model.nearest((points-t)@r)[1]
         hit=np.isfinite(depth);errors=np.where(hit,abs(depth),distance+6.)
         balanced=float(np.sum(weights*np.minimum(errors,30.)**2)/np.sum(weights))
@@ -149,6 +184,8 @@ def fit_visible_surface(model, points, normals, groups, config, progress=None):
                          visible_surface_max_mm=float(np.max(abs(depth[hit]))) if np.any(hit) else None,
                          visible_surface_hit_fraction=float(np.mean(hit)),
                          visible_surface_inlier_fraction=float(np.mean(hit&(abs(depth)<=config.tolerance_mm))),
+                         visible_surface_balanced_inlier_fraction=float(np.average(hit&(abs(depth)<=config.tolerance_mm),weights=weights)),
+                         surface_correspondence_method='nearest_surface_with_first_hit_visibility',
                          visible_surface_region_stats={str(g):dict(hit_fraction=float(np.mean(hit[groups==g])),
                              inlier_fraction=float(np.mean((hit&(abs(depth)<=config.tolerance_mm))[groups==g])),
                              median_error_mm=float(np.median(errors[groups==g]))) for g in dict.fromkeys(groups)},
@@ -158,12 +195,13 @@ def fit_visible_surface(model, points, normals, groups, config, progress=None):
                          hand_validation_complete=False,optimizer_success=bool(opt.success),evaluations=int(evaluations),
                          contact_tolerance_mm=config.tolerance_mm,hand_tolerance_mm=config.hand_tolerance_mm,
                          rejection_reasons=['hand_volume_not_validated']+(['visible_contact_mismatch'] if not np.all(hit&(abs(depth)<=config.tolerance_mm)) else []),
-                         search_method='balanced_first_visible_surface_multistart',search_pass='visible_surface',
+                         search_method='bvh_visible_correspondence_multistart',search_pass='visible_surface',
                          score_basis='region_balanced_first_surface_error_capped_30mm_misses_nearest_plus_6mm',pose_evidence='oriented_surface_preview',
-                         validation_method='full_mesh_first_ray_intersection_and_exact_distance',
+                         validation_method='exact_visible_contacts_and_legacy_hand_patch_witnesses',
                          refinements=len(finalists),consistent_refinements=1,scored_contact_points=len(points),
-                         input_contact_points=len(points),starts_evaluated=len(starts),quick_preview=config.quick_preview))
-    return min(fits,key=lambda f:f['score'])
+                         input_contact_points=len(points),starts_evaluated=cheap_starts,
+                         visibility_starts_evaluated=len(starts),quick_preview=config.quick_preview))
+    return min(fits,key=lambda f:(-f['visible_surface_balanced_inlier_fraction'],f['score']))
 
 
 def fit_conflicted_surface(model, contacts, exclusions, radii, config, *,

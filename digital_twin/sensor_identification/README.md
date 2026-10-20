@@ -474,36 +474,53 @@ it repeats the normal search for that candidate; no candidate is rejected on
 the short pass alone. It stops refining at the first pose passing the existing
 contact, clearance and full-CAD hand checks. The 85% heuristic reflects the
 observed grasp behavior, not a calibrated probability or a physical guarantee.
-### First visible surface for inconsistent run previews
+### Visible contact registration and cached triangle queries
 
-Accumulated CSV contacts now retain the outward taxel normal from the same
-pose as each selected contact. The estimator validates these optional normals;
-older clouds without them retain the existing path. Normals must not be
-recovered from the nearest patch in a different pose of the hand sweep.
+CSV contacts retain the outward taxel normal from the same observed pose.
+Older clouds without complete valid normals retain the existing solver.
+When local hand-patch constraints contradict the measured contact balls, the
+inspection fit matches CAD surfaces visible from the hand side. It remains
+a rejected preview; the legacy hand-patch conflict is not a solid collision
+certificate or a confirmed sensor identity.
 
-When the supplied hand patches already contradict the contact tolerance balls,
-the inspection fit uses the first CAD surface seen along each recorded normal.
-Unsigned distance alone can match a far wall or internal assembly face even
-when the model passes through the contact. Visibility rays start beyond the
-entire CAD envelope and do not depend on triangle winding or watertightness.
+A strictly parallel normal ray is not a sufficient contact-distance test:
+it can miss an edge even when the surface lies inside the positional
+tolerance ball. The registration projects to a nearest triangle point and
+casts from the hand side toward that point. An earlier occluding CAD surface
+replaces a hidden correspondence. Thus far walls and internal assembly faces
+cannot masquerade as a nearby externally reachable contact. The final audit
+uses exact nearest triangles and the complete CAD for every measured contact.
+This is an upper bound on nearest visible distance, not a global visibility
+or physical-contact certificate. Normals are geometric directions, not
+calibrated force vectors.
 
-Finger contact group centers initialize the shaft direction; a transverse
-circle provides a starting center. Both axial directions, eight rolls and five
-axial placements are screened. Five distinct starts are refined in detailed
-mode (two in quick mode), using robust point-to-plane steps with visibility
-correspondences refreshed between steps. Each region has equal total weight,
-recomputed after point selection. Detailed mode finishes with all contacts.
-These starts use measured geometry, without sensor-name or run-label priors.
+The triangle hierarchy is cached on each immutable candidate model. Batched
+ray/box tests reduce triangle candidates; batched exact triangle tests retain
+the first hit. Segment bounds stop visibility queries beyond their known CAD
+target. No new package, STL simplification or geometry rescaling is used.
+Winding and open assemblies do not affect first-hit visibility. The separate
+parity helper is for watertight hand meshes only.
 
-The search score caps errors at 30 mm and assigns ray misses nearest-distance
-plus 6 mm. This robust ranking score is distinct from the reported uncapped
-RMS over hit rays. Miss count, hit fraction, per-region statistics and the
-fraction of all contacts whose first intersection is within tolerance are
-reported separately. The final audit queries the complete CAD for every
-contact; no missed ray counts as an inlier. Certified clearances and hand
-conflict witnesses are still checked exactly.
+Finger group centers and a transverse circle initialize the shaft. Detailed
+mode checks both axis directions, eight rolls and five axial placements.
+Quick mode uses cheap unsigned screening while retaining two axial choices
+per direction/roll stratum. Visibility still determines refined poses.
+Every region has equal total weight, recomputed after selection. Damped steps
+must improve the actual visibility objective, and detailed refinement reaches
+all contacts even when a coarse step stalls. The best observed fine pose is
+retained instead of blindly taking the last optimizer step.
 
-These poses remain rejected inspection previews: changing the contact fit
-does not repair the contradictory hand constraint model or validate the full
-hand volume. Consistent inputs retain the existing complete hand audit. No
-candidate identity is confirmed by this preview path.
+Preview placement prioritizes the region-balanced fraction of visible contacts
+within the requested tolerance, then the robust distance score. Both measures
+are reported, including per-region support and uncapped worst/RMS errors.
+The robust score caps errors at 30 mm and assigns query misses nearest-distance
+plus 6 mm; neither rule turns a failing contact into an inlier. Search nearest
+queries use sampled local triangles; final visibility and distance audits use
+exact triangles and every contact. No run label or empirical reference pose
+is an input to this registration path.
+
+Finite hand-volume checks were additionally performed offline against the
+same posed meshes shown by the viewer. They are a separate diagnostic: open
+hand links and unsampled CAD regions remain unchecked. The production preview
+does not claim complete hand-volume validation. Consistent inputs retain the
+existing full hand-patch audit and acceptance gates.

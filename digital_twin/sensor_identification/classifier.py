@@ -179,7 +179,7 @@ def identify_sensor(points, models, config=None, *, boundary_points=(), progress
     if oriented:
         result.update(reason='contact_hand_geometry_conflict', placement_reason='inconsistent_input_geometry',
                       geometry_conflict=oriented[0]['geometry_conflict'], pose_evidence='oriented_surface_preview',
-                      best_candidate=min(fits, key=lambda name: fits[name]['score']))
+                      best_candidate=min(fits, key=lambda name: (-fits[name].get('visible_surface_balanced_inlier_fraction',0.), fits[name]['score'])))
         return result
     acceptable = [name for name in ordered if name in fits and fits[name]['compatible']]
     if acceptable:
